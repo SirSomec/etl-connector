@@ -7,6 +7,7 @@ const PERIOD_EXPRESSIONS = {
 
 const DEFAULT_PERIOD = 'month';
 const DEFAULT_LOOKBACK_DAYS = 90;
+const MAX_BRAND_ROWS = 50;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function pad2(value) {
@@ -197,7 +198,22 @@ function mergeBrandRows(orderRows, shiftRows) {
     byBrand.set(brand, current);
   }
 
-  return Array.from(byBrand.values()).sort((left, right) => right.orderedShifts - left.orderedShifts);
+  return Array.from(byBrand.values())
+    .sort((left, right) => {
+      const leftActivity = left.orderedShifts + left.workedShifts;
+      const rightActivity = right.orderedShifts + right.workedShifts;
+
+      if (rightActivity !== leftActivity) {
+        return rightActivity - leftActivity;
+      }
+
+      if (right.revenueRub !== left.revenueRub) {
+        return right.revenueRub - left.revenueRub;
+      }
+
+      return left.brand.localeCompare(right.brand);
+    })
+    .slice(0, MAX_BRAND_ROWS);
 }
 
 function mapStatusRows(rows) {
@@ -236,12 +252,13 @@ WITH shift_facts AS (
 ),
 surcharges AS (
   SELECT
-    entityId AS job,
-    sum(coalesce(nullIf(payment_amount, 0), amount, 0)) AS surcharge_amount
-  FROM mg_transactions
-  WHERE transaction_type = 'surcharge'
-    AND entityId != ''
-  GROUP BY entityId
+    t.entityId AS job,
+    sum(coalesce(nullIf(t.payment_amount, 0), t.amount, 0)) AS surcharge_amount
+  FROM mg_transactions AS t
+  INNER JOIN shift_facts AS sf ON t.entityId = sf.job
+  WHERE t.transaction_type = 'surcharge'
+    AND t.entityId != ''
+  GROUP BY t.entityId
 ),
 shift_enriched AS (
   SELECT
@@ -362,7 +379,6 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       WHERE ${orderBaseWhere()}
       GROUP BY brand
       ORDER BY ordered_shifts DESC
-      LIMIT 50
       FORMAT JSONEachRow`,
       params,
       'sales by project brand orders'
@@ -381,7 +397,6 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
       GROUP BY brand
       ORDER BY worked_shifts DESC
-      LIMIT 50
       FORMAT JSONEachRow`,
       params,
       'sales by project brand shifts'

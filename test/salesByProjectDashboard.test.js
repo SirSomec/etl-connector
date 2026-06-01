@@ -7,6 +7,19 @@ const {
   normalizeSalesByProjectFilters
 } = require('../src/salesByProjectDashboard');
 
+function createDashboardClient(rowsByOperation) {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      return rowsByOperation[operation] || [];
+    }
+  };
+
+  return { calls, client };
+}
+
 test('normalizeSalesByProjectFilters keeps only supported periods and date strings', () => {
   const filters = normalizeSalesByProjectFilters(
     {
@@ -177,4 +190,151 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
     calls.some((call) => call.query.includes("nullIf(ct.contract_type, '')")),
     false
   );
+});
+
+test('loadSalesByProjectDashboard merges brand rows before limiting them', async () => {
+  const fillerBrandOrders = Array.from({ length: 49 }, (_, index) => ({
+    brand: `Filler ${index}`,
+    ordered_shifts: 1
+  }));
+  const { calls, client } = createDashboardClient({
+    'sales by project brand orders': [
+      { brand: 'Общий бренд', ordered_shifts: 5, workplaces_with_orders: 2 },
+      ...fillerBrandOrders
+    ],
+    'sales by project brand shifts': [
+      {
+        brand: 'Общий бренд',
+        worked_shifts: 4,
+        revenue_rub: 1000,
+        self_booked_confirmed_shifts: 2
+      },
+      {
+        brand: 'Только смены',
+        worked_shifts: 1000,
+        revenue_rub: 5000,
+        unique_workers: 20,
+        workplaces_with_worked_shifts: 10
+      }
+    ]
+  });
+
+  const dashboard = await loadSalesByProjectDashboard(
+    client,
+    {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+  const sharedBrand = dashboard.brandRows.find((row) => row.brand === 'Общий бренд');
+  const shiftsOnlyBrand = dashboard.brandRows.find((row) => row.brand === 'Только смены');
+  const brandQueries = calls.filter((call) =>
+    ['sales by project brand orders', 'sales by project brand shifts'].includes(call.operation)
+  );
+
+  assert.equal(dashboard.brandRows.length, 50);
+  assert.equal(sharedBrand.orderedShifts, 5);
+  assert.equal(sharedBrand.workedShifts, 4);
+  assert.equal(sharedBrand.slaPercent, 80);
+  assert.equal(shiftsOnlyBrand.orderedShifts, 0);
+  assert.equal(shiftsOnlyBrand.workedShifts, 1000);
+  assert.ok(brandQueries.every((call) => !call.query.includes('LIMIT 50')));
+});
+
+test('loadSalesByProjectDashboard limits surcharges to selected shift facts', async () => {
+  const { calls, client } = createDashboardClient({});
+
+  await loadSalesByProjectDashboard(
+    client,
+    {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.ok(calls.some((call) => call.query.includes('FROM mg_transactions AS t')));
+  assert.ok(
+    calls.some((call) => call.query.includes('INNER JOIN shift_facts AS sf ON t.entityId = sf.job'))
+  );
+  assert.ok(calls.some((call) => call.query.includes("t.transaction_type = 'surcharge'")));
+  assert.ok(calls.some((call) => call.query.includes("t.entityId != ''")));
+});
+
+test('loadSalesByProjectDashboard maps empty responses to zero summary and empty rows', async () => {
+  const { client } = createDashboardClient({});
+
+  const dashboard = await loadSalesByProjectDashboard(
+    client,
+    {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.deepEqual(dashboard.summary, {
+    orderedShifts: 0,
+    workedShifts: 0,
+    slaPercent: 0,
+    revenueRub: 0,
+    uniqueWorkers: 0,
+    workplacesWithOrders: 0,
+    workplacesWithWorkedShifts: 0,
+    cancelledShifts: 0,
+    selfBookingPercent: 0,
+    avgWorkerRateHour: 0
+  });
+  assert.deepEqual(dashboard.trendRows, []);
+  assert.deepEqual(dashboard.brandRows, []);
+  assert.deepEqual(dashboard.statusRows, []);
+});
+
+test('loadSalesByProjectDashboard converts ClickHouse numeric strings to numeric KPI values', async () => {
+  const { client } = createDashboardClient({
+    'sales by project orders summary': [
+      {
+        ordered_shifts: '10',
+        workplaces_with_orders: '3',
+        avg_worker_rate_hour: '250'
+      }
+    ],
+    'sales by project shifts summary': [
+      {
+        worked_shifts: '8',
+        revenue_rub: '12000',
+        unique_workers: '5',
+        workplaces_with_worked_shifts: '2',
+        cancelled_shifts: '1',
+        self_booked_confirmed_shifts: '4'
+      }
+    ]
+  });
+
+  const dashboard = await loadSalesByProjectDashboard(
+    client,
+    {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.deepEqual(dashboard.summary, {
+    orderedShifts: 10,
+    workedShifts: 8,
+    slaPercent: 80,
+    revenueRub: 12000,
+    uniqueWorkers: 5,
+    workplacesWithOrders: 3,
+    workplacesWithWorkedShifts: 2,
+    cancelledShifts: 1,
+    selfBookingPercent: 50,
+    avgWorkerRateHour: 250
+  });
 });

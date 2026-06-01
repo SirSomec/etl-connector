@@ -865,6 +865,17 @@ function renderOrderTypeOptions(selectedType) {
     .join('');
 }
 
+function renderLimitOptions(selectedLimit) {
+  return [10, 12, 20, 50]
+    .map((limit) => {
+      const value = String(limit);
+      const selected = value === String(selectedLimit) ? ' selected' : '';
+
+      return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(value)}</option>`;
+    })
+    .join('');
+}
+
 function renderPointMetric(label, value) {
   return `<div class="point-metric">
   <div class="point-metric-label">${escapeHtml(label)}</div>
@@ -964,6 +975,10 @@ function renderWorkplaceAnalysisDashboard({ database, dashboard }) {
     <div class="field">
       <label for="search">Поиск точки</label>
       <input id="search" name="search" value="${escapeHtml(filters.search)}">
+    </div>
+    <div class="field">
+      <label for="limit">Лимит</label>
+      <select id="limit" name="limit">${renderLimitOptions(filters.limit)}</select>
     </div>
     <button type="submit">Применить</button>
   </form>

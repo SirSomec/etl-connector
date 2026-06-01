@@ -327,6 +327,8 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /class="nav-link active" href="\/dashboards\/workplace-analysis"/);
   assert.match(html, /value="2026-06-01"/);
   assert.match(html, /value="2026-06-03"/);
+  assert.match(html, /name="limit"/);
+  assert.match(html, /value="12" selected/);
   assert.match(html, /&lt;script&gt;client&lt;\/script&gt;/);
   assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>bad<\/script>/);

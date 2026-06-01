@@ -35,6 +35,58 @@ function createFakeClient(overrides = {}) {
         { id: 1, created_at: '2026-06-01T00:00:00Z' },
         { id: 2, created_at: '2026-06-01T00:01:00Z' }
       ];
+    },
+    async queryJSONEachRow(query, params, operation) {
+      calls.push(['queryJSONEachRow', operation]);
+
+      if (operation === 'sales by project orders summary') {
+        return [{ ordered_shifts: 10, workplaces_with_orders: 3, avg_worker_rate_hour: 250 }];
+      }
+
+      if (operation === 'sales by project shifts summary') {
+        return [
+          {
+            worked_shifts: 8,
+            revenue_rub: 12000,
+            unique_workers: 5,
+            workplaces_with_worked_shifts: 2,
+            cancelled_shifts: 1,
+            self_booked_confirmed_shifts: 4
+          }
+        ];
+      }
+
+      if (operation === 'sales by project orders trend') {
+        return [{ period: '2026-04-01', ordered_shifts: 10 }];
+      }
+
+      if (operation === 'sales by project shifts trend') {
+        return [{ period: '2026-04-01', worked_shifts: 8, revenue_rub: 12000, cancelled_shifts: 1 }];
+      }
+
+      if (operation === 'sales by project brand orders') {
+        return [{ brand: 'Бренд', ordered_shifts: 10, workplaces_with_orders: 3, avg_worker_rate_hour: 250 }];
+      }
+
+      if (operation === 'sales by project brand shifts') {
+        return [
+          {
+            brand: 'Бренд',
+            worked_shifts: 8,
+            revenue_rub: 12000,
+            unique_workers: 5,
+            workplaces_with_worked_shifts: 2,
+            cancelled_shifts: 1,
+            self_booked_confirmed_shifts: 4
+          }
+        ];
+      }
+
+      if (operation === 'sales by project status breakdown') {
+        return [{ status: 'confirmed', shifts: 8 }];
+      }
+
+      return [];
     }
   };
 
@@ -101,6 +153,26 @@ test('GET / renders available tables from metadata', async () => {
   });
 
   assert.deepEqual(client.calls, [['listTables']]);
+});
+
+test('GET /dashboards/sales-by-project renders dashboard', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/sales-by-project?period=month&from=2026-04-01&to=2026-04-30'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Продажи по проектам/);
+    assert.match(text, /Заказано смен/);
+    assert.match(text, /Бренд/);
+    assert.match(text, /confirmed/);
+  });
+
+  assert.equal(client.calls.filter((call) => call[0] === 'queryJSONEachRow').length, 7);
 });
 
 test('GET /tables renders columns and preview rows for a known table', async () => {

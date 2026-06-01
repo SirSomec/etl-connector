@@ -3,7 +3,8 @@ const { STATUS_CODES } = require('node:http');
 
 const { ClickHouseClient } = require('./clickhouseClient');
 const { loadConfig } = require('./config');
-const { renderError, renderHome, renderTable } = require('./render');
+const { loadSalesByProjectDashboard } = require('./salesByProjectDashboard');
+const { renderError, renderHome, renderSalesByProjectDashboard, renderTable } = require('./render');
 
 function sanitizeForResponse(message, config) {
   const text = String(message || '');
@@ -88,6 +89,18 @@ function createApp({ config, client }) {
       const tables = await client.listTables();
 
       res.status(200).type('html').send(renderHome({ database, tables }));
+    })
+  );
+
+  app.get(
+    '/dashboards/sales-by-project',
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadSalesByProjectDashboard(client, req.query);
+
+      res
+        .status(200)
+        .type('html')
+        .send(renderSalesByProjectDashboard({ database, dashboard }));
     })
   );
 

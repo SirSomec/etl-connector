@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 
-const { createApp, sanitizeForResponse } = require('../src/server');
+const { createApp, sanitizeForResponse, start } = require('../src/server');
 
 function baseConfig() {
   return {
@@ -45,29 +46,41 @@ async function withServer(client, callback, config = baseConfig()) {
   const server = app.listen(0);
 
   try {
-    await new Promise((resolve, reject) => {
-      server.once('listening', resolve);
-      server.once('error', reject);
-    });
+    await waitForListening(server);
 
     const { port } = server.address();
     await callback(`http://127.0.0.1:${port}`);
   } finally {
-    await new Promise((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve();
-      });
-    });
+    await closeServer(server);
   }
 }
 
-async function fetchText(baseUrl, path) {
-  const response = await fetch(`${baseUrl}${path}`);
+async function waitForListening(server) {
+  if (server.listening) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+}
+
+async function closeServer(server) {
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+async function fetchText(baseUrl, path, options) {
+  const response = await fetch(`${baseUrl}${path}`, options);
   const text = await response.text();
 
   return { response, text };
@@ -81,6 +94,7 @@ test('GET / renders available tables from metadata', async () => {
 
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.equal(response.headers.has('x-powered-by'), false);
     assert.match(text, /Available Tables/);
     assert.match(text, /events/);
     assert.match(text, /orders/);
@@ -126,6 +140,21 @@ test('GET /tables with missing name returns 400 with sanitized error page', asyn
   assert.deepEqual(client.calls, []);
 });
 
+test('GET /tables with duplicate names returns 400 without querying metadata', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/tables?name=events&name=orders');
+
+    assert.equal(response.status, 400);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Missing table name/);
+    assert.doesNotMatch(text, /super-secret/);
+  });
+
+  assert.deepEqual(client.calls, []);
+});
+
 test('GET /tables returns 404 when table is not in metadata', async () => {
   const client = createFakeClient();
 
@@ -138,6 +167,36 @@ test('GET /tables returns 404 when table is not in metadata', async () => {
   });
 
   assert.deepEqual(client.calls, [['listTables']]);
+});
+
+test('GET /tables/:tableName redirects to query route', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response } = await fetchText(baseUrl, '/tables/events', {
+      redirect: 'manual'
+    });
+
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/tables?name=events');
+  });
+
+  assert.deepEqual(client.calls, []);
+});
+
+test('malformed encoded table paths preserve Express 400 errors with sanitized HTML', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/tables/%E0%A4%A');
+
+    assert.equal(response.status, 400);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Bad Request/);
+    assert.doesNotMatch(text, /super-secret/);
+  });
+
+  assert.deepEqual(client.calls, []);
 });
 
 test('route errors are sanitized before rendering', async () => {
@@ -177,6 +236,64 @@ test('GET /healthz returns ok as plain text', async () => {
   });
 
   assert.deepEqual(client.calls, []);
+});
+
+test('start uses injectable dependencies and logs the listening port without secrets', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    }
+  };
+  const clientConfigs = [];
+  const logMessages = [];
+  let createAppArgs;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+      clientConfigs.push(clickhouseConfig);
+    }
+  }
+
+  const server = start({
+    loadConfigFn: () => config,
+    ClientClass: FakeClient,
+    createAppFn: (args) => {
+      createAppArgs = args;
+
+      return http.createServer((req, res) => {
+        res.setHeader('content-type', 'text/plain');
+        res.end('started');
+      });
+    },
+    logger: {
+      log(message) {
+        logMessages.push(message);
+      }
+    }
+  });
+
+  try {
+    await waitForListening(server);
+
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    const text = await response.text();
+
+    assert.equal(text, 'started');
+    assert.deepEqual(clientConfigs, [config.clickhouse]);
+    assert.equal(createAppArgs.config, config);
+    assert.ok(createAppArgs.client instanceof FakeClient);
+    assert.equal(logMessages.length, 1);
+    assert.match(logMessages[0], new RegExp(`port ${port}`));
+    assert.doesNotMatch(logMessages[0], /super-secret/);
+  } finally {
+    await closeServer(server);
+  }
 });
 
 test('unknown routes return 404', async () => {

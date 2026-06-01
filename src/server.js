@@ -1,4 +1,5 @@
 const express = require('express');
+const { STATUS_CODES } = require('node:http');
 
 const { ClickHouseClient } = require('./clickhouseClient');
 const { loadConfig } = require('./config');
@@ -14,6 +15,16 @@ function sanitizeForResponse(message, config) {
   }
 
   return safeMessage.split(password).join('[redacted]');
+}
+
+function statusCodeFromError(error) {
+  const statusCode = error && (error.status || error.statusCode);
+
+  if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 499) {
+    return statusCode;
+  }
+
+  return 502;
 }
 
 function createApp({ config, client }) {
@@ -96,21 +107,31 @@ function createApp({ config, client }) {
       return;
     }
 
-    sendError(res, 502, 'Upstream Error', error && error.message);
+    const statusCode = statusCodeFromError(error);
+    const title = statusCode === 502 ? 'Upstream Error' : STATUS_CODES[statusCode] || 'Bad Request';
+
+    sendError(res, statusCode, title, error && error.message);
   });
 
   return app;
 }
 
-function start() {
-  const config = loadConfig();
-  const client = new ClickHouseClient(config.clickhouse);
-  const app = createApp({ config, client });
+function start(options = {}) {
+  const {
+    env = process.env,
+    loadConfigFn = loadConfig,
+    ClientClass = ClickHouseClient,
+    createAppFn = createApp,
+    logger = console
+  } = options;
+  const config = loadConfigFn(env);
+  const client = new ClientClass(config.clickhouse);
+  const app = createAppFn({ config, client });
   const server = app.listen(config.port, () => {
     const address = server.address();
     const port = address && typeof address === 'object' ? address.port : config.port;
 
-    console.log(`ETL Analytics listening on port ${port}`);
+    logger.log(`ETL Analytics listening on port ${port}`);
   });
 
   return server;

@@ -131,6 +131,7 @@ const { loadWorkplaceAnalysisDashboard } = require('../src/workplaceAnalysisDash
 
 test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders with safe parameters', async () => {
   const calls = [];
+  const maliciousSearch = 'Lenina; DROP TABLE mg_orders';
   const client = {
     async queryJSONEachRow(query, params, operation) {
       calls.push({ query, params, operation });
@@ -173,7 +174,7 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
       profession: 'Комплектовщик',
       orderType: 'regular',
       contractor: 'Ромашка',
-      search: 'Ленина'
+      search: maliciousSearch
     },
     new Date('2026-06-15T12:00:00.000Z')
   );
@@ -184,6 +185,8 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls.length, 2);
   assert.equal(calls[0].operation, 'workplace analysis top workplaces');
   assert.equal(calls[1].operation, 'workplace analysis daily orders');
+  assert.equal(calls[1].query.includes('WITH top_workplaces'), true);
+  assert.equal(calls[1].query.includes('INNER JOIN top_workplaces AS tw'), true);
 
   for (const call of calls) {
     assert.equal(call.params.param_from, '2026-06-01 00:00:00');
@@ -194,8 +197,11 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     assert.equal(call.params.param_profession, 'Комплектовщик');
     assert.equal(call.params.param_order_type, 'regular');
     assert.equal(call.params.param_contractor, 'Ромашка');
-    assert.equal(call.params.param_search, 'Ленина');
+    assert.equal(call.params.param_search, maliciousSearch);
+    assert.equal(Object.values(call.params).includes(maliciousSearch), true);
+    assert.equal(call.query.includes(maliciousSearch), false);
     assert.equal(call.query.includes('DROP TABLE'), false);
     assert.equal(call.query.includes('{limit:UInt64}'), true);
+    assert.equal(call.query.includes('ORDER BY total_ordered_shifts DESC, workplace_id ASC'), true);
   }
 });

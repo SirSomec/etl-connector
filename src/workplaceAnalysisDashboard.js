@@ -280,7 +280,7 @@ function topWorkplacesSelect(whereSql) {
   LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   WHERE ${whereSql}
   GROUP BY workplace_id
-  ORDER BY total_ordered_shifts DESC
+  ORDER BY total_ordered_shifts DESC, workplace_id ASC
   LIMIT {limit:UInt64}`;
 }
 

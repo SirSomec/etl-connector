@@ -231,24 +231,26 @@ function shiftFactsCte() {
   return `
 WITH shift_facts AS (
   SELECT
-    job,
-    min(parseDateTimeBestEffortOrNull(start)) AS shift_start,
-    coalesce(argMaxIf(status, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(status, '') != ''), '') AS status,
-    argMaxIf(client, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(client, '') != '') AS client,
-    argMaxIf(workplace, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(workplace, '') != '') AS workplace,
-    argMaxIf(worker, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(worker, '') != '') AS worker,
-    argMaxIf(source, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(source, '') != '') AS source,
-    argMax(salary_per_hour, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_hour,
-    argMax(salary_per_job, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_job,
-    argMax(payment_per_hour, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_hour,
-    argMax(payment_per_job, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_job,
-    argMax(hours, coalesce(updatedAt, createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS hours,
-    max(if(status = 'booked' AND initiator = 'worker', 1, 0)) AS is_self_booked
-  FROM mg_job_history
-  WHERE job != ''
-    AND parseDateTimeBestEffortOrNull(start) >= {from:DateTime}
-    AND parseDateTimeBestEffortOrNull(start) < {to:DateTime}
-  GROUP BY job
+    h.job AS job,
+    min(parseDateTimeBestEffortOrNull(h.start)) AS shift_start,
+    coalesce(argMaxIf(h.status, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.status, '') != ''), '') AS status,
+    argMaxIf(h.client, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.client, '') != '') AS client,
+    argMaxIf(h.workplace, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.workplace, '') != '') AS workplace,
+    argMaxIf(h.worker, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.worker, '') != '') AS worker,
+    argMaxIf(h.source, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.source, '') != '') AS source,
+    argMax(h.salary_per_hour, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_hour,
+    argMax(h.salary_per_job, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_job,
+    argMax(h.payment_per_hour, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_hour,
+    argMax(h.payment_per_job, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_job,
+    argMax(h.hours, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS hours,
+    max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0)) AS is_self_booked
+  FROM mg_job_history AS h
+  WHERE h.job != ''
+    AND h.start IS NOT NULL
+    AND h.start != 'NaT'
+    AND h.start >= {from_string:String}
+    AND h.start < {to_string:String}
+  GROUP BY h.job
 ),
 surcharges AS (
   SELECT
@@ -297,7 +299,9 @@ function revenueExpression() {
 function paramsForFilters(filters) {
   return {
     param_from: filters.fromDateTime,
-    param_to: filters.toExclusiveDateTime
+    param_to: filters.toExclusiveDateTime,
+    param_from_string: filters.fromDateTime,
+    param_to_string: filters.toExclusiveDateTime
   };
 }
 

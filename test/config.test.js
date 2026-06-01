@@ -16,6 +16,7 @@ test('loadConfig returns required values and safe defaults', () => {
   assert.equal(config.clickhouse.database, 'etl');
   assert.equal(config.clickhouse.user, 'rouser');
   assert.equal(config.clickhouse.password, 'secret');
+  assert.equal(config.clickhouse.requestTimeoutMs, 30000);
   assert.equal(
     config.clickhouse.caPath,
     '/usr/local/share/ca-certificates/Yandex/RootCA.crt'
@@ -74,5 +75,16 @@ test('loadConfig rejects invalid numeric ports', () => {
         PORT: '0'
       }),
     /PORT must be between 1 and 65535/
+  );
+
+  assert.throws(
+    () =>
+      loadConfig({
+        CLICKHOUSE_HOST: 'clickhouse.example.test',
+        CLICKHOUSE_USER: 'rouser',
+        CLICKHOUSE_PASSWORD: 'secret',
+        CLICKHOUSE_REQUEST_TIMEOUT_MS: 'slow'
+      }),
+    /CLICKHOUSE_REQUEST_TIMEOUT_MS must be an integer/
   );
 });

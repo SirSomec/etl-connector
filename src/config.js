@@ -38,6 +38,7 @@ function loadConfig(env = process.env) {
       database: env.CLICKHOUSE_DATABASE || 'etl',
       user: env.CLICKHOUSE_USER,
       password: env.CLICKHOUSE_PASSWORD,
+      requestTimeoutMs: readInt(env, 'CLICKHOUSE_REQUEST_TIMEOUT_MS', 30000),
       caPath:
         env.CLICKHOUSE_CA_PATH ||
         '/usr/local/share/ca-certificates/Yandex/RootCA.crt'

@@ -176,7 +176,13 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.equal(calls.length, 7);
   assert.ok(calls.every((call) => call.params.param_from === '2026-04-01 00:00:00'));
   assert.ok(calls.every((call) => call.params.param_to === '2026-05-01 00:00:00'));
+  assert.ok(calls.every((call) => call.params.param_from_string === '2026-04-01 00:00:00'));
+  assert.ok(calls.every((call) => call.params.param_to_string === '2026-05-01 00:00:00'));
   assert.equal(calls.some((call) => call.query.includes('DROP TABLE')), false);
+  assert.ok(calls.some((call) => call.query.includes('FROM mg_job_history AS h')));
+  assert.ok(calls.some((call) => call.query.includes("h.start != 'NaT'")));
+  assert.ok(calls.some((call) => call.query.includes('h.start >= {from_string:String}')));
+  assert.ok(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0))")));
   assert.ok(
     calls.some((call) =>
       call.query.includes("ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type")

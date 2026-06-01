@@ -203,8 +203,129 @@ function mergeWorkplaceAnalysisRows(filters, workplaceRows, dailyRows) {
   };
 }
 
-async function loadWorkplaceAnalysisDashboard() {
-  throw new Error('loadWorkplaceAnalysisDashboard is not implemented yet');
+function addOptionalWhere(filters, where, params) {
+  if (filters.client) {
+    where.push('c.title = {client:String}');
+    params.param_client = filters.client;
+  }
+  if (filters.city) {
+    where.push('w.address__city = {city:String}');
+    params.param_city = filters.city;
+  }
+  if (filters.region) {
+    where.push('w.address__region = {region:String}');
+    params.param_region = filters.region;
+  }
+  if (filters.profession) {
+    where.push("(o.spec = {profession:String} OR positionCaseInsensitive(ifNull(p.caption, ''), {profession:String}) > 0)");
+    params.param_profession = filters.profession;
+  }
+  if (filters.orderType) {
+    where.push('o.type = {order_type:String}');
+    params.param_order_type = filters.orderType;
+  }
+  if (filters.contractor) {
+    where.push("(ct._id = {contractor:String} OR positionCaseInsensitive(ifNull(ct.legal_name, ''), {contractor:String}) > 0)");
+    params.param_contractor = filters.contractor;
+  }
+  if (filters.search) {
+    where.push(`(
+      positionCaseInsensitive(ifNull(w.title, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.technical_name, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.address__city, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.address__region, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.address__street, ''), {search:String}) > 0
+    )`);
+    params.param_search = filters.search;
+  }
+}
+
+function paramsForFilters(filters) {
+  const params = {
+    param_from: filters.fromDateTime,
+    param_to: filters.toExclusiveDateTime,
+    param_limit: filters.limit
+  };
+  const where = [
+    'o.deleted = 0',
+    'o.start >= {from:DateTime}',
+    'o.start < {to:DateTime}',
+    "ifNull(o.workplace, '') != ''",
+    'ifNull(o.amount, 0) > 0'
+  ];
+
+  addOptionalWhere(filters, where, params);
+
+  return {
+    params,
+    whereSql: where.join('\n    AND ')
+  };
+}
+
+function topWorkplacesSelect(whereSql) {
+  return `SELECT
+    o.workplace AS workplace_id,
+    ifNull(any(w.title), '') AS workplace_title,
+    ifNull(any(w.technical_name), '') AS technical_name,
+    ifNull(any(c.title), 'Без бренда') AS client_title,
+    ifNull(any(w.address__city), '') AS city,
+    ifNull(any(w.address__region), '') AS region,
+    ifNull(any(w.address__street), '') AS street,
+    sum(ifNull(o.amount, 0)) AS total_ordered_shifts,
+    countDistinct(toDate(o.start)) AS active_days
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE ${whereSql}
+  GROUP BY workplace_id
+  ORDER BY total_ordered_shifts DESC
+  LIMIT {limit:UInt64}`;
+}
+
+function topWorkplacesQuery(whereSql) {
+  return `${topWorkplacesSelect(whereSql)}
+  FORMAT JSONEachRow`;
+}
+
+function dailyOrdersQuery(whereSql) {
+  return `WITH top_workplaces AS (
+    ${topWorkplacesSelect(whereSql)}
+  )
+  SELECT
+    o.workplace AS workplace_id,
+    toString(toDate(o.start)) AS order_date,
+    sum(ifNull(o.amount, 0)) AS ordered_shifts
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
+  WHERE ${whereSql}
+  GROUP BY workplace_id, order_date
+  ORDER BY workplace_id, order_date
+  FORMAT JSONEachRow`;
+}
+
+async function loadWorkplaceAnalysisDashboard(client, input = {}, now = new Date()) {
+  const filters = normalizeWorkplaceAnalysisFilters(input, now);
+  const { params, whereSql } = paramsForFilters(filters);
+  const [workplaceRows, dailyRows] = await Promise.all([
+    client.queryJSONEachRow(
+      topWorkplacesQuery(whereSql),
+      params,
+      'workplace analysis top workplaces'
+    ),
+    client.queryJSONEachRow(
+      dailyOrdersQuery(whereSql),
+      params,
+      'workplace analysis daily orders'
+    )
+  ]);
+
+  return mergeWorkplaceAnalysisRows(filters, workplaceRows, dailyRows);
 }
 
 module.exports = {

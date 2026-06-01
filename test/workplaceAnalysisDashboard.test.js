@@ -126,3 +126,76 @@ test('mergeWorkplaceAnalysisRows calculates stability and fills missing heatmap 
     { date: '2026-06-03', amount: 6, level: 4 }
   ]);
 });
+
+const { loadWorkplaceAnalysisDashboard } = require('../src/workplaceAnalysisDashboard');
+
+test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders with safe parameters', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Точка',
+            technical_name: 'tech',
+            client_title: 'Бренд',
+            city: 'Москва',
+            region: 'Москва',
+            street: 'Ленина 10',
+            total_ordered_shifts: 9,
+            active_days: 2
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [
+          { workplace_id: 'wp1', order_date: '2026-06-01', ordered_shifts: 3 },
+          { workplace_id: 'wp1', order_date: '2026-06-03', ordered_shifts: 6 }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-03',
+      client: 'Бренд',
+      city: 'Москва',
+      region: 'Москва',
+      profession: 'Комплектовщик',
+      orderType: 'regular',
+      contractor: 'Ромашка',
+      search: 'Ленина'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(dashboard.points.length, 1);
+  assert.equal(dashboard.points[0].totalOrderedShifts, 9);
+  assert.equal(dashboard.points[0].heatmapDays.length, 3);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].operation, 'workplace analysis top workplaces');
+  assert.equal(calls[1].operation, 'workplace analysis daily orders');
+
+  for (const call of calls) {
+    assert.equal(call.params.param_from, '2026-06-01 00:00:00');
+    assert.equal(call.params.param_to, '2026-06-04 00:00:00');
+    assert.equal(call.params.param_client, 'Бренд');
+    assert.equal(call.params.param_city, 'Москва');
+    assert.equal(call.params.param_region, 'Москва');
+    assert.equal(call.params.param_profession, 'Комплектовщик');
+    assert.equal(call.params.param_order_type, 'regular');
+    assert.equal(call.params.param_contractor, 'Ромашка');
+    assert.equal(call.params.param_search, 'Ленина');
+    assert.equal(call.query.includes('DROP TABLE'), false);
+    assert.equal(call.query.includes('{limit:UInt64}'), true);
+  }
+});

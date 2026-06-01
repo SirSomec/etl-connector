@@ -86,6 +86,29 @@ function createFakeClient(overrides = {}) {
         return [{ status: 'confirmed', shifts: 8 }];
       }
 
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Точка',
+            technical_name: 'tech',
+            client_title: 'Бренд',
+            city: 'Москва',
+            region: 'Москва',
+            street: 'Ленина 10',
+            total_ordered_shifts: 9,
+            active_days: 2
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [
+          { workplace_id: 'wp1', order_date: '2026-06-01', ordered_shifts: 3 },
+          { workplace_id: 'wp1', order_date: '2026-06-03', ordered_shifts: 6 }
+        ];
+      }
+
       return [];
     }
   };
@@ -189,6 +212,47 @@ test('GET /dashboards/sales-by-project keeps dashboard nav active on upstream er
     assert.match(text, /Upstream Error/);
     assert.match(text, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
     assert.doesNotMatch(text, /class="nav-link active" href="\/"/);
+  });
+});
+
+test('GET /dashboards/workplace-analysis renders dashboard', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis?from=2026-06-01&to=2026-06-03&city=Москва&orderType=regular'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Анализ точек/);
+    assert.match(text, /Точка/);
+    assert.match(text, /Заказано/);
+    assert.match(text, /66\.7%/);
+  });
+
+  assert.equal(
+    client.calls.filter((call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace analysis')).length,
+    2
+  );
+});
+
+test('GET /dashboards/workplace-analysis keeps navigation active on route errors', async () => {
+  const client = createFakeClient();
+
+  client.queryJSONEachRow = async (query, params, operation) => {
+    client.calls.push(['queryJSONEachRow', operation]);
+    throw new Error('ClickHouse rejected password super-secret');
+  };
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/dashboards/workplace-analysis');
+
+    assert.equal(response.status, 502);
+    assert.match(text, /ClickHouse rejected password \[redacted\]/);
+    assert.match(text, /class="nav-link active" href="\/dashboards\/workplace-analysis"/);
+    assert.doesNotMatch(text, /super-secret/);
   });
 });
 

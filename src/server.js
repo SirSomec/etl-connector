@@ -4,7 +4,14 @@ const { STATUS_CODES } = require('node:http');
 const { ClickHouseClient } = require('./clickhouseClient');
 const { loadConfig } = require('./config');
 const { loadSalesByProjectDashboard } = require('./salesByProjectDashboard');
-const { renderError, renderHome, renderSalesByProjectDashboard, renderTable } = require('./render');
+const { loadWorkplaceAnalysisDashboard } = require('./workplaceAnalysisDashboard');
+const {
+  renderError,
+  renderHome,
+  renderSalesByProjectDashboard,
+  renderTable,
+  renderWorkplaceAnalysisDashboard
+} = require('./render');
 
 function sanitizeForResponse(message, config) {
   const text = String(message || '');
@@ -29,7 +36,12 @@ function statusCodeFromError(error) {
 }
 
 function activeNavForPath(path) {
-  return path === '/dashboards/sales-by-project' ? 'sales-by-project' : 'tables';
+  const navByPath = {
+    '/dashboards/sales-by-project': 'sales-by-project',
+    '/dashboards/workplace-analysis': 'workplace-analysis'
+  };
+
+  return navByPath[path] || 'tables';
 }
 
 function createApp({ config, client }) {
@@ -106,6 +118,18 @@ function createApp({ config, client }) {
         .status(200)
         .type('html')
         .send(renderSalesByProjectDashboard({ database, dashboard }));
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis',
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadWorkplaceAnalysisDashboard(client, req.query);
+
+      res
+        .status(200)
+        .type('html')
+        .send(renderWorkplaceAnalysisDashboard({ database, dashboard }));
     })
   );
 

@@ -88,7 +88,8 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
             unique_workers: 5,
             workplaces_with_worked_shifts: 2,
             cancelled_shifts: 1,
-            self_booked_confirmed_shifts: 4
+            self_booked_confirmed_shifts: 4,
+            avg_worker_rate_hour: 300
           }
         ];
       }
@@ -128,7 +129,8 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
             unique_workers: 5,
             workplaces_with_worked_shifts: 2,
             cancelled_shifts: 1,
-            self_booked_confirmed_shifts: 4
+            self_booked_confirmed_shifts: 4,
+            avg_worker_rate_hour: 300
           }
         ];
       }
@@ -160,7 +162,7 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.equal(dashboard.summary.workplacesWithWorkedShifts, 2);
   assert.equal(dashboard.summary.cancelledShifts, 1);
   assert.equal(dashboard.summary.selfBookingPercent, 50);
-  assert.equal(dashboard.summary.avgWorkerRateHour, 250);
+  assert.equal(dashboard.summary.avgWorkerRateHour, 300);
   assert.deepEqual(dashboard.trendRows, [
     {
       period: '2026-04-01',
@@ -183,6 +185,27 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.ok(calls.some((call) => call.query.includes("h.start != 'NaT'")));
   assert.ok(calls.some((call) => call.query.includes('h.start >= {from_string:String}')));
   assert.ok(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0))")));
+  assert.ok(calls.some((call) => call.query.includes('AS cancellation_reason')));
+  assert.ok(calls.some((call) => call.query.includes("uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts")));
+  assert.ok(
+    calls.some((call) =>
+      call.query.includes("countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts")
+    )
+  );
+  assert.ok(
+    calls.some((call) =>
+      call.query.includes("avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0) AS avg_worker_rate_hour")
+    )
+  );
+  assert.ok(calls.some((call) => call.query.includes('sf.salary_per_hour AS salary_per_hour')));
+  assert.ok(
+    calls.some((call) =>
+      call.query.includes("countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders")
+    )
+  );
+  assert.equal(calls.some((call) => call.query.includes('o.amount > 0) AS workplaces_with_orders')), false);
+  assert.equal(calls.some((call) => call.query.includes("countIf(status = 'confirmed') AS worked_shifts")), false);
+  assert.equal(calls.some((call) => call.query.includes("countIf(status = 'cancelled') AS cancelled_shifts")), false);
   assert.ok(
     calls.some((call) =>
       call.query.includes("ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type")
@@ -213,7 +236,8 @@ test('loadSalesByProjectDashboard merges brand rows before limiting them', async
         brand: 'Общий бренд',
         worked_shifts: 4,
         revenue_rub: 1000,
-        self_booked_confirmed_shifts: 2
+        self_booked_confirmed_shifts: 2,
+        avg_worker_rate_hour: 300
       },
       {
         brand: 'Только смены',
@@ -244,6 +268,7 @@ test('loadSalesByProjectDashboard merges brand rows before limiting them', async
   assert.equal(sharedBrand.orderedShifts, 5);
   assert.equal(sharedBrand.workedShifts, 4);
   assert.equal(sharedBrand.slaPercent, 80);
+  assert.equal(sharedBrand.avgWorkerRateHour, 300);
   assert.equal(shiftsOnlyBrand.orderedShifts, 0);
   assert.equal(shiftsOnlyBrand.workedShifts, 1000);
   assert.ok(brandQueries.every((call) => !call.query.includes('LIMIT 50')));
@@ -268,6 +293,27 @@ test('loadSalesByProjectDashboard limits surcharges to selected shift facts', as
   );
   assert.ok(calls.some((call) => call.query.includes("t.transaction_type = 'surcharge'")));
   assert.ok(calls.some((call) => call.query.includes("t.entityId != ''")));
+});
+
+test('loadSalesByProjectDashboard uses a lightweight status breakdown query', async () => {
+  const { calls, client } = createDashboardClient({});
+
+  await loadSalesByProjectDashboard(
+    client,
+    {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  const statusQuery = calls.find((call) => call.operation === 'sales by project status breakdown');
+
+  assert.ok(statusQuery.query.includes('FROM shift_facts'));
+  assert.equal(statusQuery.query.includes('FROM shift_enriched'), false);
+  assert.equal(statusQuery.query.includes('FROM mg_transactions AS t'), false);
+  assert.equal(statusQuery.query.includes('LEFT JOIN mg_clients'), false);
 });
 
 test('loadSalesByProjectDashboard maps empty responses to zero summary and empty rows', async () => {
@@ -316,7 +362,8 @@ test('loadSalesByProjectDashboard converts ClickHouse numeric strings to numeric
         unique_workers: '5',
         workplaces_with_worked_shifts: '2',
         cancelled_shifts: '1',
-        self_booked_confirmed_shifts: '4'
+        self_booked_confirmed_shifts: '4',
+        avg_worker_rate_hour: '250'
       }
     ]
   });

@@ -87,6 +87,20 @@ function numberValue(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function hasNumericValue(value) {
+  return value !== null && value !== undefined && value !== '';
+}
+
+function firstNumberValue(...values) {
+  for (const value of values) {
+    if (hasNumericValue(value)) {
+      return numberValue(value);
+    }
+  }
+
+  return 0;
+}
+
 function percent(numerator, denominator) {
   const bottom = numberValue(denominator);
 
@@ -113,7 +127,7 @@ function mapSummaryRows(orderRows, shiftRows) {
     workplacesWithWorkedShifts: numberValue(shifts.workplaces_with_worked_shifts),
     cancelledShifts: numberValue(shifts.cancelled_shifts),
     selfBookingPercent: percent(shifts.self_booked_confirmed_shifts, workedShifts),
-    avgWorkerRateHour: numberValue(orders.avg_worker_rate_hour)
+    avgWorkerRateHour: firstNumberValue(shifts.avg_worker_rate_hour)
   };
 }
 
@@ -195,6 +209,7 @@ function mergeBrandRows(orderRows, shiftRows) {
     current.cancelledShifts = numberValue(row.cancelled_shifts);
     current.slaPercent = percent(current.workedShifts, current.orderedShifts);
     current.selfBookingPercent = percent(row.self_booked_confirmed_shifts, current.workedShifts);
+    current.avgWorkerRateHour = firstNumberValue(row.avg_worker_rate_hour);
     byBrand.set(brand, current);
   }
 
@@ -227,7 +242,7 @@ function orderBaseWhere() {
   return ['o.deleted = 0', 'o.start >= {from:DateTime}', 'o.start < {to:DateTime}'].join(' AND ');
 }
 
-function shiftFactsCte() {
+function shiftFactsOnlyCte() {
   return `
 WITH shift_facts AS (
   SELECT
@@ -238,6 +253,7 @@ WITH shift_facts AS (
     argMaxIf(h.workplace, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.workplace, '') != '') AS workplace,
     argMaxIf(h.worker, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.worker, '') != '') AS worker,
     argMaxIf(h.source, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.source, '') != '') AS source,
+    argMaxIf(h.cancellation_reason, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.cancellation_reason, '') != '') AS cancellation_reason,
     argMax(h.salary_per_hour, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_hour,
     argMax(h.salary_per_job, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_job,
     argMax(h.payment_per_hour, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_hour,
@@ -251,7 +267,11 @@ WITH shift_facts AS (
     AND h.start >= {from_string:String}
     AND h.start < {to_string:String}
   GROUP BY h.job
-),
+)`;
+}
+
+function shiftFactsCte() {
+  return `${shiftFactsOnlyCte()},
 surcharges AS (
   SELECT
     t.entityId AS job,
@@ -268,6 +288,8 @@ shift_enriched AS (
     sf.shift_start AS shift_start,
     sf.status AS status,
     sf.worker AS worker,
+    sf.cancellation_reason AS cancellation_reason,
+    sf.salary_per_hour AS salary_per_hour,
     coalesce(nullIf(sf.client, ''), o.client) AS client,
     coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
     sf.is_self_booked AS is_self_booked,
@@ -296,6 +318,18 @@ function revenueExpression() {
   ].join(' ');
 }
 
+function workedShiftsExpression() {
+  return "uniqExactIf(job, status = 'confirmed' AND job != '')";
+}
+
+function cancelledShiftsExpression() {
+  return "countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed')";
+}
+
+function avgWorkerRateHourExpression() {
+  return "avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0)";
+}
+
 function paramsForFilters(filters) {
   return {
     param_from: filters.fromDateTime,
@@ -311,6 +345,9 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
   const periodShifts = buildPeriodExpression(filters.period, 'shift_start');
   const params = paramsForFilters(filters);
   const revenue = revenueExpression();
+  const workedShifts = workedShiftsExpression();
+  const cancelledShifts = cancelledShiftsExpression();
+  const avgWorkerRateHour = avgWorkerRateHourExpression();
 
   const [
     orderSummaryRows,
@@ -324,8 +361,7 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
     client.queryJSONEachRow(
       `SELECT
         sum(o.amount) AS ordered_shifts,
-        countDistinctIf(o.workplace, o.amount > 0) AS workplaces_with_orders,
-        avgIf(o.salary_per_hour, o.salary_per_hour > 0) AS avg_worker_rate_hour
+        countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders
       FROM mg_orders AS o
       WHERE ${orderBaseWhere()}
       FORMAT JSONEachRow`,
@@ -335,12 +371,13 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
     client.queryJSONEachRow(
       `${shiftFactsCte()}
       SELECT
-        countIf(status = 'confirmed') AS worked_shifts,
+        ${workedShifts} AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
-        countDistinctIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-        countDistinctIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
-        countIf(status = 'cancelled') AS cancelled_shifts,
-        countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts
+        uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
+        uniqExactIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+        ${cancelledShifts} AS cancelled_shifts,
+        countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+        ${avgWorkerRateHour} AS avg_worker_rate_hour
       FROM shift_enriched
       FORMAT JSONEachRow`,
       params,
@@ -362,9 +399,9 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       `${shiftFactsCte()}
       SELECT
         ${periodShifts} AS period,
-        countIf(status = 'confirmed') AS worked_shifts,
+        ${workedShifts} AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
-        countIf(status = 'cancelled') AS cancelled_shifts
+        ${cancelledShifts} AS cancelled_shifts
       FROM shift_enriched
       GROUP BY period
       ORDER BY period
@@ -376,8 +413,7 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       `SELECT
         ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
         sum(o.amount) AS ordered_shifts,
-        countDistinctIf(o.workplace, o.amount > 0) AS workplaces_with_orders,
-        avgIf(o.salary_per_hour, o.salary_per_hour > 0) AS avg_worker_rate_hour
+        countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders
       FROM mg_orders AS o
       LEFT JOIN mg_clients AS c ON o.client = c._id
       WHERE ${orderBaseWhere()}
@@ -391,12 +427,13 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       `${shiftFactsCte()}
       SELECT
         ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
-        countIf(status = 'confirmed') AS worked_shifts,
+        ${workedShifts} AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
-        countDistinctIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-        countDistinctIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
-        countIf(status = 'cancelled') AS cancelled_shifts,
-        countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts
+        uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
+        uniqExactIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+        ${cancelledShifts} AS cancelled_shifts,
+        countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+        ${avgWorkerRateHour} AS avg_worker_rate_hour
       FROM shift_enriched
       LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
       GROUP BY brand
@@ -406,11 +443,11 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       'sales by project brand shifts'
     ),
     client.queryJSONEachRow(
-      `${shiftFactsCte()}
+      `${shiftFactsOnlyCte()}
       SELECT
         if(status = '', 'empty', status) AS status,
         count() AS shifts
-      FROM shift_enriched
+      FROM shift_facts
       GROUP BY status
       ORDER BY shifts DESC
       FORMAT JSONEachRow`,

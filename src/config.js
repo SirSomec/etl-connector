@@ -22,7 +22,9 @@ function readInt(env, name, defaultValue) {
 
 function loadConfig(env = process.env) {
   const required = ['CLICKHOUSE_HOST', 'CLICKHOUSE_USER', 'CLICKHOUSE_PASSWORD'];
-  const missing = required.filter((name) => !env[name]);
+  const missing = required.filter(
+    (name) => typeof env[name] !== 'string' || env[name].trim() === ''
+  );
 
   if (missing.length > 0) {
     throw new ConfigError(`Missing required environment variables: ${missing.join(', ')}`);

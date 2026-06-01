@@ -35,6 +35,24 @@ test('loadConfig reports every missing required variable', () => {
   );
 });
 
+test('loadConfig rejects blank required variables', () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        CLICKHOUSE_HOST: '   ',
+        CLICKHOUSE_USER: '\t',
+        CLICKHOUSE_PASSWORD: '\n'
+      }),
+    (error) => {
+      assert.ok(error instanceof ConfigError);
+      assert.match(error.message, /CLICKHOUSE_HOST/);
+      assert.match(error.message, /CLICKHOUSE_USER/);
+      assert.match(error.message, /CLICKHOUSE_PASSWORD/);
+      return true;
+    }
+  );
+});
+
 test('loadConfig rejects invalid numeric ports', () => {
   assert.throws(
     () =>

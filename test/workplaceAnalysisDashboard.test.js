@@ -25,27 +25,28 @@ test('normalizeWorkplaceAnalysisFilters defaults to the current month and whitel
     fromDateTime: '2026-06-01 00:00:00',
     toExclusiveDateTime: '2026-06-16 00:00:00',
     rangeDays: 15,
-    client: 'Бренд',
-    city: '',
-    region: '',
-    profession: '',
-    orderType: '',
-    contractor: '',
+    client: ['Бренд'],
+    city: [],
+    region: [],
+    profession: [],
+    orderType: [],
+    contractor: [],
     search: '<script>',
     limit: 12
   });
 });
 
-test('normalizeWorkplaceAnalysisFilters accepts valid dates, valid order type, and whitelisted limit', () => {
+test('normalizeWorkplaceAnalysisFilters accepts repeated values, valid order types, and whitelisted limit', () => {
   const filters = normalizeWorkplaceAnalysisFilters(
     {
       from: '2026-04-01',
       to: '2026-04-30',
-      orderType: 'regular',
-      city: 'Казань',
+      client: ['Brand A', 'Brand B', 'Brand A', ' '],
+      orderType: ['regular', 'once', 'unsafe'],
+      city: ['Казань', 'Москва'],
       region: 'Татарстан',
-      profession: 'picker',
-      contractor: 'ООО Ромашка',
+      profession: ['picker', 'driver'],
+      contractor: ['ООО Ромашка'],
       limit: '20'
     },
     new Date('2026-06-15T12:00:00.000Z')
@@ -55,11 +56,12 @@ test('normalizeWorkplaceAnalysisFilters accepts valid dates, valid order type, a
   assert.equal(filters.to, '2026-04-30');
   assert.equal(filters.toExclusiveDateTime, '2026-05-01 00:00:00');
   assert.equal(filters.rangeDays, 30);
-  assert.equal(filters.orderType, 'regular');
-  assert.equal(filters.city, 'Казань');
-  assert.equal(filters.region, 'Татарстан');
-  assert.equal(filters.profession, 'picker');
-  assert.equal(filters.contractor, 'ООО Ромашка');
+  assert.deepEqual(filters.client, ['Brand A', 'Brand B']);
+  assert.deepEqual(filters.orderType, ['regular', 'once']);
+  assert.deepEqual(filters.city, ['Казань', 'Москва']);
+  assert.deepEqual(filters.region, ['Татарстан']);
+  assert.deepEqual(filters.profession, ['picker', 'driver']);
+  assert.deepEqual(filters.contractor, ['ООО Ромашка']);
   assert.equal(filters.limit, 20);
 });
 
@@ -136,6 +138,19 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     async queryJSONEachRow(query, params, operation) {
       calls.push({ query, params, operation });
 
+      if (operation === 'workplace analysis filter options') {
+        return [
+          { filter: 'client', value: 'Бренд' },
+          { filter: 'client', value: 'Бренд 2' },
+          { filter: 'city', value: 'Москва' },
+          { filter: 'region', value: 'Москва' },
+          { filter: 'profession', value: 'Комплектовщик' },
+          { filter: 'orderType', value: 'regular' },
+          { filter: 'orderType', value: 'once' },
+          { filter: 'contractor', value: 'Ромашка' }
+        ];
+      }
+
       if (operation === 'workplace analysis top workplaces') {
         return [
           {
@@ -168,12 +183,12 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     {
       from: '2026-06-01',
       to: '2026-06-03',
-      client: 'Бренд',
-      city: 'Москва',
-      region: 'Москва',
-      profession: 'Комплектовщик',
-      orderType: 'regular',
-      contractor: 'Ромашка',
+      client: ['Бренд', 'Бренд 2'],
+      city: ['Москва'],
+      region: ['Москва'],
+      profession: ['Комплектовщик'],
+      orderType: ['regular', 'once'],
+      contractor: ['Ромашка'],
       search: maliciousSearch
     },
     new Date('2026-06-15T12:00:00.000Z')
@@ -182,25 +197,34 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(dashboard.points.length, 1);
   assert.equal(dashboard.points[0].totalOrderedShifts, 9);
   assert.equal(dashboard.points[0].heatmapDays.length, 3);
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0].operation, 'workplace analysis top workplaces');
-  assert.equal(calls[1].operation, 'workplace analysis daily orders');
-  assert.equal(calls[1].query.includes('WITH top_workplaces'), true);
-  assert.equal(calls[1].query.includes('INNER JOIN top_workplaces AS tw'), true);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].operation, 'workplace analysis filter options');
+  assert.equal(calls[1].operation, 'workplace analysis top workplaces');
+  assert.equal(calls[2].operation, 'workplace analysis daily orders');
+  assert.equal(calls[2].query.includes('WITH top_workplaces'), true);
+  assert.equal(calls[2].query.includes('INNER JOIN top_workplaces AS tw'), true);
+  assert.deepEqual(dashboard.filterOptions.client, ['Бренд', 'Бренд 2']);
+  assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
 
   for (const call of calls) {
     assert.equal(call.params.param_from, '2026-06-01 00:00:00');
     assert.equal(call.params.param_to, '2026-06-04 00:00:00');
-    assert.equal(call.params.param_client, 'Бренд');
-    assert.equal(call.params.param_city, 'Москва');
-    assert.equal(call.params.param_region, 'Москва');
-    assert.equal(call.params.param_profession, 'Комплектовщик');
-    assert.equal(call.params.param_order_type, 'regular');
-    assert.equal(call.params.param_contractor, 'Ромашка');
-    assert.equal(call.params.param_search, maliciousSearch);
-    assert.equal(Object.values(call.params).includes(maliciousSearch), true);
     assert.equal(call.query.includes(maliciousSearch), false);
     assert.equal(call.query.includes('DROP TABLE'), false);
+  }
+
+  for (const call of calls.slice(1)) {
+    assert.equal(call.params.param_clients, "['Бренд','Бренд 2']");
+    assert.equal(call.params.param_cities, "['Москва']");
+    assert.equal(call.params.param_regions, "['Москва']");
+    assert.equal(call.params.param_professions, "['Комплектовщик']");
+    assert.equal(call.params.param_order_types, "['regular','once']");
+    assert.equal(call.params.param_contractors, "['Ромашка']");
+    assert.equal(call.params.param_search, maliciousSearch);
+    assert.equal(Object.values(call.params).includes(maliciousSearch), true);
+    assert.equal(call.query.includes('IN {clients:Array(String)}'), true);
+    assert.equal(call.query.includes('IN {cities:Array(String)}'), true);
+    assert.equal(call.query.includes('IN {order_types:Array(String)}'), true);
     assert.equal(call.query.includes('{limit:UInt64}'), true);
     assert.equal(call.query.includes('ORDER BY total_ordered_shifts DESC, workplace_id ASC'), true);
   }

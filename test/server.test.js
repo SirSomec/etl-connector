@@ -86,6 +86,19 @@ function createFakeClient(overrides = {}) {
         return [{ status: 'confirmed', shifts: 8 }];
       }
 
+      if (operation === 'workplace analysis filter options') {
+        return [
+          { filter: 'client', value: 'Бренд' },
+          { filter: 'city', value: 'Москва' },
+          { filter: 'city', value: 'Казань' },
+          { filter: 'region', value: 'Москва' },
+          { filter: 'profession', value: 'Комплектовщик' },
+          { filter: 'orderType', value: 'regular' },
+          { filter: 'orderType', value: 'once' },
+          { filter: 'contractor', value: 'Ромашка' }
+        ];
+      }
+
       if (operation === 'workplace analysis top workplaces') {
         return [
           {
@@ -225,7 +238,7 @@ test('GET /dashboards/workplace-analysis renders dashboard with query filters', 
   await withServer(client, async (baseUrl) => {
     const { response, text } = await fetchText(
       baseUrl,
-      '/dashboards/workplace-analysis?from=2026-06-01&to=2026-06-03&city=Москва&orderType=regular'
+      '/dashboards/workplace-analysis?from=2026-06-01&to=2026-06-03&city=Москва&city=Казань&orderType=regular&orderType=once'
     );
 
     assert.equal(response.status, 200);
@@ -236,17 +249,25 @@ test('GET /dashboards/workplace-analysis renders dashboard with query filters', 
     assert.match(text, /66\.7%/);
   });
 
+  const optionCalls = client.calls.filter((call) => call[1] === 'workplace analysis filter options');
   const workplaceCalls = client.calls.filter(
-    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace analysis')
+    (call) =>
+      call[0] === 'queryJSONEachRow' &&
+      String(call[1]).startsWith('workplace analysis') &&
+      call[1] !== 'workplace analysis filter options'
   );
 
+  assert.equal(optionCalls.length, 1);
+  assert.equal(optionCalls[0][2].param_from, '2026-06-01 00:00:00');
+  assert.equal(optionCalls[0][2].param_to, '2026-06-04 00:00:00');
+  assert.equal(Object.prototype.hasOwnProperty.call(optionCalls[0][2], 'param_cities'), false);
   assert.equal(workplaceCalls.length, 2);
 
   for (const call of workplaceCalls) {
     assert.equal(call[2].param_from, '2026-06-01 00:00:00');
     assert.equal(call[2].param_to, '2026-06-04 00:00:00');
-    assert.equal(call[2].param_city, 'Москва');
-    assert.equal(call[2].param_order_type, 'regular');
+    assert.equal(call[2].param_cities, "['Москва','Казань']");
+    assert.equal(call[2].param_order_types, "['regular','once']");
   }
 });
 
@@ -273,6 +294,10 @@ test('GET /dashboards/workplace-analysis renders at least ten point cards when d
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {
       this.calls.push(['queryJSONEachRow', operation, params]);
+
+      if (operation === 'workplace analysis filter options') {
+        return [];
+      }
 
       if (operation === 'workplace analysis top workplaces') {
         return workplaceRows;

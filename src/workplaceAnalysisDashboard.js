@@ -2,6 +2,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
 const ALLOWED_LIMITS = new Set([10, 12, 20, 50]);
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
+const FILTER_OPTION_KEYS = ['client', 'city', 'region', 'profession', 'orderType', 'contractor'];
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -44,6 +45,25 @@ function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function cleanValues(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const values = [];
+  const seen = new Set();
+
+  for (const rawValue of rawValues) {
+    const text = cleanText(rawValue);
+
+    if (text === '' || seen.has(text)) {
+      continue;
+    }
+
+    seen.add(text);
+    values.push(text);
+  }
+
+  return values;
+}
+
 function normalizeLimit(value) {
   const limit = Number(value);
 
@@ -66,7 +86,6 @@ function normalizeWorkplaceAnalysisFilters(input = {}, now = new Date()) {
   const from = formatDateUTC(fromDate);
   const to = formatDateUTC(toDate);
   const toExclusive = formatDateUTC(addDaysUTC(toDate, 1));
-  const orderType = cleanText(input.orderType);
 
   return {
     from,
@@ -74,12 +93,12 @@ function normalizeWorkplaceAnalysisFilters(input = {}, now = new Date()) {
     fromDateTime: toDateTimeParam(from),
     toExclusiveDateTime: toDateTimeParam(toExclusive),
     rangeDays: buildDateKeys(from, to).length,
-    client: cleanText(input.client),
-    city: cleanText(input.city),
-    region: cleanText(input.region),
-    profession: cleanText(input.profession),
-    orderType: ALLOWED_ORDER_TYPES.has(orderType) ? orderType : '',
-    contractor: cleanText(input.contractor),
+    client: cleanValues(input.client),
+    city: cleanValues(input.city),
+    region: cleanValues(input.region),
+    profession: cleanValues(input.profession),
+    orderType: cleanValues(input.orderType).filter((value) => ALLOWED_ORDER_TYPES.has(value)),
+    contractor: cleanValues(input.contractor),
     search: cleanText(input.search),
     limit: normalizeLimit(input.limit)
   };
@@ -144,6 +163,55 @@ function compactAddress(row) {
   return [row.city, row.street].map((part) => String(part || '').trim()).filter(Boolean).join(', ');
 }
 
+function emptyFilterOptions() {
+  return FILTER_OPTION_KEYS.reduce((options, key) => {
+    options[key] = [];
+    return options;
+  }, {});
+}
+
+function filterOptionsFromRows(rows) {
+  const options = emptyFilterOptions();
+  const seenByKey = FILTER_OPTION_KEYS.reduce((seen, key) => {
+    seen[key] = new Set();
+    return seen;
+  }, {});
+
+  for (const row of rows) {
+    const key = String(row.filter || '');
+    const value = cleanText(row.value);
+
+    if (!Object.prototype.hasOwnProperty.call(options, key) || value === '') {
+      continue;
+    }
+
+    if (key === 'orderType' && !ALLOWED_ORDER_TYPES.has(value)) {
+      continue;
+    }
+
+    if (seenByKey[key].has(value)) {
+      continue;
+    }
+
+    seenByKey[key].add(value);
+    options[key].push(value);
+  }
+
+  return options;
+}
+
+function restrictFiltersToOptions(filters, filterOptions) {
+  const restricted = { ...filters };
+
+  for (const key of FILTER_OPTION_KEYS) {
+    const allowed = new Set(filterOptions[key] || []);
+
+    restricted[key] = filters[key].filter((value) => allowed.has(value));
+  }
+
+  return restricted;
+}
+
 function mergeWorkplaceAnalysisRows(filters, workplaceRows, dailyRows) {
   const dateKeys = buildDateKeys(filters.from, filters.to);
   const dailyByWorkplace = new Map();
@@ -204,29 +272,29 @@ function mergeWorkplaceAnalysisRows(filters, workplaceRows, dailyRows) {
 }
 
 function addOptionalWhere(filters, where, params) {
-  if (filters.client) {
-    where.push('c.title = {client:String}');
-    params.param_client = filters.client;
+  if (filters.client.length > 0) {
+    where.push('c.title IN {clients:Array(String)}');
+    params.param_clients = serializeStringArray(filters.client);
   }
-  if (filters.city) {
-    where.push('w.address__city = {city:String}');
-    params.param_city = filters.city;
+  if (filters.city.length > 0) {
+    where.push('w.address__city IN {cities:Array(String)}');
+    params.param_cities = serializeStringArray(filters.city);
   }
-  if (filters.region) {
-    where.push('w.address__region = {region:String}');
-    params.param_region = filters.region;
+  if (filters.region.length > 0) {
+    where.push('w.address__region IN {regions:Array(String)}');
+    params.param_regions = serializeStringArray(filters.region);
   }
-  if (filters.profession) {
-    where.push("(o.spec = {profession:String} OR positionCaseInsensitive(ifNull(p.caption, ''), {profession:String}) > 0)");
-    params.param_profession = filters.profession;
+  if (filters.profession.length > 0) {
+    where.push("if(ifNull(p.caption, '') = '', o.spec, p.caption) IN {professions:Array(String)}");
+    params.param_professions = serializeStringArray(filters.profession);
   }
-  if (filters.orderType) {
-    where.push('o.type = {order_type:String}');
-    params.param_order_type = filters.orderType;
+  if (filters.orderType.length > 0) {
+    where.push('o.type IN {order_types:Array(String)}');
+    params.param_order_types = serializeStringArray(filters.orderType);
   }
-  if (filters.contractor) {
-    where.push("(ct._id = {contractor:String} OR positionCaseInsensitive(ifNull(ct.legal_name, ''), {contractor:String}) > 0)");
-    params.param_contractor = filters.contractor;
+  if (filters.contractor.length > 0) {
+    where.push("ifNull(ct.legal_name, '') IN {contractors:Array(String)}");
+    params.param_contractors = serializeStringArray(filters.contractor);
   }
   if (filters.search) {
     where.push(`(
@@ -240,11 +308,18 @@ function addOptionalWhere(filters, where, params) {
   }
 }
 
-function paramsForFilters(filters) {
+function escapeClickHouseString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
+}
+
+function baseParamsForFilters(filters) {
   const params = {
     param_from: filters.fromDateTime,
-    param_to: filters.toExclusiveDateTime,
-    param_limit: filters.limit
+    param_to: filters.toExclusiveDateTime
   };
   const where = [
     'o.deleted = 0',
@@ -254,12 +329,53 @@ function paramsForFilters(filters) {
     'ifNull(o.amount, 0) > 0'
   ];
 
+  return {
+    params,
+    whereSql: where.join('\n    AND ')
+  };
+}
+
+function paramsForFilters(filters) {
+  const base = baseParamsForFilters(filters);
+  const params = {
+    ...base.params,
+    param_limit: filters.limit
+  };
+  const where = [base.whereSql];
+
   addOptionalWhere(filters, where, params);
 
   return {
     params,
     whereSql: where.join('\n    AND ')
   };
+}
+
+function filterOptionSelect(filter, valueExpression, whereSql) {
+  return `SELECT
+    '${filter}' AS filter,
+    ${valueExpression} AS value
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE ${whereSql}
+  GROUP BY value
+  HAVING value != ''`;
+}
+
+function filterOptionsQuery(whereSql) {
+  return `${[
+    filterOptionSelect('client', "ifNull(c.title, '')", whereSql),
+    filterOptionSelect('city', "ifNull(w.address__city, '')", whereSql),
+    filterOptionSelect('region', "ifNull(w.address__region, '')", whereSql),
+    filterOptionSelect('profession', "if(ifNull(p.caption, '') = '', o.spec, p.caption)", whereSql),
+    filterOptionSelect('orderType', "ifNull(o.type, '')", whereSql),
+    filterOptionSelect('contractor', "ifNull(ct.legal_name, '')", whereSql)
+  ].join('\n  UNION ALL\n  ')}
+  ORDER BY filter, value
+  FORMAT JSONEachRow`;
 }
 
 function topWorkplacesSelect(whereSql) {
@@ -310,7 +426,17 @@ function dailyOrdersQuery(whereSql) {
 }
 
 async function loadWorkplaceAnalysisDashboard(client, input = {}, now = new Date()) {
-  const filters = normalizeWorkplaceAnalysisFilters(input, now);
+  let filters = normalizeWorkplaceAnalysisFilters(input, now);
+  const base = baseParamsForFilters(filters);
+  const filterOptionRows = await client.queryJSONEachRow(
+    filterOptionsQuery(base.whereSql),
+    base.params,
+    'workplace analysis filter options'
+  );
+  const filterOptions = filterOptionsFromRows(filterOptionRows);
+
+  filters = restrictFiltersToOptions(filters, filterOptions);
+
   const { params, whereSql } = paramsForFilters(filters);
   const [workplaceRows, dailyRows] = await Promise.all([
     client.queryJSONEachRow(
@@ -325,7 +451,10 @@ async function loadWorkplaceAnalysisDashboard(client, input = {}, now = new Date
     )
   ]);
 
-  return mergeWorkplaceAnalysisRows(filters, workplaceRows, dailyRows);
+  return {
+    ...mergeWorkplaceAnalysisRows(filters, workplaceRows, dailyRows),
+    filterOptions
+  };
 }
 
 module.exports = {

@@ -212,6 +212,11 @@ function layout({ title, database, content, activeNav = 'tables' }) {
       color: var(--text);
     }
 
+    select[multiple] {
+      min-width: 190px;
+      min-height: 96px;
+    }
+
     button {
       padding: 6px 14px;
       border-color: var(--accent);
@@ -865,6 +870,45 @@ function renderOrderTypeOptions(selectedType) {
     .join('');
 }
 
+function orderTypeLabel(value) {
+  const labels = {
+    once: 'Разовые',
+    regular: 'Регулярные'
+  };
+
+  return labels[value] || value;
+}
+
+function selectedSet(values) {
+  return new Set(Array.isArray(values) ? values.map((value) => String(value)) : []);
+}
+
+function renderMultiSelectOptions(options, selectedValues, labelForValue = String) {
+  const selected = selectedSet(selectedValues);
+
+  return options
+    .map((option) => {
+      const value = String(option);
+      const selectedAttribute = selected.has(value) ? ' selected' : '';
+
+      return `<option value="${escapeHtml(value)}"${selectedAttribute}>${escapeHtml(labelForValue(value))}</option>`;
+    })
+    .join('');
+}
+
+function filterOptions(dashboard, key) {
+  const options = dashboard.filterOptions && dashboard.filterOptions[key];
+
+  return Array.isArray(options) ? options : [];
+}
+
+function renderMultiSelectField({ id, label, options, selected, labelForValue }) {
+  return `<div class="field">
+      <label for="${escapeHtml(id)}">${escapeHtml(label)}</label>
+      <select id="${escapeHtml(id)}" name="${escapeHtml(id)}" multiple size="4">${renderMultiSelectOptions(options, selected, labelForValue)}</select>
+    </div>`;
+}
+
 function renderLimitOptions(selectedLimit) {
   return [10, 12, 20, 50]
     .map((limit) => {
@@ -948,30 +992,43 @@ function renderWorkplaceAnalysisDashboard({ database, dashboard }) {
       <label for="to">По</label>
       <input id="to" name="to" type="date" value="${escapeHtml(filters.to)}">
     </div>
-    <div class="field">
-      <label for="client">Бренд</label>
-      <input id="client" name="client" value="${escapeHtml(filters.client)}">
-    </div>
-    <div class="field">
-      <label for="city">Город</label>
-      <input id="city" name="city" value="${escapeHtml(filters.city)}">
-    </div>
-    <div class="field">
-      <label for="region">Регион</label>
-      <input id="region" name="region" value="${escapeHtml(filters.region)}">
-    </div>
-    <div class="field">
-      <label for="profession">Специальность</label>
-      <input id="profession" name="profession" value="${escapeHtml(filters.profession)}">
-    </div>
-    <div class="field">
-      <label for="orderType">Тип заказа</label>
-      <select id="orderType" name="orderType">${renderOrderTypeOptions(filters.orderType)}</select>
-    </div>
-    <div class="field">
-      <label for="contractor">Контрагент</label>
-      <input id="contractor" name="contractor" value="${escapeHtml(filters.contractor)}">
-    </div>
+    ${renderMultiSelectField({
+      id: 'client',
+      label: 'Бренд',
+      options: filterOptions(dashboard, 'client'),
+      selected: filters.client
+    })}
+    ${renderMultiSelectField({
+      id: 'city',
+      label: 'Город',
+      options: filterOptions(dashboard, 'city'),
+      selected: filters.city
+    })}
+    ${renderMultiSelectField({
+      id: 'region',
+      label: 'Регион',
+      options: filterOptions(dashboard, 'region'),
+      selected: filters.region
+    })}
+    ${renderMultiSelectField({
+      id: 'profession',
+      label: 'Специальность',
+      options: filterOptions(dashboard, 'profession'),
+      selected: filters.profession
+    })}
+    ${renderMultiSelectField({
+      id: 'orderType',
+      label: 'Тип заказа',
+      options: filterOptions(dashboard, 'orderType'),
+      selected: filters.orderType,
+      labelForValue: orderTypeLabel
+    })}
+    ${renderMultiSelectField({
+      id: 'contractor',
+      label: 'Контрагент',
+      options: filterOptions(dashboard, 'contractor'),
+      selected: filters.contractor
+    })}
     <div class="field">
       <label for="search">Поиск точки</label>
       <input id="search" name="search" value="${escapeHtml(filters.search)}">

@@ -287,14 +287,22 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
         from: '2026-06-01',
         to: '2026-06-03',
         rangeDays: 3,
-        client: '<script>client</script>',
-        city: 'Москва',
-        region: '',
-        profession: '',
-        orderType: 'regular',
-        contractor: '<script>contractor</script>',
+        client: ['<script>client</script>', 'Brand A'],
+        city: ['Москва'],
+        region: [],
+        profession: ['driver'],
+        orderType: ['regular'],
+        contractor: ['<script>contractor</script>'],
         search: '<script>search</script>',
         limit: 12
+      },
+      filterOptions: {
+        client: ['<script>client</script>', 'Brand A', 'Brand B'],
+        city: ['Москва', '<script>city option</script>'],
+        region: ['Region A'],
+        profession: ['driver', 'picker'],
+        orderType: ['regular', 'once'],
+        contractor: ['<script>contractor</script>', 'Contractor B']
       },
       context: {
         sortLabel: '<script>sort</script>',
@@ -328,6 +336,16 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /value="2026-06-01"/);
   assert.match(html, /value="2026-06-03"/);
   assert.match(html, /name="limit"/);
+  assert.match(html, /<select id="client" name="client" multiple/);
+  assert.match(html, /<select id="city" name="city" multiple/);
+  assert.match(html, /<select id="profession" name="profession" multiple/);
+  assert.match(html, /<select id="orderType" name="orderType" multiple/);
+  assert.match(html, /<option value="&lt;script&gt;client&lt;\/script&gt;" selected>&lt;script&gt;client&lt;\/script&gt;<\/option>/);
+  assert.match(html, /<option value="Brand A" selected>Brand A<\/option>/);
+  assert.match(html, /<option value="Brand B">Brand B<\/option>/);
+  assert.match(html, /<option value="driver" selected>driver<\/option>/);
+  assert.match(html, /<option value="once">Разовые<\/option>/);
+  assert.match(html, /<option value="regular" selected>Регулярные<\/option>/);
   assert.match(html, /<option value="10">10<\/option>/);
   assert.match(html, /<option value="12" selected>12<\/option>/);
   assert.match(html, /<option value="20">20<\/option>/);
@@ -366,14 +384,22 @@ test('renderWorkplaceAnalysisDashboard shows empty state', () => {
         from: '2026-06-01',
         to: '2026-06-03',
         rangeDays: 3,
-        client: '',
-        city: '',
-        region: '',
-        profession: '',
-        orderType: '',
-        contractor: '',
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        contractor: [],
         search: '',
         limit: 12
+      },
+      filterOptions: {
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        contractor: []
       },
       context: {
         sortLabel: 'Сначала крупнейшие по заказу',

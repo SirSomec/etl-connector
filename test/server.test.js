@@ -161,6 +161,10 @@ async function fetchText(baseUrl, path, options) {
   return { response, text };
 }
 
+function countOccurrences(text, needle) {
+  return text.split(needle).length - 1;
+}
+
 test('GET / renders available tables from metadata', async () => {
   const client = createFakeClient();
 
@@ -244,6 +248,55 @@ test('GET /dashboards/workplace-analysis renders dashboard with query filters', 
     assert.equal(call[2].param_city, 'Москва');
     assert.equal(call[2].param_order_type, 'regular');
   }
+});
+
+test('GET /dashboards/workplace-analysis renders at least ten point cards when data is available', async () => {
+  const workplaceRows = Array.from({ length: 12 }, (_, index) => {
+    const number = index + 1;
+
+    return {
+      workplace_id: `wp${number}`,
+      workplace_title: `Point ${number}`,
+      technical_name: `tech-${number}`,
+      client_title: `Brand ${number}`,
+      city: 'Moscow',
+      region: 'Moscow',
+      street: `Street ${number}`,
+      total_ordered_shifts: 30 - index,
+      active_days: 2
+    };
+  });
+  const dailyRows = workplaceRows.flatMap((row, index) => [
+    { workplace_id: row.workplace_id, order_date: '2026-06-01', ordered_shifts: 10 - (index % 3) },
+    { workplace_id: row.workplace_id, order_date: '2026-06-03', ordered_shifts: 5 - (index % 2) }
+  ]);
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+
+      if (operation === 'workplace analysis top workplaces') {
+        return workplaceRows;
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return dailyRows;
+      }
+
+      return [];
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis?from=2026-06-01&to=2026-06-03&limit=12'
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(countOccurrences(text, '<article class="point-card">'), 12);
+    assert.equal(countOccurrences(text, '<div class="heatmap" aria-label='), 12);
+    assert.doesNotMatch(text, /empty-state/);
+  });
 });
 
 test('GET /dashboards/workplace-analysis keeps navigation active on trailing slash route errors', async () => {

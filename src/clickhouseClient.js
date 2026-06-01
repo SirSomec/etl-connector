@@ -37,7 +37,7 @@ class ClickHouseClient {
   constructor(config, deps = {}) {
     this.config = config;
     this.request = deps.request || https.request;
-    this.requestTimeoutMs = config.requestTimeoutMs || 30000;
+    this.requestTimeoutMs = config.requestTimeoutMs || 120000;
     this.ca = Object.prototype.hasOwnProperty.call(deps, 'ca')
       ? deps.ca
       : (deps.readFileSync || fs.readFileSync)(config.caPath);

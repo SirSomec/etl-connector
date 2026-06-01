@@ -175,6 +175,23 @@ test('GET /dashboards/sales-by-project renders dashboard', async () => {
   assert.equal(client.calls.filter((call) => call[0] === 'queryJSONEachRow').length, 7);
 });
 
+test('GET /dashboards/sales-by-project keeps dashboard nav active on upstream errors', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      throw new Error(`${operation} failed`);
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/dashboards/sales-by-project');
+
+    assert.equal(response.status, 502);
+    assert.match(text, /Upstream Error/);
+    assert.match(text, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
+    assert.doesNotMatch(text, /class="nav-link active" href="\/"/);
+  });
+});
+
 test('GET /tables renders columns and preview rows for a known table', async () => {
   const client = createFakeClient();
 

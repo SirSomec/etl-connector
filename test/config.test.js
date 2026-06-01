@@ -16,7 +16,7 @@ test('loadConfig returns required values and safe defaults', () => {
   assert.equal(config.clickhouse.database, 'etl');
   assert.equal(config.clickhouse.user, 'rouser');
   assert.equal(config.clickhouse.password, 'secret');
-  assert.equal(config.clickhouse.requestTimeoutMs, 30000);
+  assert.equal(config.clickhouse.requestTimeoutMs, 120000);
   assert.equal(
     config.clickhouse.caPath,
     '/usr/local/share/ca-certificates/Yandex/RootCA.crt'

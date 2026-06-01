@@ -45,7 +45,7 @@ CLICKHOUSE_DATABASE=etl
 CLICKHOUSE_USER=rouser
 CLICKHOUSE_PASSWORD=change-me
 CLICKHOUSE_CA_PATH=/usr/local/share/ca-certificates/Yandex/RootCA.crt
-CLICKHOUSE_REQUEST_TIMEOUT_MS=30000
+CLICKHOUSE_REQUEST_TIMEOUT_MS=120000
 PORT=3000
 ```
 
@@ -76,6 +76,9 @@ npm start
 Также для локального запуска нужны Yandex Cloud CA сертификаты на хосте или `CLICKHOUSE_CA_PATH`, указывающий на читаемый CA сертификат.
 
 После запуска откройте `http://localhost:3000`.
+
+Для дашбордов с месячными периодами запросы к ClickHouse могут занимать десятки секунд,
+поэтому рекомендуемый `CLICKHOUSE_REQUEST_TIMEOUT_MS` — `120000`.
 
 ## Docker
 

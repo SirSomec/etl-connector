@@ -57,7 +57,7 @@ function loadConfig(env = process.env) {
       requestTimeoutMs: readPositiveInt(
         env,
         'CLICKHOUSE_REQUEST_TIMEOUT_MS',
-        30000,
+        120000,
         600000
       ),
       caPath:

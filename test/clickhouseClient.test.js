@@ -191,7 +191,7 @@ test('listTables sends authenticated HTTPS request and parses table names', asyn
   assert.equal(transport.calls[0].hostname, 'clickhouse.example.test');
   assert.equal(transport.calls[0].port, 8443);
   assert.equal(transport.calls[0].ca, 'CA');
-  assert.equal(transport.timeouts[0], 30000);
+  assert.equal(transport.timeouts[0], 120000);
   assert.equal(transport.calls[0].headers['X-ClickHouse-User'], 'rouser');
   assert.equal(transport.calls[0].headers['X-ClickHouse-Key'], 'secret');
   assert.match(decodeURIComponent(transport.calls[0].path), /system\.tables/);

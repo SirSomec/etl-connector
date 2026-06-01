@@ -28,13 +28,17 @@ function statusCodeFromError(error) {
   return 502;
 }
 
+function activeNavForPath(path) {
+  return path === '/dashboards/sales-by-project' ? 'sales-by-project' : 'tables';
+}
+
 function createApp({ config, client }) {
   const app = express();
   const database = config.clickhouse.database;
 
   app.disable('x-powered-by');
 
-  function sendError(res, statusCode, title, message) {
+  function sendError(res, statusCode, title, message, activeNav = 'tables') {
     res
       .status(statusCode)
       .type('html')
@@ -42,7 +46,8 @@ function createApp({ config, client }) {
         renderError({
           database,
           title,
-          message: sanitizeForResponse(message, config)
+          message: sanitizeForResponse(message, config),
+          activeNav
         })
       );
   }
@@ -123,7 +128,7 @@ function createApp({ config, client }) {
     const statusCode = statusCodeFromError(error);
     const title = statusCode === 502 ? 'Upstream Error' : STATUS_CODES[statusCode] || 'Bad Request';
 
-    sendError(res, statusCode, title, error && error.message);
+    sendError(res, statusCode, title, error && error.message, activeNavForPath(req.path));
   });
 
   return app;
@@ -168,6 +173,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  activeNavForPath,
   createApp,
   sanitizeForResponse,
   start

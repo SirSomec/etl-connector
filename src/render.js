@@ -721,13 +721,13 @@ function renderSalesByProjectDashboard({ database, dashboard }) {
   });
 }
 
-function renderError({ database, title, message }) {
+function renderError({ database, title, message, activeNav = 'tables' }) {
   const content = `<section class="section">
   <h1>${escapeHtml(title)}</h1>
   <div class="error">${escapeHtml(message)}</div>
 </section>`;
 
-  return layout({ title, database, content });
+  return layout({ title, database, content, activeNav });
 }
 
 module.exports = {

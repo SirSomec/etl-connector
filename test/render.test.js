@@ -163,6 +163,18 @@ test('renderError escapes title and message', () => {
   assert.doesNotMatch(html, /<b>failure<\/b>/);
 });
 
+test('renderError can keep dashboard navigation active', () => {
+  const html = renderError({
+    database: 'etl',
+    title: 'Upstream Error',
+    message: 'timeout',
+    activeNav: 'sales-by-project'
+  });
+
+  assert.match(html, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
+  assert.doesNotMatch(html, /class="nav-link active" href="\/"/);
+});
+
 test('renderSalesByProjectDashboard escapes values and renders metrics', () => {
   const html = renderSalesByProjectDashboard({
     database: 'etl',

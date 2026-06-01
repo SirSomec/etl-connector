@@ -212,7 +212,7 @@ function renderHome({ database, tables }) {
   const tableItems = tables
     .map((table) => {
       const tableName = String(table);
-      const href = `/tables/${encodeURIComponent(tableName)}`;
+      const href = `/tables?name=${encodeURIComponent(tableName)}`;
 
       return `<li><a class="table-link" href="${href}">${escapeHtml(tableName)}</a></li>`;
     })
@@ -269,7 +269,15 @@ function renderRows(columns, rows) {
   const bodyRows = rows
     .map(
       (row) =>
-        `<tr>${names.map((name) => `<td>${renderCell(row[name])}</td>`).join('')}</tr>`
+        `<tr>${names
+          .map((name) => {
+            const value = Object.prototype.hasOwnProperty.call(row, name)
+              ? row[name]
+              : undefined;
+
+            return `<td>${renderCell(value)}</td>`;
+          })
+          .join('')}</tr>`
     )
     .join('');
 

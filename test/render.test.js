@@ -20,14 +20,26 @@ test('renderHome shows database, escapes table names, and encodes table links', 
   assert.match(html, /&lt;script&gt;&quot;&amp;&#39;/);
   assert.match(
     html,
-    new RegExp(`href="/tables/${escapeRegExp(encodeURIComponent(dangerousTable))}"`)
+    new RegExp(`href="/tables\\?name=${escapeRegExp(encodeURIComponent(dangerousTable))}"`)
   );
   assert.match(
     html,
-    new RegExp(`href="/tables/${escapeRegExp(encodeURIComponent(tableWithUrlChars))}"`)
+    new RegExp(`href="/tables\\?name=${escapeRegExp(encodeURIComponent(tableWithUrlChars))}"`)
   );
   assert.doesNotMatch(html, /<script>"&'/);
   assert.doesNotMatch(html, /raw events\/table\?day=1&ok=true/);
+});
+
+test('renderHome uses query links for dot-segment table names', () => {
+  const html = renderHome({
+    database: 'etl',
+    tables: ['.', '..']
+  });
+
+  assert.match(html, /href="\/tables\?name=\."/);
+  assert.match(html, /href="\/tables\?name=\.\."/);
+  assert.doesNotMatch(html, /href="\/tables\/\."/);
+  assert.doesNotMatch(html, /href="\/tables\/\.\."/);
 });
 
 test('renderHome renders an empty state when tables is empty', () => {
@@ -79,6 +91,19 @@ test('renderTable escapes metadata and cells, formats complex values, and uses c
   assert.doesNotMatch(html, /<ignored>/);
   assert.ok(html.indexOf('&lt;id&gt;') < html.indexOf('payload'));
   assert.ok(html.indexOf('payload') < html.indexOf('missing'));
+});
+
+test('renderTable renders NULL for missing own row properties', () => {
+  const html = renderTable({
+    database: 'etl',
+    tableName: 'prototype_safe',
+    columns: [{ name: 'constructor', type: 'String', position: 1 }],
+    rows: [{}]
+  });
+
+  assert.match(html, /<span class="muted">NULL<\/span>/);
+  assert.doesNotMatch(html, /function Object/);
+  assert.doesNotMatch(html, /\[native code\]/);
 });
 
 test('renderTable derives headers from rows when columns are empty', () => {

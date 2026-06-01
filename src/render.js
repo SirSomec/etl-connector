@@ -212,9 +212,133 @@ function layout({ title, database, content, activeNav = 'tables' }) {
       color: var(--text);
     }
 
-    select[multiple] {
+    .filter-field {
       min-width: 190px;
-      min-height: 96px;
+    }
+
+    .multi-filter {
+      position: relative;
+    }
+
+    .multi-filter-trigger {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      min-width: 190px;
+      padding: 6px 8px;
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--text);
+      text-align: left;
+    }
+
+    .multi-filter-trigger:hover,
+    .multi-filter-trigger:focus {
+      border-color: var(--accent);
+      background: var(--surface);
+      color: var(--text);
+      outline: none;
+    }
+
+    .multi-filter-trigger-label,
+    .multi-filter-summary {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .multi-filter-trigger-label {
+      min-width: 0;
+      font-weight: 700;
+    }
+
+    .multi-filter-summary {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .multi-filter-panel {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 20;
+      width: max(260px, 100%);
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      box-shadow: 0 14px 32px rgba(31, 41, 55, 0.16);
+    }
+
+    .multi-filter-panel[hidden],
+    .multi-filter-option[hidden] {
+      display: none;
+    }
+
+    .multi-filter-search {
+      width: 100%;
+      margin-bottom: 8px;
+    }
+
+    .multi-filter-options {
+      display: grid;
+      gap: 2px;
+      max-height: 190px;
+      overflow: auto;
+    }
+
+    .multi-filter-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 5px 6px;
+      border-radius: 4px;
+      color: var(--text);
+      font-weight: 400;
+    }
+
+    .multi-filter-option:hover,
+    .multi-filter-option:focus-within {
+      background: var(--link-bg);
+    }
+
+    .multi-filter-option input[type="checkbox"] {
+      width: 16px;
+      min-height: 16px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .multi-filter-option span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .multi-filter-empty {
+      padding: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .multi-filter-clear {
+      width: 100%;
+      margin-top: 8px;
+      padding: 5px 8px;
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .multi-filter-clear:hover,
+    .multi-filter-clear:focus {
+      border-color: var(--accent);
+      background: var(--link-bg);
+      color: var(--text);
+      outline: none;
     }
 
     button {
@@ -554,8 +678,121 @@ function layout({ title, database, content, activeNav = 'tables' }) {
       <main>${content}</main>
     </div>
   </div>
+  ${content.includes('data-multi-filter') ? renderMultiFilterScript() : ''}
 </body>
 </html>`;
+}
+
+function renderMultiFilterScript() {
+  return `<script>
+(function () {
+  function closeMultiFilter(root) {
+    var panel = root.querySelector('[data-multi-filter-panel]');
+    var trigger = root.querySelector('[data-multi-filter-trigger]');
+
+    if (!panel || !trigger) {
+      return;
+    }
+
+    panel.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  function updateMultiFilterSummary(root) {
+    var summary = root.querySelector('[data-multi-filter-summary]');
+    var checkedCount = root.querySelectorAll('[data-multi-filter-checkbox]:checked').length;
+
+    if (!summary) {
+      return;
+    }
+
+    summary.textContent = checkedCount > 0 ? checkedCount + ' выбрано' : summary.dataset.emptyLabel;
+  }
+
+  function filterMultiFilterOptions(root) {
+    var search = root.querySelector('[data-multi-filter-search]');
+    var needle = search ? search.value.trim().toLocaleLowerCase('ru-RU') : '';
+
+    root.querySelectorAll('[data-multi-filter-option]').forEach(function (option) {
+      var text = option.dataset.filterText || '';
+      option.hidden = needle.length > 0 && !text.includes(needle);
+    });
+  }
+
+  function initMultiFilter(root) {
+    var trigger = root.querySelector('[data-multi-filter-trigger]');
+    var panel = root.querySelector('[data-multi-filter-panel]');
+    var search = root.querySelector('[data-multi-filter-search]');
+    var clear = root.querySelector('[data-multi-filter-clear]');
+
+    if (!trigger || !panel) {
+      return;
+    }
+
+    trigger.addEventListener('click', function () {
+      var willOpen = panel.hidden;
+
+      document.querySelectorAll('[data-multi-filter]').forEach(function (otherRoot) {
+        if (otherRoot !== root) {
+          closeMultiFilter(otherRoot);
+        }
+      });
+
+      panel.hidden = !willOpen;
+      trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+
+      if (willOpen && search) {
+        search.focus();
+      }
+    });
+
+    if (search) {
+      search.addEventListener('input', function () {
+        filterMultiFilterOptions(root);
+      });
+    }
+
+    if (clear) {
+      clear.addEventListener('click', function () {
+        root.querySelectorAll('[data-multi-filter-checkbox]:checked').forEach(function (checkbox) {
+          checkbox.checked = false;
+        });
+        updateMultiFilterSummary(root);
+      });
+    }
+
+    root.querySelectorAll('[data-multi-filter-checkbox]').forEach(function (checkbox) {
+      checkbox.addEventListener('change', function () {
+        updateMultiFilterSummary(root);
+      });
+    });
+
+    updateMultiFilterSummary(root);
+  }
+
+  document.addEventListener('click', function (event) {
+    document.querySelectorAll('[data-multi-filter]').forEach(function (root) {
+      if (!root.contains(event.target)) {
+        closeMultiFilter(root);
+      }
+    });
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+
+    document.querySelectorAll('[data-multi-filter]').forEach(function (root) {
+      closeMultiFilter(root);
+    });
+  });
+
+  document.querySelectorAll('[data-multi-filter]').forEach(function (root) {
+    initMultiFilter(root);
+  });
+})();
+</script>`;
 }
 
 function formatNumber(value, digits = 0) {
@@ -883,15 +1120,26 @@ function selectedSet(values) {
   return new Set(Array.isArray(values) ? values.map((value) => String(value)) : []);
 }
 
-function renderMultiSelectOptions(options, selectedValues, labelForValue = String) {
+function selectedSummary(values) {
+  const count = selectedSet(values).size;
+
+  return count > 0 ? `${count} выбрано` : 'Все';
+}
+
+function renderMultiSelectOptions({ id, options, selectedValues, labelForValue = String }) {
   const selected = selectedSet(selectedValues);
 
   return options
     .map((option) => {
       const value = String(option);
-      const selectedAttribute = selected.has(value) ? ' selected' : '';
+      const label = String(labelForValue(value));
+      const checkedAttribute = selected.has(value) ? ' checked' : '';
+      const filterText = label.toLocaleLowerCase('ru-RU');
 
-      return `<option value="${escapeHtml(value)}"${selectedAttribute}>${escapeHtml(labelForValue(value))}</option>`;
+      return `<label class="multi-filter-option" data-multi-filter-option data-filter-text="${escapeHtml(filterText)}">
+        <input type="checkbox" name="${escapeHtml(id)}" value="${escapeHtml(value)}"${checkedAttribute} data-multi-filter-checkbox>
+        <span>${escapeHtml(label)}</span>
+      </label>`;
     })
     .join('');
 }
@@ -903,9 +1151,31 @@ function filterOptions(dashboard, key) {
 }
 
 function renderMultiSelectField({ id, label, options, selected, labelForValue }) {
-  return `<div class="field">
-      <label for="${escapeHtml(id)}">${escapeHtml(label)}</label>
-      <select id="${escapeHtml(id)}" name="${escapeHtml(id)}" multiple size="4">${renderMultiSelectOptions(options, selected, labelForValue)}</select>
+  const escapedId = escapeHtml(id);
+  const escapedLabel = escapeHtml(label);
+  const optionsHtml = renderMultiSelectOptions({
+    id,
+    options,
+    selectedValues: selected,
+    labelForValue
+  });
+  const emptyState = '<p class="multi-filter-empty">Нет значений</p>';
+
+  return `<div class="field filter-field">
+      <label for="${escapedId}-trigger">${escapedLabel}</label>
+      <div class="multi-filter" data-multi-filter>
+        <button class="multi-filter-trigger" type="button" id="${escapedId}-trigger" aria-expanded="false" aria-controls="${escapedId}-panel" data-multi-filter-trigger>
+          <span class="multi-filter-trigger-label">${escapedLabel}</span>
+          <span id="${escapedId}-summary" class="multi-filter-summary" data-multi-filter-summary data-empty-label="Все">${escapeHtml(selectedSummary(selected))}</span>
+        </button>
+        <div class="multi-filter-panel" id="${escapedId}-panel" data-multi-filter-panel hidden>
+          <input class="multi-filter-search" type="search" placeholder="Поиск" aria-label="Поиск: ${escapedLabel}" data-multi-filter-search>
+          <div class="multi-filter-options" role="group" aria-label="${escapedLabel}">
+            ${optionsHtml || emptyState}
+          </div>
+          <button class="multi-filter-clear" type="button" data-multi-filter-clear>Очистить</button>
+        </div>
+      </div>
     </div>`;
 }
 

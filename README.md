@@ -1,18 +1,32 @@
 # ETL Analytics Service
 
-Read-only web explorer for ClickHouse ETL data.
+Read-only web-сервис для просмотра ETL-данных в ClickHouse.
 
-## Features
+## Назначение
 
-- Lists tables in the configured ClickHouse database.
-- Shows column names and ClickHouse types for a selected table.
-- Shows the first 100 rows from a selected table.
-- Runs in Docker with Yandex Cloud CA certificates installed.
-- Reads ClickHouse credentials from environment variables.
+Сервис показывает доступные данные из ClickHouse базы `etl`, подключенной к данным платформы `mygig.ru`.
 
-## Configuration
+Первая итерация умеет:
 
-Create a local `.env` file from `.env.example`:
+- показывать список таблиц в настроенной ClickHouse базе;
+- показывать колонки и ClickHouse-типы выбранной таблицы;
+- показывать первые 100 строк выбранной таблицы;
+- запускаться в Docker с установленными Yandex Cloud CA сертификатами;
+- читать параметры подключения из переменных окружения.
+
+## Язык взаимодействия
+
+Все дальнейшие ответы пользователю, обсуждение решений и пользовательская документация по этому проекту должны быть на русском языке. Исключения: код, команды, SQL, переменные окружения, имена файлов, логи и точные технические идентификаторы.
+
+## Контекст данных
+
+Доменный и ETL-контекст для будущих дашбордов описан в `docs/mygig-etl-data-context.md`.
+
+Инструкции для будущих агентов находятся в `AGENTS.md`.
+
+## Конфигурация
+
+Создайте локальный `.env` из `.env.example`:
 
 ```dotenv
 CLICKHOUSE_HOST=rc1a-1kv5jd0taf1ef4ah.mdb.yandexcloud.net
@@ -24,55 +38,56 @@ CLICKHOUSE_CA_PATH=/usr/local/share/ca-certificates/Yandex/RootCA.crt
 PORT=3000
 ```
 
-Set `CLICKHOUSE_PASSWORD` to the real password only in your local `.env` or
-deployment environment. Do not commit `.env`.
+Реальный пароль задавайте только в локальном `.env` или в окружении деплоя. Не коммитьте `.env`.
 
-## Local Development
+## Локальная разработка
 
-Install dependencies:
+Установить зависимости:
 
 ```bash
 npm install
 ```
 
-Run tests:
+Запустить тесты:
 
 ```bash
 npm test
 ```
 
-Run the app locally:
+Запустить приложение локально:
 
 ```bash
 npm start
 ```
 
-Local `npm start` reads configuration from process environment variables, not
-from `.env` automatically. Export the variables from `.env` first, or set them
-in your shell. It also requires the Yandex Cloud CA certificates installed on
-the host, or `CLICKHOUSE_CA_PATH` set to a readable CA certificate path. Open
-`http://localhost:3000`.
+Локальный `npm start` читает конфигурацию из переменных окружения процесса, а не из `.env` автоматически. Перед запуском экспортируйте переменные из `.env` или задайте их в shell.
+
+Также для локального запуска нужны Yandex Cloud CA сертификаты на хосте или `CLICKHOUSE_CA_PATH`, указывающий на читаемый CA сертификат.
+
+После запуска откройте `http://localhost:3000`.
 
 ## Docker
 
-Build the image:
+Собрать образ:
 
 ```bash
 docker build -t etl-analytics-service .
 ```
 
-Run with compose:
+Запустить через compose:
 
 ```bash
 docker compose up --build
 ```
 
-Open `http://localhost:3000`. Compose reads configuration from a local `.env`
-file, so create one before starting the service.
+Compose читает конфигурацию из локального `.env`, поэтому создайте файл перед запуском.
 
-## Security Notes
+После запуска откройте `http://localhost:3000`.
 
-- The web UI does not accept arbitrary SQL.
-- Use a read-only ClickHouse user.
-- The configured password is redacted from errors rendered in the browser.
-- `.env` is ignored by git.
+## Безопасность
+
+- Web UI не принимает произвольный SQL.
+- Используйте read-only пользователя ClickHouse.
+- Настроенный пароль маскируется в ошибках, которые показываются в браузере.
+- `.env` игнорируется git.
+- В данных MyGig есть персональные данные. Не выводите PII в дашборды без явной необходимости и маскирования.

@@ -164,4 +164,17 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.ok(calls.every((call) => call.params.param_from === '2026-04-01 00:00:00'));
   assert.ok(calls.every((call) => call.params.param_to === '2026-05-01 00:00:00'));
   assert.equal(calls.some((call) => call.query.includes('DROP TABLE')), false);
+  assert.ok(
+    calls.some((call) =>
+      call.query.includes("ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type")
+    )
+  );
+  assert.equal(
+    calls.some((call) => call.query.includes('ct.contract_type AS contract_type')),
+    false
+  );
+  assert.equal(
+    calls.some((call) => call.query.includes("nullIf(ct.contract_type, '')")),
+    false
+  );
 });

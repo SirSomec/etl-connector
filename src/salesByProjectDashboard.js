@@ -252,7 +252,7 @@ shift_enriched AS (
     coalesce(nullIf(sf.client, ''), o.client) AS client,
     coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
     sf.is_self_booked AS is_self_booked,
-    ifNull(nullIf(ct.contract_type, ''), 'services') AS contract_type,
+    ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type,
     ifNull(ct.comission, 0) AS commission_percent,
     if(ifNull(sf.salary_per_job, 0) > 0, ifNull(sf.salary_per_job, 0), ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0)) AS worker_shift_amount,
     if(ifNull(sf.payment_per_job, 0) > 0, ifNull(sf.payment_per_job, 0), ifNull(sf.payment_per_hour, 0) * ifNull(sf.hours, 0)) AS customer_shift_amount,

@@ -2,6 +2,8 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
+ENV NODE_ENV=production
+
 RUN apt-get update \
   && apt-get install --no-install-recommends -y ca-certificates wget \
   && mkdir -p /usr/local/share/ca-certificates/Yandex \
@@ -13,7 +15,8 @@ RUN apt-get update \
 
 COPY package*.json ./
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+  && npm cache clean --force
 
 COPY src ./src
 

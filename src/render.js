@@ -7,9 +7,15 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function layout({ title, database, content }) {
+function navLink({ href, label, id, activeNav }) {
+  const className = id === activeNav ? 'nav-link active' : 'nav-link';
+
+  return `<a class="${className}" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+}
+
+function layout({ title, database, content, activeNav = 'tables' }) {
   return `<!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -24,9 +30,15 @@ function layout({ title, database, content }) {
       --line: #d6dde6;
       --link: #075cab;
       --link-bg: #eef6ff;
+      --accent: #256d85;
+      --accent-bg: #e8f4f6;
       --error-bg: #fff4f2;
       --error-line: #f1aaa2;
       --error-text: #a22216;
+      --sidebar: #10212b;
+      --sidebar-text: #e8eef2;
+      --sidebar-muted: #a8b7c1;
+      --sidebar-active: #ffffff;
     }
 
     * {
@@ -44,6 +56,59 @@ function layout({ title, database, content }) {
 
     a {
       color: var(--link);
+    }
+
+    .app-shell {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 240px;
+      flex: 0 0 240px;
+      padding: 18px 14px;
+      background: var(--sidebar);
+      color: var(--sidebar-text);
+    }
+
+    .sidebar-title {
+      margin-bottom: 18px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-link {
+      display: block;
+      min-height: 38px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: var(--sidebar-muted);
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+
+    .nav-link:hover,
+    .nav-link:focus {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--sidebar-active);
+      outline: none;
+    }
+
+    .nav-link.active {
+      background: var(--sidebar-active);
+      color: var(--sidebar);
+      font-weight: 700;
+    }
+
+    .page-shell {
+      min-width: 0;
+      flex: 1;
     }
 
     header {
@@ -74,7 +139,8 @@ function layout({ title, database, content }) {
 
     .database,
     .muted,
-    .empty {
+    .empty,
+    .technical-note {
       color: var(--muted);
     }
 
@@ -104,6 +170,90 @@ function layout({ title, database, content }) {
 
     p {
       margin: 0;
+    }
+
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 10px;
+      margin-bottom: 18px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .field {
+      display: grid;
+      gap: 4px;
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    select,
+    input,
+    button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font: inherit;
+      font-size: 14px;
+    }
+
+    select,
+    input {
+      padding: 6px 8px;
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    button {
+      padding: 6px 14px;
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      cursor: pointer;
+    }
+
+    button:hover,
+    button:focus {
+      background: #1d5b70;
+      outline: none;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      min-height: 78px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .kpi-label {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .kpi-value {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
     }
 
     .table-list {
@@ -170,6 +320,29 @@ function layout({ title, database, content }) {
       border-bottom: 0;
     }
 
+    .number-cell {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .bar-cell {
+      min-width: 130px;
+    }
+
+    .bar-track {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: #dce6ed;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
     .error {
       border: 1px solid var(--error-line);
       border-radius: 6px;
@@ -177,6 +350,25 @@ function layout({ title, database, content }) {
       background: var(--error-bg);
       color: var(--error-text);
       overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 820px) {
+      .app-shell {
+        display: block;
+      }
+
+      .sidebar {
+        width: auto;
+        padding: 12px 10px;
+      }
+
+      .sidebar-title {
+        margin-bottom: 10px;
+      }
+
+      .nav-list {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
     }
 
     @media (max-width: 640px) {
@@ -193,19 +385,59 @@ function layout({ title, database, content }) {
       h1 {
         font-size: 23px;
       }
+
+      .filter-bar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      button {
+        width: 100%;
+      }
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="topbar">
-      <div class="app-title">ETL Analytics</div>
-      <div class="database">Database: ${escapeHtml(database)}</div>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Основная навигация">
+      <div class="sidebar-title">ETL Analytics</div>
+      <nav class="nav-list">
+        ${navLink({ href: '/', label: 'Таблицы', id: 'tables', activeNav })}
+        ${navLink({
+          href: '/dashboards/sales-by-project',
+          label: 'Продажи по проектам',
+          id: 'sales-by-project',
+          activeNav
+        })}
+      </nav>
+    </aside>
+    <div class="page-shell">
+      <header>
+        <div class="topbar">
+          <div class="app-title">ETL Analytics</div>
+          <div class="database">Database: ${escapeHtml(database)}</div>
+        </div>
+      </header>
+      <main>${content}</main>
     </div>
-  </header>
-  <main>${content}</main>
+  </div>
 </body>
 </html>`;
+}
+
+function formatNumber(value, digits = 0) {
+  const number = Number(value) || 0;
+
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  })
+    .format(number)
+    .replace(/\u00a0/g, ' ');
+}
+
+function formatPercent(value) {
+  return `${formatNumber(value, 1).replace(',', '.')}%`;
 }
 
 function renderHome({ database, tables }) {
@@ -304,6 +536,191 @@ function renderTable({ database, tableName, columns, rows }) {
   return layout({ title: tableName, database, content });
 }
 
+function renderKpiCards(summary) {
+  const cards = [
+    ['Заказано смен', formatNumber(summary.orderedShifts)],
+    ['Отработано смен', formatNumber(summary.workedShifts)],
+    ['SLA', formatPercent(summary.slaPercent)],
+    ['Выручка, руб.', formatNumber(summary.revenueRub)],
+    ['Уникальные исполнители', formatNumber(summary.uniqueWorkers)],
+    ['ТТ с заказами', formatNumber(summary.workplacesWithOrders)],
+    ['ТТ с выполненными сменами', formatNumber(summary.workplacesWithWorkedShifts)],
+    ['Отмены', formatNumber(summary.cancelledShifts)],
+    ['Самоброни', formatPercent(summary.selfBookingPercent)],
+    ['Средняя ставка в час', formatNumber(summary.avgWorkerRateHour)]
+  ];
+
+  return `<div class="kpi-grid">${cards
+    .map(
+      ([label, value]) => `<div class="kpi-card">
+  <div class="kpi-label">${escapeHtml(label)}</div>
+  <div class="kpi-value">${escapeHtml(value)}</div>
+</div>`
+    )
+    .join('')}</div>`;
+}
+
+function periodLabel(period) {
+  const labels = {
+    day: 'День',
+    week: 'Неделя',
+    month: 'Месяц',
+    quarter: 'Квартал'
+  };
+
+  return labels[period] || labels.day;
+}
+
+function renderEmptyDashboardTable() {
+  return '<p class="empty">Нет данных за выбранный период.</p>';
+}
+
+function numberCell(value, digits = 0) {
+  return `<td class="number-cell">${escapeHtml(formatNumber(value, digits))}</td>`;
+}
+
+function percentCell(value) {
+  return `<td class="number-cell">${escapeHtml(formatPercent(value))}</td>`;
+}
+
+function clampPercent(value) {
+  const number = Number(value) || 0;
+
+  return Math.max(0, Math.min(100, number));
+}
+
+function renderTrendRows(rows) {
+  if (rows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const maxWorked = Math.max(...rows.map((row) => Number(row.workedShifts) || 0), 0);
+  const bodyRows = rows
+    .map((row) => {
+      const width = maxWorked > 0 ? clampPercent(((Number(row.workedShifts) || 0) / maxWorked) * 100) : 0;
+
+      return `<tr>
+  <td>${escapeHtml(row.period)}</td>
+  ${numberCell(row.orderedShifts)}
+  ${numberCell(row.workedShifts)}
+  ${percentCell(row.slaPercent)}
+  ${numberCell(row.revenueRub)}
+  ${numberCell(row.cancelledShifts)}
+  <td class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width: ${escapeHtml(formatNumber(width, 1).replace(',', '.'))}%"></div></div></td>
+</tr>`;
+    })
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Период</th><th>Заказано</th><th>Отработано</th><th>SLA</th><th>Выручка</th><th>Отмены</th><th>Динамика</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderBrandRows(rows) {
+  if (rows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = rows
+    .map(
+      (row) => `<tr>
+  <td>${escapeHtml(row.brand)}</td>
+  ${numberCell(row.orderedShifts)}
+  ${numberCell(row.workedShifts)}
+  ${percentCell(row.slaPercent)}
+  ${numberCell(row.revenueRub)}
+  ${numberCell(row.uniqueWorkers)}
+  ${numberCell(row.workplacesWithOrders)}
+  ${numberCell(row.workplacesWithWorkedShifts)}
+  ${numberCell(row.cancelledShifts)}
+  ${percentCell(row.selfBookingPercent)}
+  ${numberCell(row.avgWorkerRateHour)}
+</tr>`
+    )
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Бренд</th><th>Заказано</th><th>Отработано</th><th>SLA</th><th>Выручка</th><th>Гигеры</th><th>ТТ с заказами</th><th>ТТ выполнены</th><th>Отмены</th><th>Самоброни</th><th>Ставка/час</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderStatusRows(rows) {
+  if (rows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = rows
+    .map(
+      (row) => `<tr>
+  <td>${escapeHtml(row.status)}</td>
+  ${numberCell(row.shifts)}
+</tr>`
+    )
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Статус</th><th>Смены</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderPeriodOptions(selectedPeriod) {
+  return ['day', 'week', 'month', 'quarter']
+    .map((period) => {
+      const selected = period === selectedPeriod ? ' selected' : '';
+
+      return `<option value="${period}"${selected}>${escapeHtml(periodLabel(period))}</option>`;
+    })
+    .join('');
+}
+
+function renderSalesByProjectDashboard({ database, dashboard }) {
+  const filters = dashboard.filters;
+  const content = `<section class="section">
+  <h1>Продажи по проектам</h1>
+  <p class="technical-note">Проект = бренд клиента. Заказано считается из mg_orders.amount. Факт, статусы и самоброни считаются из mg_job_history.</p>
+</section>
+<section class="section">
+  <form class="filter-bar" action="/dashboards/sales-by-project" method="get">
+    <div class="field">
+      <label for="period">Период</label>
+      <select id="period" name="period">${renderPeriodOptions(filters.period)}</select>
+    </div>
+    <div class="field">
+      <label for="from">С</label>
+      <input id="from" name="from" type="date" value="${escapeHtml(filters.from)}">
+    </div>
+    <div class="field">
+      <label for="to">По</label>
+      <input id="to" name="to" type="date" value="${escapeHtml(filters.to)}">
+    </div>
+    <button type="submit">Применить</button>
+  </form>
+  ${renderKpiCards(dashboard.summary)}
+</section>
+<section class="section">
+  <h2>Динамика</h2>
+  ${renderTrendRows(dashboard.trendRows)}
+</section>
+<section class="section">
+  <h2>Бренды</h2>
+  ${renderBrandRows(dashboard.brandRows)}
+</section>
+<section class="section">
+  <h2>Статусы работ</h2>
+  ${renderStatusRows(dashboard.statusRows)}
+</section>`;
+
+  return layout({
+    title: 'Продажи по проектам',
+    database,
+    content,
+    activeNav: 'sales-by-project'
+  });
+}
+
 function renderError({ database, title, message }) {
   const content = `<section class="section">
   <h1>${escapeHtml(title)}</h1>
@@ -317,5 +734,6 @@ module.exports = {
   escapeHtml,
   renderError,
   renderHome,
+  renderSalesByProjectDashboard,
   renderTable
 };

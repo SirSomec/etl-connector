@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { escapeHtml, renderError, renderHome, renderTable } = require('../src/render');
+const {
+  escapeHtml,
+  renderError,
+  renderHome,
+  renderSalesByProjectDashboard,
+  renderTable
+} = require('../src/render');
 
 test('escapeHtml escapes HTML content and attributes', () => {
   assert.equal(escapeHtml('<script>"&\''), '&lt;script&gt;&quot;&amp;&#39;');
@@ -49,6 +55,18 @@ test('renderHome renders an empty state when tables is empty', () => {
   });
 
   assert.match(html, /No tables found/);
+});
+
+test('renderHome includes sidebar navigation with tables active', () => {
+  const html = renderHome({
+    database: 'etl',
+    tables: ['mg_orders']
+  });
+
+  assert.match(html, /class="nav-link active" href="\/"/);
+  assert.match(html, /Таблицы/);
+  assert.match(html, /Продажи по проектам/);
+  assert.match(html, /href="\/dashboards\/sales-by-project"/);
 });
 
 test('renderTable escapes metadata and cells, formats complex values, and uses column order', () => {
@@ -143,6 +161,99 @@ test('renderError escapes title and message', () => {
   assert.match(html, /Cannot &lt;load&gt; &quot;tables&quot;/);
   assert.match(html, /&lt;b&gt;failure&lt;\/b&gt; &amp; &quot;bad&quot;/);
   assert.doesNotMatch(html, /<b>failure<\/b>/);
+});
+
+test('renderSalesByProjectDashboard escapes values and renders metrics', () => {
+  const html = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-04-30'
+      },
+      summary: {
+        orderedShifts: 10,
+        workedShifts: 8,
+        slaPercent: 80,
+        revenueRub: 12000,
+        uniqueWorkers: 5,
+        workplacesWithOrders: 3,
+        workplacesWithWorkedShifts: 2,
+        cancelledShifts: 1,
+        selfBookingPercent: 50,
+        avgWorkerRateHour: 250
+      },
+      trendRows: [
+        {
+          period: '2026-04-01',
+          orderedShifts: 10,
+          workedShifts: 8,
+          slaPercent: 80,
+          revenueRub: 12000,
+          cancelledShifts: 1
+        }
+      ],
+      brandRows: [
+        {
+          brand: '<script>bad</script>',
+          orderedShifts: 10,
+          workedShifts: 8,
+          slaPercent: 80,
+          revenueRub: 12000,
+          uniqueWorkers: 5,
+          workplacesWithOrders: 3,
+          workplacesWithWorkedShifts: 2,
+          cancelledShifts: 1,
+          selfBookingPercent: 50,
+          avgWorkerRateHour: 250
+        }
+      ],
+      statusRows: [{ status: 'confirmed', shifts: 8 }]
+    }
+  });
+
+  assert.match(html, /Продажи по проектам/);
+  assert.match(html, /Заказано смен/);
+  assert.match(html, /10/);
+  assert.match(html, /SLA/);
+  assert.match(html, /80\.0%/);
+  assert.match(html, /12 000/);
+  assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>bad<\/script>/);
+  assert.match(html, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
+});
+
+test('renderSalesByProjectDashboard shows empty states', () => {
+  const html = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        period: 'day',
+        from: '2026-04-01',
+        to: '2026-04-02'
+      },
+      summary: {
+        orderedShifts: 0,
+        workedShifts: 0,
+        slaPercent: 0,
+        revenueRub: 0,
+        uniqueWorkers: 0,
+        workplacesWithOrders: 0,
+        workplacesWithWorkedShifts: 0,
+        cancelledShifts: 0,
+        selfBookingPercent: 0,
+        avgWorkerRateHour: 0
+      },
+      trendRows: [],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(html, /Нет данных за выбранный период/);
+  assert.match(html, /value="2026-04-01"/);
+  assert.match(html, /value="2026-04-02"/);
 });
 
 function countOccurrences(text, needle) {

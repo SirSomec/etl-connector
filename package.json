@@ -1,0 +1,17 @@
+{
+  "name": "etl-analytics-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only web explorer for ETL ClickHouse data.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -35,13 +35,19 @@ function statusCodeFromError(error) {
   return 502;
 }
 
+function normalizePathForNav(path) {
+  const text = String(path || '/');
+
+  return text.length > 1 ? text.replace(/\/+$/, '') : text;
+}
+
 function activeNavForPath(path) {
   const navByPath = {
     '/dashboards/sales-by-project': 'sales-by-project',
     '/dashboards/workplace-analysis': 'workplace-analysis'
   };
 
-  return navByPath[path] || 'tables';
+  return navByPath[normalizePathForNav(path)] || 'tables';
 }
 
 function createApp({ config, client }) {

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-const { createApp, sanitizeForResponse, start } = require('../src/server');
+const { activeNavForPath, createApp, sanitizeForResponse, start } = require('../src/server');
 
 function baseConfig() {
   return {
@@ -37,7 +37,7 @@ function createFakeClient(overrides = {}) {
       ];
     },
     async queryJSONEachRow(query, params, operation) {
-      calls.push(['queryJSONEachRow', operation]);
+      calls.push(['queryJSONEachRow', operation, params]);
 
       if (operation === 'sales by project orders summary') {
         return [{ ordered_shifts: 10, workplaces_with_orders: 3, avg_worker_rate_hour: 250 }];
@@ -215,7 +215,7 @@ test('GET /dashboards/sales-by-project keeps dashboard nav active on upstream er
   });
 });
 
-test('GET /dashboards/workplace-analysis renders dashboard', async () => {
+test('GET /dashboards/workplace-analysis renders dashboard with query filters', async () => {
   const client = createFakeClient();
 
   await withServer(client, async (baseUrl) => {
@@ -232,28 +232,42 @@ test('GET /dashboards/workplace-analysis renders dashboard', async () => {
     assert.match(text, /66\.7%/);
   });
 
-  assert.equal(
-    client.calls.filter((call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace analysis')).length,
-    2
+  const workplaceCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace analysis')
   );
+
+  assert.equal(workplaceCalls.length, 2);
+
+  for (const call of workplaceCalls) {
+    assert.equal(call[2].param_from, '2026-06-01 00:00:00');
+    assert.equal(call[2].param_to, '2026-06-04 00:00:00');
+    assert.equal(call[2].param_city, 'Москва');
+    assert.equal(call[2].param_order_type, 'regular');
+  }
 });
 
-test('GET /dashboards/workplace-analysis keeps navigation active on route errors', async () => {
+test('GET /dashboards/workplace-analysis keeps navigation active on trailing slash route errors', async () => {
   const client = createFakeClient();
 
   client.queryJSONEachRow = async (query, params, operation) => {
-    client.calls.push(['queryJSONEachRow', operation]);
+    client.calls.push(['queryJSONEachRow', operation, params]);
     throw new Error('ClickHouse rejected password super-secret');
   };
 
   await withServer(client, async (baseUrl) => {
-    const { response, text } = await fetchText(baseUrl, '/dashboards/workplace-analysis');
+    const { response, text } = await fetchText(baseUrl, '/dashboards/workplace-analysis/');
 
     assert.equal(response.status, 502);
     assert.match(text, /ClickHouse rejected password \[redacted\]/);
     assert.match(text, /class="nav-link active" href="\/dashboards\/workplace-analysis"/);
     assert.doesNotMatch(text, /super-secret/);
   });
+});
+
+test('activeNavForPath normalizes dashboard trailing slashes', () => {
+  assert.equal(activeNavForPath('/dashboards/workplace-analysis/'), 'workplace-analysis');
+  assert.equal(activeNavForPath('/dashboards/sales-by-project/'), 'sales-by-project');
+  assert.equal(activeNavForPath('/'), 'tables');
 });
 
 test('GET /tables renders columns and preview rows for a known table', async () => {

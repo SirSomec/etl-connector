@@ -352,6 +352,128 @@ function layout({ title, database, content, activeNav = 'tables' }) {
       overflow-wrap: anywhere;
     }
 
+    .context-line {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .points-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+    }
+
+    .point-card {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .point-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .point-title {
+      font-weight: 700;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .stability-badge {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: var(--accent-bg);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .point-subtitle {
+      min-height: 40px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .point-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .point-metric {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 6px;
+      background: #fbfcfd;
+    }
+
+    .point-metric-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .point-metric-value {
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .heatmap {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(10px, 1fr));
+      gap: 3px;
+      align-items: center;
+    }
+
+    .heatmap-cell {
+      aspect-ratio: 1;
+      min-width: 10px;
+      border-radius: 2px;
+      background: #e5e7eb;
+    }
+
+    .heatmap-cell[data-level="1"] { background: #bfdbfe; }
+    .heatmap-cell[data-level="2"] { background: #60a5fa; }
+    .heatmap-cell[data-level="3"] { background: #2563eb; }
+    .heatmap-cell[data-level="4"] { background: #1d4ed8; }
+
+    .heatmap-legend {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 5px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-cell {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      background: #e5e7eb;
+    }
+
+    .legend-cell[data-level="1"] { background: #bfdbfe; }
+    .legend-cell[data-level="2"] { background: #60a5fa; }
+    .legend-cell[data-level="3"] { background: #2563eb; }
+    .legend-cell[data-level="4"] { background: #1d4ed8; }
+
     @media (max-width: 820px) {
       .app-shell {
         display: block;
@@ -407,6 +529,12 @@ function layout({ title, database, content, activeNav = 'tables' }) {
           href: '/dashboards/sales-by-project',
           label: 'Продажи по проектам',
           id: 'sales-by-project',
+          activeNav
+        })}
+        ${navLink({
+          href: '/dashboards/workplace-analysis',
+          label: 'Анализ точек',
+          id: 'workplace-analysis',
           activeNav
         })}
       </nav>
@@ -721,6 +849,137 @@ function renderSalesByProjectDashboard({ database, dashboard }) {
   });
 }
 
+function renderOrderTypeOptions(selectedType) {
+  const options = [
+    ['', 'Все'],
+    ['once', 'Разовые'],
+    ['regular', 'Регулярные']
+  ];
+
+  return options
+    .map(([value, label]) => {
+      const selected = value === selectedType ? ' selected' : '';
+
+      return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+}
+
+function renderPointMetric(label, value) {
+  return `<div class="point-metric">
+  <div class="point-metric-label">${escapeHtml(label)}</div>
+  <div class="point-metric-value">${escapeHtml(value)}</div>
+</div>`;
+}
+
+function renderHeatmap(days) {
+  const cells = days
+    .map(
+      (day) =>
+        `<span class="heatmap-cell" data-level="${escapeHtml(day.level)}" title="${escapeHtml(`${day.date}: ${formatNumber(day.amount)}`)}"></span>`
+    )
+    .join('');
+
+  return `<div class="heatmap" aria-label="Календарь заказов">${cells}</div>
+<div class="heatmap-legend">
+  <span>Меньше</span>
+  <span class="legend-cell" data-level="0"></span>
+  <span class="legend-cell" data-level="1"></span>
+  <span class="legend-cell" data-level="2"></span>
+  <span class="legend-cell" data-level="3"></span>
+  <span class="legend-cell" data-level="4"></span>
+  <span>Больше</span>
+</div>`;
+}
+
+function renderPointCard(point) {
+  const subtitle = [point.clientTitle, point.city, point.region, point.address]
+    .filter((value) => String(value || '').trim() !== '')
+    .join(' · ');
+
+  return `<article class="point-card">
+  <div class="point-card-head">
+    <div class="point-title">${escapeHtml(point.title)}</div>
+    <div class="stability-badge">${escapeHtml(formatPercent(point.stabilityPercent))}</div>
+  </div>
+  <div class="point-subtitle">${escapeHtml(subtitle || 'Без адреса')}</div>
+  <div class="point-metrics">
+    ${renderPointMetric('Заказано', formatNumber(point.totalOrderedShifts))}
+    ${renderPointMetric('Активные дни', `${formatNumber(point.activeDays)} / ${formatNumber(point.rangeDays)}`)}
+    ${renderPointMetric('Среднее', formatNumber(point.avgDailyOrder, 1))}
+  </div>
+  ${renderHeatmap(point.heatmapDays)}
+</article>`;
+}
+
+function renderPointCards(points) {
+  if (points.length === 0) {
+    return '<p class="empty">Нет точек с заказами за выбранный период.</p>';
+  }
+
+  return `<div class="points-grid">${points.map(renderPointCard).join('')}</div>`;
+}
+
+function renderWorkplaceAnalysisDashboard({ database, dashboard }) {
+  const filters = dashboard.filters;
+  const content = `<section class="section">
+  <h1>Анализ точек</h1>
+  <p class="technical-note">Стабильность = доля дней с плановым заказом по mg_orders.amount.</p>
+  <p class="context-line">Период: ${escapeHtml(filters.from)} - ${escapeHtml(filters.to)} · дней: ${escapeHtml(filters.rangeDays)} · ${escapeHtml(dashboard.context.sortLabel)}</p>
+</section>
+<section class="section">
+  <form class="filter-bar" action="/dashboards/workplace-analysis" method="get">
+    <div class="field">
+      <label for="from">С</label>
+      <input id="from" name="from" type="date" value="${escapeHtml(filters.from)}">
+    </div>
+    <div class="field">
+      <label for="to">По</label>
+      <input id="to" name="to" type="date" value="${escapeHtml(filters.to)}">
+    </div>
+    <div class="field">
+      <label for="client">Бренд</label>
+      <input id="client" name="client" value="${escapeHtml(filters.client)}">
+    </div>
+    <div class="field">
+      <label for="city">Город</label>
+      <input id="city" name="city" value="${escapeHtml(filters.city)}">
+    </div>
+    <div class="field">
+      <label for="region">Регион</label>
+      <input id="region" name="region" value="${escapeHtml(filters.region)}">
+    </div>
+    <div class="field">
+      <label for="profession">Специальность</label>
+      <input id="profession" name="profession" value="${escapeHtml(filters.profession)}">
+    </div>
+    <div class="field">
+      <label for="orderType">Тип заказа</label>
+      <select id="orderType" name="orderType">${renderOrderTypeOptions(filters.orderType)}</select>
+    </div>
+    <div class="field">
+      <label for="contractor">Контрагент</label>
+      <input id="contractor" name="contractor" value="${escapeHtml(filters.contractor)}">
+    </div>
+    <div class="field">
+      <label for="search">Поиск точки</label>
+      <input id="search" name="search" value="${escapeHtml(filters.search)}">
+    </div>
+    <button type="submit">Применить</button>
+  </form>
+</section>
+<section class="section">
+  ${renderPointCards(dashboard.points)}
+</section>`;
+
+  return layout({
+    title: 'Анализ точек',
+    database,
+    content,
+    activeNav: 'workplace-analysis'
+  });
+}
+
 function renderError({ database, title, message, activeNav = 'tables' }) {
   const content = `<section class="section">
   <h1>${escapeHtml(title)}</h1>
@@ -735,5 +994,6 @@ module.exports = {
   renderError,
   renderHome,
   renderSalesByProjectDashboard,
-  renderTable
+  renderTable,
+  renderWorkplaceAnalysisDashboard
 };

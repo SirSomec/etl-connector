@@ -6,7 +6,8 @@ const {
   renderError,
   renderHome,
   renderSalesByProjectDashboard,
-  renderTable
+  renderTable,
+  renderWorkplaceAnalysisDashboard
 } = require('../src/render');
 
 test('escapeHtml escapes HTML content and attributes', () => {
@@ -67,6 +68,16 @@ test('renderHome includes sidebar navigation with tables active', () => {
   assert.match(html, /Таблицы/);
   assert.match(html, /Продажи по проектам/);
   assert.match(html, /href="\/dashboards\/sales-by-project"/);
+});
+
+test('renderHome includes workplace analysis navigation', () => {
+  const html = renderHome({
+    database: 'etl',
+    tables: ['mg_orders']
+  });
+
+  assert.match(html, /Анализ точек/);
+  assert.match(html, /href="\/dashboards\/workplace-analysis"/);
 });
 
 test('renderTable escapes metadata and cells, formats complex values, and uses column order', () => {
@@ -266,6 +277,93 @@ test('renderSalesByProjectDashboard shows empty states', () => {
   assert.match(html, /Нет данных за выбранный период/);
   assert.match(html, /value="2026-04-01"/);
   assert.match(html, /value="2026-04-02"/);
+});
+
+test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and escapes values', () => {
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-03',
+        rangeDays: 3,
+        client: '<script>client</script>',
+        city: 'Москва',
+        region: '',
+        profession: '',
+        orderType: 'regular',
+        contractor: '',
+        search: 'Ленина',
+        limit: 12
+      },
+      context: {
+        sortLabel: 'Сначала крупнейшие по заказу',
+        maxDailyAmount: 6
+      },
+      points: [
+        {
+          workplaceId: 'wp1',
+          title: '<script>bad</script>',
+          clientTitle: 'Бренд',
+          city: 'Москва',
+          region: 'Москва',
+          address: 'Москва, Ленина 10',
+          totalOrderedShifts: 9,
+          activeDays: 2,
+          rangeDays: 3,
+          stabilityPercent: 66.66666666666666,
+          avgDailyOrder: 4.5,
+          heatmapDays: [
+            { date: '2026-06-01', amount: 3, level: 2 },
+            { date: '2026-06-02', amount: 0, level: 0 },
+            { date: '2026-06-03', amount: 6, level: 4 }
+          ]
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /Анализ точек/);
+  assert.match(html, /class="nav-link active" href="\/dashboards\/workplace-analysis"/);
+  assert.match(html, /value="2026-06-01"/);
+  assert.match(html, /value="2026-06-03"/);
+  assert.match(html, /&lt;script&gt;client&lt;\/script&gt;/);
+  assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>bad<\/script>/);
+  assert.match(html, /Заказано/);
+  assert.match(html, /9/);
+  assert.match(html, /66\.7%/);
+  assert.match(html, /data-level="4"/);
+  assert.match(html, /title="2026-06-03: 6"/);
+});
+
+test('renderWorkplaceAnalysisDashboard shows empty state', () => {
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-03',
+        rangeDays: 3,
+        client: '',
+        city: '',
+        region: '',
+        profession: '',
+        orderType: '',
+        contractor: '',
+        search: '',
+        limit: 12
+      },
+      context: {
+        sortLabel: 'Сначала крупнейшие по заказу',
+        maxDailyAmount: 0
+      },
+      points: []
+    }
+  });
+
+  assert.match(html, /Нет точек с заказами за выбранный период/);
+  assert.match(html, /value="2026-06-01"/);
 });
 
 function countOccurrences(text, needle) {

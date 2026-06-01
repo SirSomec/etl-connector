@@ -139,6 +139,12 @@ class ClickHouseClient {
     });
   }
 
+  async queryJSONEachRow(query, params = {}, operation = 'ClickHouse query') {
+    const body = await this.execute(query, params, operation);
+
+    return parseJSONEachRow(body);
+  }
+
   async listTables() {
     const body = await this.execute(
       [

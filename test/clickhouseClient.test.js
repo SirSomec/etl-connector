@@ -198,6 +198,33 @@ test('listTables sends authenticated HTTPS request and parses table names', asyn
   assert.match(decodeURIComponent(transport.calls[0].path), /param_database=etl/);
 });
 
+test('queryJSONEachRow executes a query and returns parsed rows', async () => {
+  const transport = fakeRequest('{"period":"2026-04-01","ordered":3}\n');
+  const client = new ClickHouseClient(baseConfig(), {
+    request: transport.request,
+    readFileSync: () => 'CA'
+  });
+
+  const rows = await client.queryJSONEachRow(
+    'SELECT {period:String} AS period, {ordered:UInt64} AS ordered FORMAT JSONEachRow',
+    {
+      param_period: '2026-04-01',
+      param_ordered: 3
+    },
+    'dashboard query'
+  );
+
+  assert.deepEqual(rows, [{ period: '2026-04-01', ordered: 3 }]);
+
+  const params = queryParams(transport.calls[0]);
+  assert.equal(
+    params.get('query'),
+    'SELECT {period:String} AS period, {ordered:UInt64} AS ordered FORMAT JSONEachRow'
+  );
+  assert.equal(params.get('param_period'), '2026-04-01');
+  assert.equal(params.get('param_ordered'), '3');
+});
+
 test('getColumns reads metadata for one table', async () => {
   const transport = fakeRequest(
     '{"name":"id","type":"UInt64","position":1}\n{"name":"created_at","type":"DateTime","position":2}\n'

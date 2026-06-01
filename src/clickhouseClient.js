@@ -30,13 +30,14 @@ function quoteIdentifier(identifier) {
     throw new Error('Identifier must be a non-empty string');
   }
 
-  return `\`${identifier.replace(/`/g, '``')}\``;
+  return `\`${identifier.replace(/\\/g, '\\\\').replace(/`/g, '\\`')}\``;
 }
 
 class ClickHouseClient {
   constructor(config, deps = {}) {
     this.config = config;
     this.request = deps.request || https.request;
+    this.requestTimeoutMs = config.requestTimeoutMs || 10000;
     this.ca = Object.prototype.hasOwnProperty.call(deps, 'ca')
       ? deps.ca
       : (deps.readFileSync || fs.readFileSync)(config.caPath);
@@ -54,9 +55,9 @@ class ClickHouseClient {
 
   execute(query, params = {}, operation = 'ClickHouse query') {
     const requestParams = {
+      ...params,
       database: this.config.database,
-      query,
-      ...params
+      query
     };
     const options = {
       method: 'GET',
@@ -71,7 +72,22 @@ class ClickHouseClient {
     };
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const resolveOnce = (value) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        resolve(value);
+      };
       const rejectClickHouseError = (message, statusCode) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
         reject(new ClickHouseError(operation, this.redact(message), statusCode));
       };
 
@@ -85,6 +101,12 @@ class ClickHouseClient {
           res.on('data', (chunk) => {
             chunks.push(chunk);
           });
+          res.on('error', (error) => {
+            rejectClickHouseError(error.message);
+          });
+          res.on('aborted', () => {
+            rejectClickHouseError('Response aborted');
+          });
           res.on('end', () => {
             const body = chunks.join('');
 
@@ -93,7 +115,7 @@ class ClickHouseClient {
               return;
             }
 
-            resolve(body);
+            resolveOnce(body);
           });
         });
       } catch (error) {
@@ -102,6 +124,15 @@ class ClickHouseClient {
       }
 
       req.on('error', (error) => {
+        rejectClickHouseError(error.message);
+      });
+      req.setTimeout(this.requestTimeoutMs, () => {
+        const error = new Error(`Request timed out after ${this.requestTimeoutMs} ms`);
+
+        if (typeof req.destroy === 'function') {
+          req.destroy(error);
+        }
+
         rejectClickHouseError(error.message);
       });
       req.end();
@@ -150,11 +181,19 @@ class ClickHouseClient {
 
     const query = [
       'SELECT *',
-      `FROM ${quoteIdentifier(this.config.database)}.${quoteIdentifier(tableName)}`,
-      `LIMIT ${limit}`,
+      'FROM {database:Identifier}.{table:Identifier}',
+      'LIMIT {limit:UInt64}',
       'FORMAT JSONEachRow'
     ].join(' ');
-    const body = await this.execute(query, {}, `load preview for ${tableName}`);
+    const body = await this.execute(
+      query,
+      {
+        param_database: this.config.database,
+        param_table: tableName,
+        param_limit: limit
+      },
+      `load preview for ${tableName}`
+    );
 
     return parseJSONEachRow(body);
   }

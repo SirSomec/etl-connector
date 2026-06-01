@@ -22,11 +22,16 @@ function baseConfig() {
 
 function fakeRequest(responseBody, statusCode = 200) {
   const calls = [];
+  const timeouts = [];
 
   function request(options, callback) {
     calls.push(options);
     const req = new EventEmitter();
 
+    req.setTimeout = (timeoutMs) => {
+      timeouts.push(timeoutMs);
+      return req;
+    };
     req.end = () => {
       const res = new EventEmitter();
       res.statusCode = statusCode;
@@ -44,7 +49,116 @@ function fakeRequest(responseBody, statusCode = 200) {
     return req;
   }
 
+  return { calls, request, timeouts };
+}
+
+function fakeRequestError(error) {
+  const calls = [];
+
+  function request(options) {
+    calls.push(options);
+    const req = new EventEmitter();
+
+    req.setTimeout = () => req;
+    req.end = () => {
+      process.nextTick(() => {
+        req.emit('error', error);
+      });
+    };
+
+    return req;
+  }
+
   return { calls, request };
+}
+
+function fakeResponseError(error) {
+  function request(options, callback) {
+    const req = new EventEmitter();
+
+    req.setTimeout = () => req;
+    req.end = () => {
+      const res = new EventEmitter();
+      res.statusCode = 200;
+      res.setEncoding = () => {};
+      callback(res);
+
+      process.nextTick(() => {
+        if (res.listenerCount('error') > 0) {
+          res.emit('error', error);
+        }
+        res.emit('end');
+      });
+    };
+
+    return req;
+  }
+
+  return { request };
+}
+
+function fakeAbortedResponse() {
+  function request(options, callback) {
+    const req = new EventEmitter();
+
+    req.setTimeout = () => req;
+    req.end = () => {
+      const res = new EventEmitter();
+      res.statusCode = 200;
+      res.setEncoding = () => {};
+      callback(res);
+
+      process.nextTick(() => {
+        res.emit('aborted');
+        res.emit('end');
+      });
+    };
+
+    return req;
+  }
+
+  return { request };
+}
+
+function fakeStalledRequest() {
+  const calls = [];
+  let timeoutMs;
+  let destroyedWith;
+
+  function request(options) {
+    calls.push(options);
+    const req = new EventEmitter();
+
+    req.setTimeout = (ms, callback) => {
+      timeoutMs = ms;
+      setTimeout(callback, 1);
+      return req;
+    };
+    req.destroy = (error) => {
+      destroyedWith = error;
+      process.nextTick(() => {
+        req.emit('error', error);
+      });
+    };
+    req.end = () => {};
+
+    return req;
+  }
+
+  return {
+    calls,
+    request,
+    get timeoutMs() {
+      return timeoutMs;
+    },
+    get destroyedWith() {
+      return destroyedWith;
+    }
+  };
+}
+
+function queryParams(call) {
+  return new URLSearchParams(call.path.slice(2));
 }
 
 test('parseJSONEachRow parses newline-delimited ClickHouse JSON rows and blank bodies', () => {
@@ -58,7 +172,7 @@ test('parseJSONEachRow parses newline-delimited ClickHouse JSON rows and blank b
 
 test('quoteIdentifier wraps identifiers and escapes backticks', () => {
   assert.equal(quoteIdentifier('events'), '`events`');
-  assert.equal(quoteIdentifier('event`log'), '`event``log`');
+  assert.equal(quoteIdentifier('event`log\\raw'), '`event\\`log\\\\raw`');
   assert.throws(() => quoteIdentifier(''), /Identifier must be a non-empty string/);
 });
 
@@ -77,6 +191,7 @@ test('listTables sends authenticated HTTPS request and parses table names', asyn
   assert.equal(transport.calls[0].hostname, 'clickhouse.example.test');
   assert.equal(transport.calls[0].port, 8443);
   assert.equal(transport.calls[0].ca, 'CA');
+  assert.equal(transport.timeouts[0], 10000);
   assert.equal(transport.calls[0].headers['X-ClickHouse-User'], 'rouser');
   assert.equal(transport.calls[0].headers['X-ClickHouse-Key'], 'secret');
   assert.match(decodeURIComponent(transport.calls[0].path), /system\.tables/);
@@ -103,20 +218,28 @@ test('getColumns reads metadata for one table', async () => {
   assert.match(decodeURIComponent(transport.calls[0].path), /param_table=events/);
 });
 
-test('getPreview quotes database and table identifiers and parses rows', async () => {
+test('getPreview sends identifiers and limit as ClickHouse query parameters', async () => {
   const transport = fakeRequest('{"id":1,"name":"first"}\n');
   const client = new ClickHouseClient(baseConfig(), {
     request: transport.request,
     readFileSync: () => 'CA'
   });
+  const dangerousTable = 'event`log\\raw; DROP TABLE system.users';
 
-  const rows = await client.getPreview('event`log', 2);
+  const rows = await client.getPreview(dangerousTable, 2);
+  const params = queryParams(transport.calls[0]);
+  const query = params.get('query');
 
   assert.deepEqual(rows, [{ id: 1, name: 'first' }]);
-  assert.match(
-    decodeURIComponent(transport.calls[0].path),
-    /SELECT \* FROM `etl`\.`event``log` LIMIT 2 FORMAT JSONEachRow/
+  assert.equal(
+    query,
+    'SELECT * FROM {database:Identifier}.{table:Identifier} LIMIT {limit:UInt64} FORMAT JSONEachRow'
   );
+  assert.equal(params.get('param_database'), 'etl');
+  assert.equal(params.get('param_table'), dangerousTable);
+  assert.equal(params.get('param_limit'), '2');
+  assert.equal(query.includes(dangerousTable), false);
+  assert.equal(query.includes('DROP TABLE'), false);
 });
 
 test('getPreview rejects invalid limits', async () => {
@@ -144,6 +267,109 @@ test('execute rejects failed ClickHouse responses without leaking password', asy
       assert.ok(error instanceof ClickHouseError);
       assert.equal(error.statusCode, 500);
       assert.match(error.message, /test query failed with HTTP 500/);
+      assert.doesNotMatch(error.message, /secret/);
+      assert.match(error.message, /\[redacted\]/);
+      return true;
+    }
+  );
+});
+
+test('execute rejects response stream errors with ClickHouseError', async () => {
+  const transport = fakeResponseError(new Error('stream failed'));
+  const client = new ClickHouseClient(baseConfig(), {
+    request: transport.request,
+    readFileSync: () => 'CA'
+  });
+
+  await assert.rejects(
+    () => client.execute('SELECT 1', {}, 'stream query'),
+    (error) => {
+      assert.ok(error instanceof ClickHouseError);
+      assert.match(error.message, /stream query failed: stream failed/);
+      return true;
+    }
+  );
+});
+
+test('execute rejects aborted responses with ClickHouseError', async () => {
+  const transport = fakeAbortedResponse();
+  const client = new ClickHouseClient(baseConfig(), {
+    request: transport.request,
+    readFileSync: () => 'CA'
+  });
+
+  await assert.rejects(
+    () => client.execute('SELECT 1', {}, 'aborted query'),
+    (error) => {
+      assert.ok(error instanceof ClickHouseError);
+      assert.match(error.message, /aborted query failed: Response aborted/);
+      return true;
+    }
+  );
+});
+
+test('execute times out stalled requests and destroys the request', async () => {
+  const transport = fakeStalledRequest();
+  const client = new ClickHouseClient(
+    { ...baseConfig(), requestTimeoutMs: 5 },
+    {
+      request: transport.request,
+      readFileSync: () => 'CA'
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      Promise.race([
+        client.execute('SELECT 1', {}, 'slow query'),
+        new Promise((resolve, reject) => {
+          setTimeout(() => reject(new Error('execute did not time out')), 30);
+        })
+      ]),
+    (error) => {
+      assert.ok(error instanceof ClickHouseError);
+      assert.match(error.message, /slow query failed: Request timed out after 5 ms/);
+      return true;
+    }
+  );
+  assert.equal(transport.timeoutMs, 5);
+  assert.ok(transport.destroyedWith instanceof Error);
+});
+
+test('execute does not let params override reserved database or query values', async () => {
+  const transport = fakeRequest('ok\n');
+  const client = new ClickHouseClient(baseConfig(), {
+    request: transport.request,
+    readFileSync: () => 'CA'
+  });
+
+  await client.execute(
+    'SELECT 1',
+    {
+      database: 'other',
+      query: 'SELECT password FROM secrets',
+      param_database: 'analytics'
+    },
+    'reserved params query'
+  );
+
+  const params = queryParams(transport.calls[0]);
+  assert.equal(params.get('database'), 'etl');
+  assert.equal(params.get('query'), 'SELECT 1');
+  assert.equal(params.get('param_database'), 'analytics');
+});
+
+test('execute redacts configured password from request errors', async () => {
+  const transport = fakeRequestError(new Error('socket failed with secret'));
+  const client = new ClickHouseClient(baseConfig(), {
+    request: transport.request,
+    readFileSync: () => 'CA'
+  });
+
+  await assert.rejects(
+    () => client.execute('SELECT 1', {}, 'request query'),
+    (error) => {
+      assert.ok(error instanceof ClickHouseError);
       assert.doesNotMatch(error.message, /secret/);
       assert.match(error.message, /\[redacted\]/);
       return true;

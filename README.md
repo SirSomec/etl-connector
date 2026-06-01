@@ -47,8 +47,10 @@ Run the app locally:
 npm start
 ```
 
-Local `npm start` requires the Yandex Cloud CA certificates installed on the
-host, or `CLICKHOUSE_CA_PATH` set to a readable CA certificate path. Open
+Local `npm start` reads configuration from process environment variables, not
+from `.env` automatically. Export the variables from `.env` first, or set them
+in your shell. It also requires the Yandex Cloud CA certificates installed on
+the host, or `CLICKHOUSE_CA_PATH` set to a readable CA certificate path. Open
 `http://localhost:3000`.
 
 ## Docker

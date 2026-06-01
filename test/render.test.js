@@ -292,22 +292,22 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
         region: '',
         profession: '',
         orderType: 'regular',
-        contractor: '',
-        search: 'Ленина',
+        contractor: '<script>contractor</script>',
+        search: '<script>search</script>',
         limit: 12
       },
       context: {
-        sortLabel: 'Сначала крупнейшие по заказу',
+        sortLabel: '<script>sort</script>',
         maxDailyAmount: 6
       },
       points: [
         {
           workplaceId: 'wp1',
           title: '<script>bad</script>',
-          clientTitle: 'Бренд',
-          city: 'Москва',
-          region: 'Москва',
-          address: 'Москва, Ленина 10',
+          clientTitle: '<b>Бренд</b>',
+          city: '<script>city</script>',
+          region: '<em>region</em>',
+          address: '<img src=x onerror=alert(1)>',
           totalOrderedShifts: 9,
           activeDays: 2,
           rangeDays: 3,
@@ -316,7 +316,7 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
           heatmapDays: [
             { date: '2026-06-01', amount: 3, level: 2 },
             { date: '2026-06-02', amount: 0, level: 0 },
-            { date: '2026-06-03', amount: 6, level: 4 }
+            { date: '<script>date</script>', amount: 6, level: 4 }
           ]
         }
       ]
@@ -328,15 +328,34 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /value="2026-06-01"/);
   assert.match(html, /value="2026-06-03"/);
   assert.match(html, /name="limit"/);
+  assert.match(html, /<option value="10">10<\/option>/);
+  assert.match(html, /<option value="12" selected>12<\/option>/);
+  assert.match(html, /<option value="20">20<\/option>/);
+  assert.match(html, /<option value="50">50<\/option>/);
   assert.match(html, /value="12" selected/);
   assert.match(html, /&lt;script&gt;client&lt;\/script&gt;/);
+  assert.match(html, /&lt;script&gt;sort&lt;\/script&gt;/);
+  assert.match(html, /&lt;script&gt;contractor&lt;\/script&gt;/);
+  assert.match(html, /&lt;script&gt;search&lt;\/script&gt;/);
   assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.match(html, /&lt;b&gt;Бренд&lt;\/b&gt;/);
+  assert.match(html, /&lt;script&gt;city&lt;\/script&gt;/);
+  assert.match(html, /&lt;em&gt;region&lt;\/em&gt;/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /title="&lt;script&gt;date&lt;\/script&gt;: 6"/);
+  assert.doesNotMatch(html, /<script>sort<\/script>/);
+  assert.doesNotMatch(html, /<script>contractor<\/script>/);
+  assert.doesNotMatch(html, /<script>search<\/script>/);
   assert.doesNotMatch(html, /<script>bad<\/script>/);
+  assert.doesNotMatch(html, /<b>Бренд<\/b>/);
+  assert.doesNotMatch(html, /<script>city<\/script>/);
+  assert.doesNotMatch(html, /<em>region<\/em>/);
+  assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/);
+  assert.doesNotMatch(html, /<script>date<\/script>/);
   assert.match(html, /Заказано/);
   assert.match(html, /9/);
   assert.match(html, /66\.7%/);
   assert.match(html, /data-level="4"/);
-  assert.match(html, /title="2026-06-03: 6"/);
 });
 
 test('renderWorkplaceAnalysisDashboard shows empty state', () => {

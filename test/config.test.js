@@ -88,3 +88,14 @@ test('loadConfig rejects invalid numeric ports', () => {
     /CLICKHOUSE_REQUEST_TIMEOUT_MS must be an integer/
   );
 });
+
+test('loadConfig accepts long positive ClickHouse request timeouts', () => {
+  const config = loadConfig({
+    CLICKHOUSE_HOST: 'clickhouse.example.test',
+    CLICKHOUSE_USER: 'rouser',
+    CLICKHOUSE_PASSWORD: 'secret',
+    CLICKHOUSE_REQUEST_TIMEOUT_MS: '120000'
+  });
+
+  assert.equal(config.clickhouse.requestTimeoutMs, 120000);
+});

@@ -5,7 +5,7 @@ class ConfigError extends Error {
   }
 }
 
-function readInt(env, name, defaultValue) {
+function readInteger(env, name, defaultValue) {
   const rawValue = env[name] || String(defaultValue);
   const value = Number.parseInt(rawValue, 10);
 
@@ -13,8 +13,24 @@ function readInt(env, name, defaultValue) {
     throw new ConfigError(`${name} must be an integer`);
   }
 
+  return value;
+}
+
+function readPort(env, name, defaultValue) {
+  const value = readInteger(env, name, defaultValue);
+
   if (value < 1 || value > 65535) {
     throw new ConfigError(`${name} must be between 1 and 65535`);
+  }
+
+  return value;
+}
+
+function readPositiveInt(env, name, defaultValue, maxValue) {
+  const value = readInteger(env, name, defaultValue);
+
+  if (value < 1 || value > maxValue) {
+    throw new ConfigError(`${name} must be between 1 and ${maxValue}`);
   }
 
   return value;
@@ -31,14 +47,19 @@ function loadConfig(env = process.env) {
   }
 
   return {
-    port: readInt(env, 'PORT', 3000),
+    port: readPort(env, 'PORT', 3000),
     clickhouse: {
       host: env.CLICKHOUSE_HOST,
-      port: readInt(env, 'CLICKHOUSE_PORT', 8443),
+      port: readPort(env, 'CLICKHOUSE_PORT', 8443),
       database: env.CLICKHOUSE_DATABASE || 'etl',
       user: env.CLICKHOUSE_USER,
       password: env.CLICKHOUSE_PASSWORD,
-      requestTimeoutMs: readInt(env, 'CLICKHOUSE_REQUEST_TIMEOUT_MS', 30000),
+      requestTimeoutMs: readPositiveInt(
+        env,
+        'CLICKHOUSE_REQUEST_TIMEOUT_MS',
+        30000,
+        600000
+      ),
       caPath:
         env.CLICKHOUSE_CA_PATH ||
         '/usr/local/share/ca-certificates/Yandex/RootCA.crt'

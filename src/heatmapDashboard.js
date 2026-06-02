@@ -127,6 +127,7 @@ function normalizeHeatmapFilters(input = {}, now = new Date()) {
     activeToExclusiveDateTime: toDateTimeParam(toExclusive),
     client: cleanValues(input.client),
     excludedProfession: cleanValues(input.excludedProfession),
+    addressSearch: cleanText(input.addressSearch),
     activeBaseMode
   };
 }
@@ -317,6 +318,17 @@ function addOrderFilters(filters, where, params) {
   if (filters.excludedProfession.length > 0) {
     where.push("if(ifNull(p.caption, '') = '', o.spec, p.caption) NOT IN {excluded_professions:Array(String)}");
     params.param_excluded_professions = serializeStringArray(filters.excludedProfession);
+  }
+
+  if (filters.addressSearch !== '') {
+    where.push(`(
+      positionCaseInsensitive(ifNull(w.address__region, ''), {address_search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.address__city, ''), {address_search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.address__street, ''), {address_search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.title, ''), {address_search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.technical_name, ''), {address_search:String}) > 0
+    )`);
+    params.param_address_search = filters.addressSearch;
   }
 }
 
@@ -533,6 +545,7 @@ function cacheKeyForHeatmapSection(section, filters) {
       month: filters.month,
       client: filters.client,
       excludedProfession: filters.excludedProfession,
+      addressSearch: filters.addressSearch,
       activeBaseMode: filters.activeBaseMode
     }
   });

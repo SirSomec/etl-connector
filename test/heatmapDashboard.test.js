@@ -18,6 +18,7 @@ test('normalizeHeatmapFilters defaults to the previous month and cleans filter v
       month: '13',
       client: ['Brand A', 'Brand A', ' '],
       excludedProfession: ['Курьер', 'Курьер', ' '],
+      addressSearch: '  Тверская  ',
       activeBaseMode: 'unsafe'
     },
     new Date('2026-06-15T12:00:00.000Z')
@@ -35,6 +36,7 @@ test('normalizeHeatmapFilters defaults to the previous month and cleans filter v
     activeToExclusiveDateTime: '2026-06-01 00:00:00',
     client: ['Brand A'],
     excludedProfession: ['Курьер'],
+    addressSearch: 'Тверская',
     activeBaseMode: 'all'
   });
 });
@@ -195,6 +197,7 @@ test('loadHeatmapDashboardSection queries weighted demand points with safe param
       month: '5',
       client: ['Brand A', 'Brand B'],
       excludedProfession: 'Курьер',
+      addressSearch: '  Тверская  ',
       activeBaseMode: 'ready'
     },
     'map',
@@ -211,14 +214,22 @@ test('loadHeatmapDashboardSection queries weighted demand points with safe param
     assert.equal(call.query.includes('Brand A'), false);
     assert.equal(call.query.includes('Brand B'), false);
     assert.equal(call.query.includes('Курьер'), false);
+    assert.equal(call.query.includes('Тверская'), false);
   }
 
   const orderCall = calls[0];
 
   assert.equal(orderCall.params.param_clients, "['Brand A','Brand B']");
   assert.equal(orderCall.params.param_excluded_professions, "['Курьер']");
+  assert.equal(orderCall.params.param_address_search, 'Тверская');
   assert.equal(orderCall.query.includes('c.title IN {clients:Array(String)}'), true);
   assert.equal(orderCall.query.includes('NOT IN {excluded_professions:Array(String)}'), true);
+  assert.equal(orderCall.query.includes('{address_search:String}'), true);
+  assert.equal(orderCall.query.includes('positionCaseInsensitive(ifNull(w.address__city'), true);
+  assert.equal(orderCall.query.includes('positionCaseInsensitive(ifNull(w.address__street'), true);
+  assert.equal(orderCall.query.includes('positionCaseInsensitive(ifNull(w.address__region'), true);
+  assert.equal(orderCall.query.includes('positionCaseInsensitive(ifNull(w.title'), true);
+  assert.equal(orderCall.query.includes('positionCaseInsensitive(ifNull(w.technical_name'), true);
   assert.equal(orderCall.query.includes('ifNull(o.amount, 0) AS amount'), true);
   assert.equal(orderCall.query.includes('w.location__coordinates AS workplace_coordinates'), true);
   assert.equal(orderCall.query.includes('greatCircleDistance'), true);

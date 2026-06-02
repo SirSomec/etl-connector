@@ -1614,17 +1614,6 @@ function layout({
       font-size: 12px;
     }
 
-    .heatmap-region-table {
-      max-height: 520px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-    }
-
-    .heatmap-region-table table {
-      min-width: 760px;
-    }
-
     @media (max-width: 980px) {
       .country-heatmap-layout {
         grid-template-columns: 1fr;
@@ -4525,6 +4514,7 @@ function heatmapSectionUrl(filters, section) {
   addHeatmapQueryParam(params, 'month', filters.month);
   addHeatmapQueryParam(params, 'client', filters.client);
   addHeatmapQueryParam(params, 'excludedProfession', filters.excludedProfession);
+  addHeatmapQueryParam(params, 'addressSearch', filters.addressSearch);
   addHeatmapQueryParam(params, 'activeBaseMode', filters.activeBaseMode);
 
   return `/dashboards/heatmap/section?${params.toString()}`;
@@ -4711,50 +4701,6 @@ function renderHeatmapMap(points) {
 </div>`;
 }
 
-function renderHeatmapRegionTable(points) {
-  const rows = safeRows(points).filter((point) => Number(point.orderedShifts) > 0);
-
-  if (rows.length === 0) {
-    return `<div class="country-heatmap-panel">
-  ${renderEmptyDashboardTable()}
-</div>`;
-  }
-
-  return `<div class="country-heatmap-panel">
-  <h2>Точки заказа</h2>
-  <div class="heatmap-region-table">
-    <table>
-      <thead>
-        <tr>
-          <th>Точка</th>
-          <th>Адрес</th>
-          <th>Заказ</th>
-          <th>Взвешенная база</th>
-          <th>База / смена</th>
-          <th>5 км</th>
-          <th>10 км</th>
-          <th>15 км</th>
-        </tr>
-      </thead>
-      <tbody>${rows
-        .map(
-          (point) => `<tr>
-          <td>${escapeHtml(point.workplaceTitle || point.workplaceId || 'Точка заказа')}</td>
-          <td>${escapeHtml(heatmapPointAddress(point) || point.region)}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(point.orderedShifts))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(point.weightedActiveUsers, 1))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(point.weightedActiveUsersPerShift, 1))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(point.radiusUsers && point.radiusUsers.near))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(point.radiusUsers && point.radiusUsers.medium))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(point.radiusUsers && point.radiusUsers.far))}</td>
-        </tr>`
-        )
-        .join('')}</tbody>
-    </table>
-  </div>
-</div>`;
-}
-
 function renderHeatmapDashboardSection({ dashboard, section }) {
   if (section !== 'map') {
     return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
@@ -4763,10 +4709,7 @@ function renderHeatmapDashboardSection({ dashboard, section }) {
   return `<section class="section">
   ${renderHeatmapLeafletAssets()}
   ${renderHeatmapKpis(dashboard.summary)}
-  <div class="country-heatmap-layout">
-    ${renderHeatmapMap(dashboard.points)}
-    ${renderHeatmapRegionTable(dashboard.points)}
-  </div>
+  ${renderHeatmapMap(dashboard.points)}
   ${renderHeatmapLeafletScript()}
 </section>`;
 }
@@ -4803,6 +4746,10 @@ function renderHeatmapDashboard({
     <div class="field">
       <label for="month">Месяц</label>
       <select id="month" name="month">${renderHeatmapMonthOptions(filters.month)}</select>
+    </div>
+    <div class="field">
+      <label for="addressSearch">Поиск по адресу</label>
+      <input id="addressSearch" name="addressSearch" type="search" value="${escapeHtml(filters.addressSearch || '')}" placeholder="Город, улица или точка">
     </div>
     ${renderMultiSelectField({
       id: 'client',

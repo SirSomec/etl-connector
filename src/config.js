@@ -1,3 +1,5 @@
+const path = require('node:path');
+
 class ConfigError extends Error {
   constructor(message) {
     super(message);
@@ -36,8 +38,18 @@ function readPositiveInt(env, name, defaultValue, maxValue) {
   return value;
 }
 
+function isAuthEnabled(env) {
+  return String(env.AUTH_ENABLED || 'true').toLowerCase() !== 'false';
+}
+
 function loadConfig(env = process.env) {
+  const authEnabled = isAuthEnabled(env);
   const required = ['CLICKHOUSE_HOST', 'CLICKHOUSE_USER', 'CLICKHOUSE_PASSWORD'];
+
+  if (authEnabled) {
+    required.push('AUTH_ADMIN_EMAIL', 'AUTH_ADMIN_PASSWORD');
+  }
+
   const missing = required.filter(
     (name) => typeof env[name] !== 'string' || env[name].trim() === ''
   );
@@ -63,6 +75,27 @@ function loadConfig(env = process.env) {
       caPath:
         env.CLICKHOUSE_CA_PATH ||
         '/usr/local/share/ca-certificates/Yandex/RootCA.crt'
+    },
+    auth: {
+      enabled: authEnabled,
+      adminEmail: authEnabled ? env.AUTH_ADMIN_EMAIL : '',
+      adminPassword: authEnabled ? env.AUTH_ADMIN_PASSWORD : '',
+      userStorePath:
+        env.AUTH_USER_STORE_PATH || path.join(process.cwd(), 'data', 'users.json'),
+      sessionSecret: env.AUTH_SESSION_SECRET || '',
+      sessionCookieName: env.AUTH_SESSION_COOKIE_NAME || 'etl_analytics_session',
+      sessionTtlMs: readPositiveInt(
+        env,
+        'AUTH_SESSION_TTL_MS',
+        12 * 60 * 60 * 1000,
+        30 * 24 * 60 * 60 * 1000
+      ),
+      passwordHashIterations: readPositiveInt(
+        env,
+        'AUTH_PASSWORD_HASH_ITERATIONS',
+        210000,
+        1000000
+      )
     }
   };
 }

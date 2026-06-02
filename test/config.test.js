@@ -3,12 +3,19 @@ const assert = require('node:assert/strict');
 
 const { ConfigError, loadConfig } = require('../src/config');
 
-test('loadConfig returns required values and safe defaults', () => {
-  const config = loadConfig({
+function baseEnv(overrides = {}) {
+  return {
     CLICKHOUSE_HOST: 'clickhouse.example.test',
     CLICKHOUSE_USER: 'rouser',
-    CLICKHOUSE_PASSWORD: 'secret'
-  });
+    CLICKHOUSE_PASSWORD: 'secret',
+    AUTH_ADMIN_EMAIL: 'admin@example.test',
+    AUTH_ADMIN_PASSWORD: 'AdminPass123',
+    ...overrides
+  };
+}
+
+test('loadConfig returns required values and safe defaults', () => {
+  const config = loadConfig(baseEnv());
 
   assert.equal(config.port, 3000);
   assert.equal(config.clickhouse.host, 'clickhouse.example.test');
@@ -21,6 +28,12 @@ test('loadConfig returns required values and safe defaults', () => {
     config.clickhouse.caPath,
     '/usr/local/share/ca-certificates/Yandex/RootCA.crt'
   );
+  assert.equal(config.auth.enabled, true);
+  assert.equal(config.auth.adminEmail, 'admin@example.test');
+  assert.equal(config.auth.adminPassword, 'AdminPass123');
+  assert.match(config.auth.userStorePath, /data[\\/]users\.json$/);
+  assert.equal(config.auth.sessionCookieName, 'etl_analytics_session');
+  assert.equal(config.auth.sessionTtlMs, 12 * 60 * 60 * 1000);
 });
 
 test('loadConfig reports every missing required variable', () => {
@@ -28,11 +41,13 @@ test('loadConfig reports every missing required variable', () => {
     () => loadConfig({}),
     (error) => {
       assert.ok(error instanceof ConfigError);
-      assert.match(error.message, /CLICKHOUSE_HOST/);
-      assert.match(error.message, /CLICKHOUSE_USER/);
-      assert.match(error.message, /CLICKHOUSE_PASSWORD/);
-      return true;
-    }
+        assert.match(error.message, /CLICKHOUSE_HOST/);
+        assert.match(error.message, /CLICKHOUSE_USER/);
+        assert.match(error.message, /CLICKHOUSE_PASSWORD/);
+        assert.match(error.message, /AUTH_ADMIN_EMAIL/);
+        assert.match(error.message, /AUTH_ADMIN_PASSWORD/);
+        return true;
+      }
   );
 });
 
@@ -42,13 +57,17 @@ test('loadConfig rejects blank required variables', () => {
       loadConfig({
         CLICKHOUSE_HOST: '   ',
         CLICKHOUSE_USER: '\t',
-        CLICKHOUSE_PASSWORD: '\n'
+        CLICKHOUSE_PASSWORD: '\n',
+        AUTH_ADMIN_EMAIL: ' ',
+        AUTH_ADMIN_PASSWORD: '\t'
       }),
     (error) => {
       assert.ok(error instanceof ConfigError);
       assert.match(error.message, /CLICKHOUSE_HOST/);
       assert.match(error.message, /CLICKHOUSE_USER/);
       assert.match(error.message, /CLICKHOUSE_PASSWORD/);
+      assert.match(error.message, /AUTH_ADMIN_EMAIL/);
+      assert.match(error.message, /AUTH_ADMIN_PASSWORD/);
       return true;
     }
   );
@@ -57,45 +76,60 @@ test('loadConfig rejects blank required variables', () => {
 test('loadConfig rejects invalid numeric ports', () => {
   assert.throws(
     () =>
-      loadConfig({
-        CLICKHOUSE_HOST: 'clickhouse.example.test',
-        CLICKHOUSE_USER: 'rouser',
-        CLICKHOUSE_PASSWORD: 'secret',
+      loadConfig(baseEnv({
         CLICKHOUSE_PORT: 'not-a-number'
-      }),
+      })),
     /CLICKHOUSE_PORT must be an integer/
   );
 
   assert.throws(
     () =>
-      loadConfig({
-        CLICKHOUSE_HOST: 'clickhouse.example.test',
-        CLICKHOUSE_USER: 'rouser',
-        CLICKHOUSE_PASSWORD: 'secret',
+      loadConfig(baseEnv({
         PORT: '0'
-      }),
+      })),
     /PORT must be between 1 and 65535/
   );
 
   assert.throws(
     () =>
-      loadConfig({
-        CLICKHOUSE_HOST: 'clickhouse.example.test',
-        CLICKHOUSE_USER: 'rouser',
-        CLICKHOUSE_PASSWORD: 'secret',
+      loadConfig(baseEnv({
         CLICKHOUSE_REQUEST_TIMEOUT_MS: 'slow'
-      }),
+      })),
     /CLICKHOUSE_REQUEST_TIMEOUT_MS must be an integer/
   );
 });
 
 test('loadConfig accepts long positive ClickHouse request timeouts', () => {
+  const config = loadConfig(baseEnv({
+    CLICKHOUSE_REQUEST_TIMEOUT_MS: '120000'
+  }));
+
+  assert.equal(config.clickhouse.requestTimeoutMs, 120000);
+});
+
+test('loadConfig can disable auth for isolated tests', () => {
   const config = loadConfig({
     CLICKHOUSE_HOST: 'clickhouse.example.test',
     CLICKHOUSE_USER: 'rouser',
     CLICKHOUSE_PASSWORD: 'secret',
-    CLICKHOUSE_REQUEST_TIMEOUT_MS: '120000'
+    AUTH_ENABLED: 'false'
   });
 
-  assert.equal(config.clickhouse.requestTimeoutMs, 120000);
+  assert.equal(config.auth.enabled, false);
+  assert.equal(config.auth.adminEmail, '');
+  assert.equal(config.auth.adminPassword, '');
+});
+
+test('loadConfig accepts auth overrides', () => {
+  const config = loadConfig(baseEnv({
+    AUTH_USER_STORE_PATH: 'C:\\auth\\users.json',
+    AUTH_SESSION_SECRET: 'session-secret',
+    AUTH_SESSION_COOKIE_NAME: 'custom_session',
+    AUTH_SESSION_TTL_MS: '600000'
+  }));
+
+  assert.equal(config.auth.userStorePath, 'C:\\auth\\users.json');
+  assert.equal(config.auth.sessionSecret, 'session-secret');
+  assert.equal(config.auth.sessionCookieName, 'custom_session');
+  assert.equal(config.auth.sessionTtlMs, 600000);
 });

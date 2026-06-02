@@ -1,3 +1,8 @@
+const {
+  PERMISSION_DEFINITIONS,
+  hasPermission
+} = require('./auth');
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -13,7 +18,84 @@ function navLink({ href, label, id, activeNav }) {
   return `<a class="${className}" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
 }
 
-function layout({ title, database, content, activeNav = 'tables' }) {
+const NAV_LINKS = [
+  {
+    href: '/',
+    label: 'Таблицы',
+    id: 'tables',
+    permission: 'tables'
+  },
+  {
+    href: '/dashboards/sales-by-project',
+    label: 'Продажи по проектам',
+    id: 'sales-by-project',
+    permission: 'sales-by-project'
+  },
+  {
+    href: '/dashboards/workplace-analysis',
+    label: 'Анализ точек',
+    id: 'workplace-analysis',
+    permission: 'workplace-analysis'
+  },
+  {
+    href: '/dashboards/city-analysis',
+    label: 'Анализ городов',
+    id: 'city-analysis',
+    permission: 'city-analysis'
+  },
+  {
+    href: '/admin/users',
+    label: 'Учетные записи',
+    id: 'users',
+    permission: 'users'
+  }
+];
+
+function navLinksForUser(currentUser) {
+  if (currentUser === undefined) {
+    return NAV_LINKS;
+  }
+
+  if (!currentUser) {
+    return [];
+  }
+
+  return NAV_LINKS.filter((link) => hasPermission(currentUser, link.permission));
+}
+
+function renderHiddenCsrf(csrfToken) {
+  return `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken || '')}">`;
+}
+
+function layout({
+  title,
+  database,
+  content,
+  activeNav = 'tables',
+  currentUser,
+  csrfToken = '',
+  showNav = true
+}) {
+  const navLinks = navLinksForUser(currentUser);
+  const sidebar = showNav
+    ? `<aside class="sidebar" aria-label="Основная навигация">
+      <div class="sidebar-title">ETL Analytics</div>
+      <nav class="nav-list">
+        ${navLinks.map((link) => navLink({ ...link, activeNav })).join('')}
+      </nav>
+    </aside>`
+    : '';
+  const topbarActions = currentUser
+    ? `<div class="topbar-actions">
+            <span class="user-email">${escapeHtml(currentUser.email)}</span>
+            <form class="logout-form" action="/logout" method="post">
+              ${renderHiddenCsrf(csrfToken)}
+              <button class="logout-button" type="submit">Выйти</button>
+            </form>
+          </div>`
+    : '';
+  const appShellClass = showNav ? 'app-shell' : 'app-shell app-shell-plain';
+
   return `<!doctype html>
 <html lang="ru">
 <head>
@@ -61,6 +143,10 @@ function layout({ title, database, content, activeNav = 'tables' }) {
     .app-shell {
       display: flex;
       min-height: 100vh;
+    }
+
+    .app-shell-plain {
+      display: block;
     }
 
     .sidebar {
@@ -137,6 +223,54 @@ function layout({ title, database, content, activeNav = 'tables' }) {
       font-weight: 700;
     }
 
+    .topbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+    }
+
+    .user-email {
+      color: var(--muted);
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .logout-form {
+      margin: 0;
+    }
+
+    .logout-button,
+    .secondary-button {
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .logout-button:hover,
+    .logout-button:focus,
+    .secondary-button:hover,
+    .secondary-button:focus {
+      border-color: var(--accent);
+      background: var(--link-bg);
+      color: var(--text);
+      outline: none;
+    }
+
+    .danger-button {
+      border-color: #b42318;
+      background: #b42318;
+      color: #ffffff;
+    }
+
+    .danger-button:hover,
+    .danger-button:focus {
+      border-color: #8f1d14;
+      background: #8f1d14;
+      color: #ffffff;
+      outline: none;
+    }
+
     .database,
     .muted,
     .empty,
@@ -183,6 +317,154 @@ function layout({ title, database, content, activeNav = 'tables' }) {
       border: 1px solid var(--line);
       border-radius: 6px;
       background: var(--surface);
+    }
+
+    .auth-page {
+      display: grid;
+      min-height: calc(100vh - 136px);
+      align-items: center;
+      justify-content: center;
+    }
+
+    .auth-card,
+    .form-panel {
+      width: min(100%, 460px);
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .form-panel {
+      width: 100%;
+      margin-bottom: 18px;
+    }
+
+    .form-grid,
+    .account-row-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .auth-card .form-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .form-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .inline-error,
+    .success {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+    }
+
+    .inline-error {
+      border: 1px solid var(--error-line);
+      background: var(--error-bg);
+      color: var(--error-text);
+    }
+
+    .success {
+      border: 1px solid #9bd0af;
+      background: #effaf3;
+      color: #1f6b3a;
+    }
+
+    .permission-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .permission-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcfd;
+      font-weight: 400;
+    }
+
+    .permission-option input {
+      width: 16px;
+      min-height: 16px;
+      margin: 2px 0 0;
+      padding: 0;
+    }
+
+    .permission-option strong,
+    .permission-option span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    .permission-option span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
+    .account-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .account-row {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .account-row-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px 12px;
+      margin-bottom: 10px;
+    }
+
+    .account-title {
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .account-meta,
+    .readonly-badge {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .readonly-badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f3f5f7;
+    }
+
+    .account-edit-form,
+    .account-delete-form {
+      margin: 0;
+    }
+
+    .account-delete-form {
+      margin-top: 8px;
     }
 
     .field {
@@ -1261,36 +1543,14 @@ function layout({ title, database, content, activeNav = 'tables' }) {
   </style>
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="Основная навигация">
-      <div class="sidebar-title">ETL Analytics</div>
-      <nav class="nav-list">
-        ${navLink({ href: '/', label: 'Таблицы', id: 'tables', activeNav })}
-        ${navLink({
-          href: '/dashboards/sales-by-project',
-          label: 'Продажи по проектам',
-          id: 'sales-by-project',
-          activeNav
-        })}
-        ${navLink({
-          href: '/dashboards/workplace-analysis',
-          label: 'Анализ точек',
-          id: 'workplace-analysis',
-          activeNav
-        })}
-        ${navLink({
-          href: '/dashboards/city-analysis',
-          label: 'Анализ городов',
-          id: 'city-analysis',
-          activeNav
-        })}
-      </nav>
-    </aside>
+  <div class="${appShellClass}">
+    ${sidebar}
     <div class="page-shell">
       <header>
         <div class="topbar">
           <div class="app-title">ETL Analytics</div>
           <div class="database">Database: ${escapeHtml(database)}</div>
+          ${topbarActions}
         </div>
       </header>
       <main>${content}</main>
@@ -1471,7 +1731,212 @@ function formatPercent(value) {
   return `${formatNumber(value, 1).replace(',', '.')}%`;
 }
 
-function renderHome({ database, tables }) {
+function safeReturnPath(returnTo) {
+  const text = String(returnTo || '/');
+
+  if (!text.startsWith('/') || text.startsWith('//') || /[\r\n]/.test(text)) {
+    return '/';
+  }
+
+  return text;
+}
+
+function renderLogin({ database, email = '', error = '', returnTo = '/' }) {
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+  const content = `<section class="auth-page">
+  <form class="auth-card" action="/login" method="post">
+    <h1>Вход</h1>
+    ${errorHtml}
+    <input type="hidden" name="returnTo" value="${escapeHtml(safeReturnPath(returnTo))}">
+    <div class="form-grid">
+      <div class="field">
+        <label for="email">Почта</label>
+        <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(email)}" required>
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Войти</button>
+    </div>
+  </form>
+</section>`;
+
+  return layout({
+    title: 'Вход',
+    database,
+    content,
+    activeNav: 'login',
+    currentUser: null,
+    showNav: false
+  });
+}
+
+function renderRoleOptions(role) {
+  const normalizedRole = role === 'admin' ? 'admin' : 'analyst';
+  const options = [
+    ['analyst', 'Аналитик'],
+    ['admin', 'Администратор']
+  ];
+
+  return options
+    .map(([value, label]) => {
+      const selected = value === normalizedRole ? ' selected' : '';
+
+      return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+}
+
+function permissionLabel(permissionId) {
+  const definition = PERMISSION_DEFINITIONS.find((permission) => permission.id === permissionId);
+
+  return definition ? definition.label : permissionId;
+}
+
+function renderPermissionCheckboxes({ selected = [], disabled = false }) {
+  const selectedSet = new Set(selected);
+  const disabledAttribute = disabled ? ' disabled' : '';
+
+  return `<div class="permission-grid">${PERMISSION_DEFINITIONS.map((permission) => {
+    const checked = selectedSet.has(permission.id) ? ' checked' : '';
+
+    return `<label class="permission-option">
+      <input type="checkbox" name="permissions" value="${escapeHtml(permission.id)}"${checked}${disabledAttribute}>
+      <span><strong>${escapeHtml(permission.label)}</strong><span>${escapeHtml(permission.description)}</span></span>
+    </label>`;
+  }).join('')}</div>`;
+}
+
+function renderPermissionList(permissions) {
+  const selected = Array.isArray(permissions) ? permissions : [];
+  const labels = selected.length > 0 ? selected.map(permissionLabel).join(', ') : 'Нет доступов';
+
+  return escapeHtml(labels);
+}
+
+function renderManagedAccount(user, csrfToken) {
+  const id = escapeHtml(user.id);
+
+  return `<article class="account-row">
+  <form class="account-edit-form" action="/admin/users/${id}/update" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <div class="account-row-head">
+      <div>
+        <div class="account-title">${escapeHtml(user.email)}</div>
+        <div class="account-meta">Создан: ${escapeHtml(user.createdAt || '-')} · обновлен: ${escapeHtml(user.updatedAt || '-')}</div>
+      </div>
+      <span class="readonly-badge">Управляемая запись</span>
+    </div>
+    <div class="account-row-fields">
+      <div class="field">
+        <label for="email-${id}">Почта</label>
+        <input id="email-${id}" name="email" type="email" value="${escapeHtml(user.email)}" required>
+      </div>
+      <div class="field">
+        <label for="name-${id}">Имя</label>
+        <input id="name-${id}" name="name" value="${escapeHtml(user.name || '')}">
+      </div>
+      <div class="field">
+        <label for="role-${id}">Роль</label>
+        <select id="role-${id}" name="role">${renderRoleOptions(user.role)}</select>
+      </div>
+      <div class="field">
+        <label for="password-${id}">Новый пароль</label>
+        <input id="password-${id}" name="password" type="password" autocomplete="new-password" placeholder="Оставить без изменений">
+      </div>
+    </div>
+    ${renderPermissionCheckboxes({ selected: user.permissions })}
+    <div class="form-actions">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+  <form class="account-delete-form" action="/admin/users/${id}/delete" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <button class="danger-button" type="submit">Удалить</button>
+  </form>
+</article>`;
+}
+
+function renderEnvAdminAccount(user) {
+  return `<article class="account-row">
+  <div class="account-row-head">
+    <div>
+      <div class="account-title">${escapeHtml(user.email)}</div>
+      <div class="account-meta">${escapeHtml(user.name || 'Администратор из ENV')}</div>
+      <div class="account-meta">Создается из переменных окружения. Редактирование и удаление отключены.</div>
+    </div>
+    <span class="readonly-badge">ENV admin</span>
+  </div>
+  <div class="account-meta">Доступы: ${renderPermissionList(user.permissions)}</div>
+</article>`;
+}
+
+function renderAccountManagement({
+  database,
+  currentUser,
+  csrfToken = '',
+  users = [],
+  message = '',
+  error = ''
+}) {
+  const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+  const accountRows = users
+    .map((user) => (user.source === 'env' ? renderEnvAdminAccount(user) : renderManagedAccount(user, csrfToken)))
+    .join('');
+  const content = `<section class="section">
+  <h1>Учетные записи</h1>
+  <p class="technical-note">Администраторы получают все доступы. Аналитикам доступны только выбранные разделы.</p>
+</section>
+<section class="section">
+  ${messageHtml}
+  ${errorHtml}
+  <form class="form-panel" action="/admin/users/create" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <h2>Создать учетную запись</h2>
+    <div class="form-grid">
+      <div class="field">
+        <label for="new-email">Почта</label>
+        <input id="new-email" name="email" type="email" autocomplete="off" required>
+      </div>
+      <div class="field">
+        <label for="new-name">Имя</label>
+        <input id="new-name" name="name" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="new-role">Роль</label>
+        <select id="new-role" name="role">${renderRoleOptions('analyst')}</select>
+      </div>
+      <div class="field">
+        <label for="new-password">Пароль</label>
+        <input id="new-password" name="password" type="password" autocomplete="new-password" required>
+      </div>
+    </div>
+    ${renderPermissionCheckboxes({ selected: ['tables'] })}
+    <div class="form-actions">
+      <button type="submit">Создать</button>
+    </div>
+  </form>
+</section>
+<section class="section">
+  <h2>Пользователи</h2>
+  <div class="account-list">${accountRows || '<p class="empty">Нет учетных записей.</p>'}</div>
+</section>`;
+
+  return layout({
+    title: 'Учетные записи',
+    database,
+    content,
+    activeNav: 'users',
+    currentUser,
+    csrfToken
+  });
+}
+
+function renderHome({ database, tables, currentUser, csrfToken }) {
   const tableItems = tables
     .map((table) => {
       const tableName = String(table);
@@ -1489,7 +1954,7 @@ function renderHome({ database, tables }) {
   ${tableContent}
 </section>`;
 
-  return layout({ title: 'Tables', database, content });
+  return layout({ title: 'Tables', database, content, currentUser, csrfToken });
 }
 
 function renderColumns(columns) {
@@ -1550,7 +2015,7 @@ function renderRows(columns, rows) {
 </table></div>`;
 }
 
-function renderTable({ database, tableName, columns, rows }) {
+function renderTable({ database, tableName, columns, rows, currentUser, csrfToken }) {
   const content = `<section class="section">
   <a class="back-link" href="/">Back to tables</a>
   <h1>${escapeHtml(tableName)}</h1>
@@ -1564,7 +2029,7 @@ function renderTable({ database, tableName, columns, rows }) {
   ${renderRows(columns, rows)}
 </section>`;
 
-  return layout({ title: tableName, database, content });
+  return layout({ title: tableName, database, content, currentUser, csrfToken });
 }
 
 function renderKpiCards(summary) {
@@ -1804,7 +2269,13 @@ function renderDashboardSectionError({ message }) {
   return `<section class="section"><div class="error">${escapeHtml(message)}</div></section>`;
 }
 
-function renderSalesByProjectDashboard({ database, dashboard, progressive = false }) {
+function renderSalesByProjectDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
   const filters = dashboard.filters;
   const resultsHtml = progressive
     ? renderSalesByProjectProgressiveSections(filters)
@@ -1851,7 +2322,9 @@ ${resultsHtml}`;
     title: 'Продажи по проектам',
     database,
     content: fullContent,
-    activeNav: 'sales-by-project'
+    activeNav: 'sales-by-project',
+    currentUser,
+    csrfToken
   });
 }
 
@@ -2836,7 +3309,13 @@ function renderWorkplacePointCharts(dashboard) {
 </div>`;
 }
 
-function renderWorkplacePointDashboard({ database, dashboard, progressive = false }) {
+function renderWorkplacePointDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
   const filters = dashboard.filters;
   const point = dashboard.point;
   const detailSections = progressive
@@ -2921,7 +3400,9 @@ ${detailSections}`;
     title: 'Детализация точки',
     database,
     content,
-    activeNav: 'workplace-analysis'
+    activeNav: 'workplace-analysis',
+    currentUser,
+    csrfToken
   });
 }
 
@@ -2949,7 +3430,13 @@ function renderWorkplacePointDashboardSection({ dashboard, section }) {
   return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
 }
 
-function renderWorkplaceAnalysisDashboard({ database, dashboard, progressive = false }) {
+function renderWorkplaceAnalysisDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
   const filters = dashboard.filters;
   const pointsHtml = progressive
     ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'points'))}">
@@ -3050,7 +3537,9 @@ ${pointsHtml}`;
     title: 'Анализ точек',
     database,
     content,
-    activeNav: 'workplace-analysis'
+    activeNav: 'workplace-analysis',
+    currentUser,
+    csrfToken
   });
 }
 
@@ -3693,7 +4182,13 @@ function renderCityAnalysisResultSections(dashboard) {
   return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition)}${renderCityDynamics(dashboard.dynamics)}`;
 }
 
-function renderCityAnalysisDashboard({ database, dashboard, progressive = false }) {
+function renderCityAnalysisDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
   const filters = dashboard.filters || {};
   const context = dashboard.context || {};
   const summary = dashboard.summary || {};
@@ -3785,17 +4280,19 @@ ${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisRes
     title: 'Анализ городов',
     database,
     content,
-    activeNav: 'city-analysis'
+    activeNav: 'city-analysis',
+    currentUser,
+    csrfToken
   });
 }
 
-function renderError({ database, title, message, activeNav = 'tables' }) {
+function renderError({ database, title, message, activeNav = 'tables', currentUser, csrfToken }) {
   const content = `<section class="section">
   <h1>${escapeHtml(title)}</h1>
   <div class="error">${escapeHtml(message)}</div>
 </section>`;
 
-  return layout({ title, database, content, activeNav });
+  return layout({ title, database, content, activeNav, currentUser, csrfToken });
 }
 
 function renderCityAnalysisDashboardPage(options) {
@@ -3813,12 +4310,14 @@ function renderCityAnalysisDashboardPage(options) {
 
 module.exports = {
   escapeHtml,
+  renderAccountManagement,
   renderDashboardSectionError,
   renderError,
   renderCityAnalysisDashboard: renderCityAnalysisDashboardPage,
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,
   renderHome,
+  renderLogin,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,

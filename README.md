@@ -51,12 +51,21 @@ CLICKHOUSE_PASSWORD=change-me
 CLICKHOUSE_CA_PATH=/usr/local/share/ca-certificates/Yandex/RootCA.crt
 CLICKHOUSE_REQUEST_TIMEOUT_MS=120000
 DASHBOARD_SECTION_CACHE_PATH=./data/dashboard-section-cache.json
+AUTH_ENABLED=true
+AUTH_ADMIN_EMAIL=admin@example.com
+AUTH_ADMIN_PASSWORD=change-me
+AUTH_USER_STORE_PATH=./data/users.json
+AUTH_SESSION_SECRET=change-me-session-secret
+AUTH_SESSION_COOKIE_NAME=etl_analytics_session
+AUTH_SESSION_TTL_MS=43200000
 PORT=3000
 ```
 
 Реальный пароль задавайте только в локальном `.env` или в окружении деплоя. Не коммитьте `.env`.
 
 Новые секции дашбордов кешируются на 10 часов. По умолчанию кеш хранится в `./data/dashboard-section-cache.json`; путь можно переопределить через `DASHBOARD_SECTION_CACHE_PATH`.
+
+Авторизация включена по умолчанию. Администратор по умолчанию берется из `AUTH_ADMIN_EMAIL` и `AUTH_ADMIN_PASSWORD`, отображается в UI как read-only запись и не сохраняется в `data/users.json`. Управляемые учетные записи создаются через `/admin/users`, пароли хранятся только в виде PBKDF2-хешей. Для локального отключения авторизации можно задать `AUTH_ENABLED=false`.
 
 ## Локальная разработка
 
@@ -110,5 +119,6 @@ Compose читает конфигурацию из локального `.env`, 
 - Web UI не принимает произвольный SQL.
 - Используйте read-only пользователя ClickHouse.
 - Настроенный пароль маскируется в ошибках, которые показываются в браузере.
+- Пароли учетных записей сервиса хранятся только в виде хешей; env-пароль администратора задается только через окружение.
 - `.env` игнорируется git.
 - В данных MyGig есть персональные данные. Не выводите PII в дашборды без явной необходимости и маскирования.

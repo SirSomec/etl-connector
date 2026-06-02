@@ -1,0 +1,329 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
+
+const { createUserStore, createSessionManager } = require('../src/auth');
+const { createApp, sanitizeForResponse } = require('../src/server');
+
+function createFakeClient() {
+  return {
+    calls: [],
+    async listTables() {
+      this.calls.push(['listTables']);
+      return ['mg_orders'];
+    },
+    async getColumns(tableName) {
+      this.calls.push(['getColumns', tableName]);
+      return [{ name: '_id', type: 'String', position: 1 }];
+    },
+    async getPreview(tableName) {
+      this.calls.push(['getPreview', tableName]);
+      return [{ _id: 'order-1' }];
+    }
+  };
+}
+
+function authConfig(filePath) {
+  return {
+    port: 0,
+    clickhouse: {
+      database: 'etl',
+      password: 'clickhouse-secret'
+    },
+    auth: {
+      enabled: true,
+      adminEmail: 'admin@example.test',
+      adminPassword: 'EnvAdminPass123',
+      userStorePath: filePath,
+      sessionSecret: 'session-secret',
+      sessionCookieName: 'test_session',
+      sessionTtlMs: 12 * 60 * 60 * 1000,
+      passwordHashIterations: 1000
+    }
+  };
+}
+
+async function waitForListening(server) {
+  if (server.listening) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+}
+
+async function closeServer(server) {
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+async function withAuthServer(callback) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-auth-test-'));
+  const filePath = path.join(tempDir, 'users.json');
+  const config = authConfig(filePath);
+  const client = createFakeClient();
+  const userStore = createUserStore({
+    filePath,
+    adminEmail: config.auth.adminEmail,
+    adminPassword: config.auth.adminPassword,
+    passwordHashOptions: {
+      iterations: config.auth.passwordHashIterations,
+      salt: '0123456789abcdef'
+    }
+  });
+  const sessionManager = createSessionManager({
+    cookieName: config.auth.sessionCookieName,
+    ttlMs: config.auth.sessionTtlMs,
+    secret: config.auth.sessionSecret
+  });
+  const app = createApp({ config, client, userStore, sessionManager });
+  const server = http.createServer(app);
+
+  try {
+    server.listen(0);
+    await waitForListening(server);
+    const { port } = server.address();
+
+    await callback({
+      baseUrl: `http://127.0.0.1:${port}`,
+      client,
+      userStore
+    });
+  } finally {
+    await closeServer(server);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function fetchText(baseUrl, path, options = {}) {
+  const response = await fetch(`${baseUrl}${path}`, options);
+  const text = await response.text();
+
+  return { response, text };
+}
+
+function formBody(values) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(values)) {
+    const valuesList = Array.isArray(value) ? value : [value];
+
+    for (const item of valuesList) {
+      params.append(key, item);
+    }
+  }
+
+  return params.toString();
+}
+
+async function login(baseUrl, email, password) {
+  const { response } = await fetchText(baseUrl, '/login', {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: formBody({ email, password, returnTo: '/' })
+  });
+
+  return response;
+}
+
+function cookieFrom(response) {
+  return String(response.headers.get('set-cookie') || '').split(';')[0];
+}
+
+function csrfFrom(html) {
+  const match = html.match(/name="csrfToken" value="([^"]+)"/);
+
+  assert.ok(match, 'csrf token should be rendered');
+
+  return match[1];
+}
+
+test('auth redirects anonymous users to login and allows env admin login', async () => {
+  await withAuthServer(async ({ baseUrl, client }) => {
+    const anonymous = await fetchText(baseUrl, '/', { redirect: 'manual' });
+
+    assert.equal(anonymous.response.status, 302);
+    assert.equal(anonymous.response.headers.get('location'), '/login?returnTo=%2F');
+    assert.deepEqual(client.calls, []);
+
+    const failedLogin = await fetchText(baseUrl, '/login', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({ email: 'admin@example.test', password: 'wrong', returnTo: '/' })
+    });
+
+    assert.equal(failedLogin.response.status, 401);
+    assert.match(failedLogin.text, /Неверная почта или пароль/);
+
+    const loginResponse = await login(baseUrl, 'ADMIN@example.test', 'EnvAdminPass123');
+    const cookie = cookieFrom(loginResponse);
+
+    assert.equal(loginResponse.status, 303);
+    assert.equal(loginResponse.headers.get('location'), '/');
+    assert.match(cookie, /^test_session=/);
+
+    const home = await fetchText(baseUrl, '/', {
+      headers: {
+        cookie
+      }
+    });
+
+    assert.equal(home.response.status, 200);
+    assert.match(home.text, /Available Tables/);
+    assert.match(home.text, /admin@example.test/);
+    assert.match(home.text, /href="\/admin\/users"/);
+    assert.deepEqual(client.calls, [['listTables']]);
+  });
+});
+
+test('admin can create, edit, and delete managed accounts with csrf protection', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    const adminLogin = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const adminCookie = cookieFrom(adminLogin);
+    const usersPage = await fetchText(baseUrl, '/admin/users', {
+      headers: {
+        cookie: adminCookie
+      }
+    });
+    const csrfToken = csrfFrom(usersPage.text);
+
+    const rejected = await fetchText(baseUrl, '/admin/users/create', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie: adminCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken: 'bad-token',
+        email: 'analyst@example.test',
+        name: 'Analyst',
+        role: 'analyst',
+        permissions: ['tables'],
+        password: 'AnalystPass123'
+      })
+    });
+
+    assert.equal(rejected.response.status, 403);
+    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'AnalystPass123'), null);
+
+    const created = await fetchText(baseUrl, '/admin/users/create', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie: adminCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken,
+        email: 'analyst@example.test',
+        name: 'Analyst',
+        role: 'analyst',
+        permissions: ['tables'],
+        password: 'AnalystPass123'
+      })
+    });
+
+    assert.equal(created.response.status, 303);
+    assert.equal(created.response.headers.get('location'), '/admin/users?message=created');
+
+    const users = await userStore.listUsers();
+    const analyst = users.find((user) => user.email === 'analyst@example.test');
+
+    assert.ok(analyst);
+    assert.equal(analyst.role, 'analyst');
+    assert.deepEqual(analyst.permissions, ['tables']);
+
+    const updated = await fetchText(baseUrl, `/admin/users/${analyst.id}/update`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie: adminCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken,
+        email: 'analyst@example.test',
+        name: 'Updated Analyst',
+        role: 'admin',
+        permissions: ['tables'],
+        password: 'NewAdminPass123'
+      })
+    });
+
+    assert.equal(updated.response.status, 303);
+    assert.equal((await userStore.verifyCredentials('analyst@example.test', 'NewAdminPass123')).role, 'admin');
+
+    const deleted = await fetchText(baseUrl, `/admin/users/${analyst.id}/delete`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie: adminCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({ csrfToken })
+    });
+
+    assert.equal(deleted.response.status, 303);
+    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'NewAdminPass123'), null);
+  });
+});
+
+test('managed users only access granted sections', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await userStore.createUser({
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables'],
+      password: 'AnalystPass123'
+    });
+
+    const analystLogin = await login(baseUrl, 'analyst@example.test', 'AnalystPass123');
+    const analystCookie = cookieFrom(analystLogin);
+    const home = await fetchText(baseUrl, '/', {
+      headers: {
+        cookie: analystCookie
+      }
+    });
+    const users = await fetchText(baseUrl, '/admin/users', {
+      headers: {
+        cookie: analystCookie
+      }
+    });
+
+    assert.equal(home.response.status, 200);
+    assert.match(home.text, /mg_orders/);
+    assert.doesNotMatch(home.text, /href="\/admin\/users"/);
+    assert.equal(users.response.status, 403);
+    assert.match(users.text, /Недостаточно прав/);
+  });
+});
+
+test('sanitizeForResponse redacts auth secrets', () => {
+  const config = authConfig('C:\\auth\\users.json');
+
+  assert.equal(
+    sanitizeForResponse('failed EnvAdminPass123 and session-secret and clickhouse-secret', config),
+    'failed [redacted] and [redacted] and [redacted]'
+  );
+});

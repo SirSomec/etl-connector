@@ -20,6 +20,11 @@ const {
   loadCityAnalysisDashboardShell
 } = require('./cityAnalysisDashboard');
 const {
+  HEATMAP_SECTIONS,
+  loadHeatmapDashboardSection,
+  loadHeatmapDashboardShell
+} = require('./heatmapDashboard');
+const {
   SALES_BY_PROJECT_SECTIONS,
   loadSalesByProjectDashboardSection,
   loadSalesByProjectDashboardShell
@@ -42,6 +47,8 @@ const {
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,
   renderCityAnalysisDashboard,
+  renderHeatmapDashboard,
+  renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
   renderSalesByProjectDashboard,
@@ -90,6 +97,7 @@ function activeNavForPath(path) {
   const navByPath = {
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
+    '/dashboards/heatmap': 'heatmap',
     '/dashboards/sales-by-project': 'sales-by-project',
     '/dashboards/workplace-analysis': 'workplace-analysis'
   };
@@ -104,6 +112,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/dashboards/city-analysis/')) {
     return 'city-analysis';
+  }
+
+  if (normalized.startsWith('/dashboards/heatmap/')) {
+    return 'heatmap';
   }
 
   if (normalized.startsWith('/dashboards/sales-by-project/')) {
@@ -611,6 +623,57 @@ function createApp({
               message: sanitizeForResponse(error && error.message, config)
             })
           );
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/heatmap',
+    requireAuth('heatmap'),
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadHeatmapDashboardShell(client, req.query, new Date());
+
+      res
+        .status(200)
+        .type('html')
+        .send(renderHeatmapDashboard({ database, dashboard, progressive: true, ...viewContext(req) }));
+    })
+  );
+
+  app.get(
+    '/dashboards/heatmap/section',
+    requireAuth('heatmap'),
+    asyncRoute(async (req, res) => {
+      const section = String(req.query.section || '');
+
+      if (!HEATMAP_SECTIONS.has(section)) {
+        sendError(
+          res,
+          400,
+          'Bad Request',
+          `Unknown heatmap section: ${section}`,
+          'heatmap',
+          viewContext(req)
+        );
+        return;
+      }
+
+      try {
+        const dashboard = await loadHeatmapDashboardSection(client, req.query, section, new Date(), {
+          cache: dashboardSectionCache
+        });
+
+        res
+          .status(200)
+          .type('html')
+          .send(renderHeatmapDashboardSection({ dashboard, section }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
       }
     })
   );

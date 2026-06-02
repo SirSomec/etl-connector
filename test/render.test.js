@@ -6,6 +6,8 @@ const {
   renderError,
   renderCityAnalysisDashboard,
   renderCityAnalysisDashboardSection,
+  renderHeatmapDashboard,
+  renderHeatmapDashboardSection,
   renderHome,
   renderSalesByProjectDashboard,
   renderTable,
@@ -83,6 +85,8 @@ test('renderHome includes workplace analysis navigation', () => {
   assert.match(html, /href="\/dashboards\/workplace-analysis"/);
   assert.match(html, /Анализ городов/);
   assert.match(html, /href="\/dashboards\/city-analysis"/);
+  assert.match(html, /Тепловая карта/);
+  assert.match(html, /href="\/dashboards\/heatmap"/);
 });
 
 test('renderTable escapes metadata and cells, formats complex values, and uses column order', () => {
@@ -1228,6 +1232,134 @@ test('renderCityAnalysisDashboardSection renders five dynamics subtabs', () => {
   assert.match(html, /2026-05-02/);
   assert.match(html, /75/);
   assert.doesNotMatch(html, /<html/);
+});
+
+test('renderHeatmapDashboard renders filters, navigation, and progressive map placeholder', () => {
+  const html = renderHeatmapDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        year: 2026,
+        month: 5,
+        periodKey: '2026-05',
+        from: '2026-05-01',
+        to: '2026-05-31',
+        activeFromDateTime: '2026-05-02 00:00:00',
+        activeToExclusiveDateTime: '2026-06-01 00:00:00',
+        client: ['<script>client</script>'],
+        excludedProfession: ['Курьер<script>bad</script>'],
+        activeBaseMode: 'ready'
+      },
+      filterOptions: {
+        client: ['<script>client</script>', 'Brand A'],
+        excludedProfession: ['Курьер<script>bad</script>', 'Комплектовщик']
+      },
+      summary: {
+        pointsWithOrder: 0,
+        orderedShifts: 0,
+        weightedActiveUsers: 0,
+        avgWeightedActiveUsersPerShift: 0
+      },
+      points: []
+    }
+  });
+
+  assert.match(html, /<h1>Тепловая карта<\/h1>/);
+  assert.match(html, /class="nav-link active" href="\/dashboards\/heatmap"/);
+  assert.match(html, /<form class="filter-bar" action="\/dashboards\/heatmap" method="get">/);
+  assert.match(html, /<select id="year" name="year">/);
+  assert.match(html, /<option value="2026" selected>2026<\/option>/);
+  assert.match(html, /<select id="month" name="month">/);
+  assert.match(html, /<option value="5" selected>Май<\/option>/);
+  assert.match(html, /name="activeBaseMode" value="all"/);
+  assert.match(html, /name="activeBaseMode" value="ready" checked/);
+  assert.match(html, /Все зарегистрированные/);
+  assert.match(html, /ready, booked, worked/);
+  assert.match(html, /<input type="checkbox" name="client" value="&lt;script&gt;client&lt;\/script&gt;" checked data-multi-filter-checkbox>/);
+  assert.match(html, /<input type="checkbox" name="excludedProfession" value="Курьер&lt;script&gt;bad&lt;\/script&gt;" checked data-multi-filter-checkbox>/);
+  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/heatmap\/section\?section=map&amp;year=2026&amp;month=5/);
+  assert.match(html, /Загружается/);
+  assert.match(html, /Активная база: 2026-05-02 00:00:00 - 2026-06-01 00:00:00/);
+  assert.doesNotMatch(html, /<script>client<\/script>/);
+  assert.doesNotMatch(html, /<script>bad<\/script>/);
+});
+
+test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escaped point rows', () => {
+  const dashboard = {
+    filters: {
+      year: 2026,
+      month: 5,
+      periodKey: '2026-05',
+      from: '2026-05-01',
+      to: '2026-05-31',
+      client: [],
+      excludedProfession: [],
+      activeBaseMode: 'all'
+    },
+    summary: {
+      pointsWithOrder: 2,
+      orderedShifts: 120,
+      weightedActiveUsers: 110,
+      avgWeightedActiveUsersPerShift: 110 / 120
+    },
+    points: [
+      {
+        workplaceId: 'workplace-1',
+        workplaceTitle: 'Точка<script>bad</script>',
+        region: 'Москва<script>bad</script>',
+        city: 'Москва',
+        street: 'Тверская',
+        orderedShifts: 100,
+        orderRequests: 25,
+        weightedActiveUsers: 30,
+        weightedActiveUsersPerShift: 0.3,
+        radiusUsers: { near: 20, medium: 12, far: 8 },
+        balanceLevel: 'low',
+        color: 'hsl(24, 72%, 44%)',
+        lon: 37.6,
+        lat: 55.7
+      },
+      {
+        workplaceId: 'workplace-2',
+        workplaceTitle: 'Точка 2',
+        region: 'Татарстан',
+        city: 'Казань',
+        street: 'Кремлевская',
+        orderedShifts: 20,
+        orderRequests: 5,
+        weightedActiveUsers: 80,
+        weightedActiveUsersPerShift: 4,
+        radiusUsers: { near: 50, medium: 35, far: 20 },
+        balanceLevel: 'high',
+        color: 'hsl(132, 64%, 35%)',
+        lon: 49.1,
+        lat: 55.8
+      }
+    ]
+  };
+  const html = renderHeatmapDashboardSection({ dashboard, section: 'map' });
+
+  assert.match(html, /leaflet\.css/);
+  assert.match(html, /leaflet\.js/);
+  assert.match(html, /data-heatmap-leaflet-map/);
+  assert.match(html, /id="heatmap-points-json"/);
+  assert.match(html, /&quot;lat&quot;:55\.7/);
+  assert.match(html, /&quot;lon&quot;:37\.6/);
+  assert.match(html, /&quot;color&quot;:&quot;hsl\(24, 72%, 44%\)&quot;/);
+  assert.match(html, /tile\.openstreetmap\.org/);
+  assert.match(html, /L\.circleMarker/);
+  assert.match(html, /Точки с заказом/);
+  assert.match(html, /Взвешенная база \/ смена/);
+  assert.match(html, /0,9/);
+  assert.match(html, /Москва&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.match(html, /Точка&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.match(html, /Татарстан/);
+  assert.match(html, /5 км/);
+  assert.match(html, /10 км/);
+  assert.match(html, /15 км/);
+  assert.doesNotMatch(html, /<html/);
+  assert.doesNotMatch(html, /<script>bad<\/script>/);
 });
 
 test('renderCityAnalysisDashboard shows empty states for missing city and missing coordinates', () => {

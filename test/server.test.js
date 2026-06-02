@@ -214,6 +214,33 @@ function createFakeClient(overrides = {}) {
         ];
       }
 
+      if (operation === 'heatmap filter options') {
+        return [
+          { filter: 'client', value: 'Brand A' },
+          { filter: 'profession', value: 'Курьер' }
+        ];
+      }
+
+      if (operation === 'heatmap demand points') {
+        return [
+          {
+            region: 'Москва',
+            city: 'Москва',
+            street: 'Тверская',
+            workplace_id: 'workplace-1',
+            workplace_title: 'Точка 1',
+            ordered_shifts: 100,
+            order_requests: 25,
+            lon: 37.6,
+            lat: 55.7,
+            weighted_active_users: 30,
+            active_users_5km: 20,
+            active_users_10km: 12,
+            active_users_15km: 8
+          }
+        ];
+      }
+
       return [];
     }
   };
@@ -697,11 +724,106 @@ test('GET /dashboards/city-analysis keeps navigation active and redacts upstream
   });
 });
 
+test('GET /dashboards/heatmap renders dashboard with query filters', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/heatmap?year=2026&month=5&client=Brand%20A&excludedProfession=Курьер&activeBaseMode=ready'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Тепловая карта/);
+    assert.match(text, /data-dashboard-fragment-url="\/dashboards\/heatmap\/section\?section=map/);
+    assert.match(text, /Загружается/);
+    assert.doesNotMatch(text, /data-heatmap-leaflet-map/);
+  });
+
+  const heatmapCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('heatmap')
+  );
+
+  assert.deepEqual(heatmapCalls.map((call) => call[1]), ['heatmap filter options']);
+  assert.equal(heatmapCalls[0][2].param_from, '2026-05-01 00:00:00');
+  assert.equal(heatmapCalls[0][2].param_to, '2026-06-01 00:00:00');
+  assert.equal(Object.prototype.hasOwnProperty.call(heatmapCalls[0][2], 'param_clients'), false);
+});
+
+test('GET /dashboards/heatmap/section renders cached heatmap fragment', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const path =
+      '/dashboards/heatmap/section?section=map&year=2026&month=5&client=Brand%20A&excludedProfession=Курьер&activeBaseMode=ready';
+    const first = await fetchText(baseUrl, path);
+    const second = await fetchText(baseUrl, path);
+
+    assert.equal(first.response.status, 200);
+    assert.match(first.response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(first.text, /data-heatmap-leaflet-map/);
+    assert.match(first.text, /tile\.openstreetmap\.org/);
+    assert.match(first.text, /Москва/);
+    assert.doesNotMatch(first.text, /<html/);
+    assert.equal(second.response.status, 200);
+  });
+
+  const heatmapCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('heatmap')
+  );
+
+  assert.deepEqual(heatmapCalls.map((call) => call[1]), ['heatmap demand points']);
+  assert.equal(heatmapCalls[0][2].param_clients, "['Brand A']");
+  assert.equal(heatmapCalls[0][2].param_excluded_professions, "['Курьер']");
+  assert.equal(heatmapCalls[0][2].param_active_from, '2026-05-02 00:00:00');
+  assert.equal(heatmapCalls[0][2].param_active_to, '2026-06-01 00:00:00');
+});
+
+test('GET /dashboards/heatmap/section redacts upstream errors in fragment', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+      throw new Error('ClickHouse rejected password super-secret');
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/dashboards/heatmap/section?section=map');
+
+    assert.equal(response.status, 502);
+    assert.match(text, /ClickHouse rejected password \[redacted\]/);
+    assert.doesNotMatch(text, /super-secret/);
+    assert.doesNotMatch(text, /<html/);
+  });
+});
+
+test('GET /dashboards/heatmap keeps navigation active and redacts upstream errors', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+      throw new Error('ClickHouse rejected password super-secret');
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/dashboards/heatmap');
+
+    assert.equal(response.status, 502);
+    assert.match(text, /Upstream Error/);
+    assert.match(text, /ClickHouse rejected password \[redacted\]/);
+    assert.match(text, /class="nav-link active" href="\/dashboards\/heatmap"/);
+    assert.doesNotMatch(text, /super-secret/);
+  });
+});
+
 test('activeNavForPath normalizes dashboard trailing slashes', () => {
   assert.equal(activeNavForPath('/dashboards/workplace-analysis/'), 'workplace-analysis');
   assert.equal(activeNavForPath('/dashboards/sales-by-project/'), 'sales-by-project');
   assert.equal(activeNavForPath('/dashboards/city-analysis'), 'city-analysis');
   assert.equal(activeNavForPath('/dashboards/city-analysis/'), 'city-analysis');
+  assert.equal(activeNavForPath('/dashboards/heatmap'), 'heatmap');
+  assert.equal(activeNavForPath('/dashboards/heatmap/'), 'heatmap');
   assert.equal(activeNavForPath('/'), 'tables');
 });
 

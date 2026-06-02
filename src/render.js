@@ -44,6 +44,12 @@ const NAV_LINKS = [
     permission: 'city-analysis'
   },
   {
+    href: '/dashboards/heatmap',
+    label: 'Тепловая карта',
+    id: 'heatmap',
+    permission: 'heatmap'
+  },
+  {
     href: '/admin/users',
     label: 'Учетные записи',
     id: 'users',
@@ -1489,6 +1495,139 @@ function layout({
 
     .pagination-page-input {
       width: 88px;
+    }
+
+    .heatmap-mode-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-width: 280px;
+    }
+
+    .heatmap-mode-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .heatmap-mode-option:has(input:checked) {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      color: var(--text);
+    }
+
+    .heatmap-mode-option input {
+      width: 16px;
+      min-height: 16px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .country-heatmap-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .country-heatmap-panel {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .country-heatmap-map-wrap {
+      overflow-x: auto;
+    }
+
+    .country-heatmap-map {
+      display: block;
+      width: 100%;
+      min-width: 620px;
+      height: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f5f8fb;
+    }
+
+    .country-heatmap-land {
+      fill: #e9eef3;
+      stroke: #c9d3df;
+      stroke-width: 1;
+    }
+
+    .country-heatmap-gridline {
+      stroke: #d7e0ea;
+      stroke-width: 1;
+    }
+
+    .country-heatmap-region {
+      fill: var(--region-color);
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .country-heatmap-region[data-balance-level="no-order"] {
+      stroke: #aeb8c4;
+      stroke-dasharray: 3 3;
+    }
+
+    .country-heatmap-label {
+      fill: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 3px;
+      stroke-linejoin: round;
+    }
+
+    .heatmap-legend {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .heatmap-gradient {
+      height: 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: linear-gradient(90deg, #b42318, #d8a100, #16803a);
+    }
+
+    .heatmap-legend-labels {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .heatmap-region-table {
+      max-height: 520px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .heatmap-region-table table {
+      min-width: 520px;
+    }
+
+    @media (max-width: 980px) {
+      .country-heatmap-layout {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 1120px) {
@@ -4286,6 +4425,332 @@ ${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisRes
   });
 }
 
+const HEATMAP_MONTH_LABELS = [
+  'Январь',
+  'Февраль',
+  'Март',
+  'Апрель',
+  'Май',
+  'Июнь',
+  'Июль',
+  'Август',
+  'Сентябрь',
+  'Октябрь',
+  'Ноябрь',
+  'Декабрь'
+];
+
+function renderHeatmapYearOptions(selectedYear) {
+  const year = Number(selectedYear) || new Date().getUTCFullYear();
+  const currentYear = new Date().getUTCFullYear();
+  const years = [];
+  const maxYear = Math.max(currentYear + 1, year);
+
+  for (let value = 2020; value <= maxYear; value += 1) {
+    years.push(value);
+  }
+
+  if (!years.includes(year)) {
+    years.push(year);
+    years.sort((left, right) => left - right);
+  }
+
+  return years
+    .map((value) => {
+      const selected = value === year ? ' selected' : '';
+
+      return `<option value="${value}"${selected}>${value}</option>`;
+    })
+    .join('');
+}
+
+function renderHeatmapMonthOptions(selectedMonth) {
+  const month = Number(selectedMonth) || 1;
+
+  return HEATMAP_MONTH_LABELS.map((label, index) => {
+    const value = index + 1;
+    const selected = value === month ? ' selected' : '';
+
+    return `<option value="${value}"${selected}>${escapeHtml(label)}</option>`;
+  }).join('');
+}
+
+function renderHeatmapActiveMode(filters) {
+  const selected = String((filters && filters.activeBaseMode) || 'all');
+  const modes = [
+    ['all', 'Все зарегистрированные'],
+    ['ready', 'ready, booked, worked']
+  ];
+
+  return `<div class="field">
+      <label>Активная база</label>
+      <div class="heatmap-mode-group">
+        ${modes
+          .map(([value, label]) => {
+            const checked = value === selected ? ' checked' : '';
+
+            return `<label class="heatmap-mode-option"><input type="radio" name="activeBaseMode" value="${escapeHtml(value)}"${checked}>${escapeHtml(label)}</label>`;
+          })
+          .join('')}
+      </div>
+    </div>`;
+}
+
+function addHeatmapQueryParam(params, key, value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (item !== null && item !== undefined && String(item) !== '') {
+        params.append(key, String(item));
+      }
+    }
+
+    return;
+  }
+
+  if (value !== null && value !== undefined && String(value) !== '') {
+    params.append(key, String(value));
+  }
+}
+
+function heatmapSectionUrl(filters, section) {
+  const params = new URLSearchParams();
+
+  params.set('section', section);
+  addHeatmapQueryParam(params, 'year', filters.year);
+  addHeatmapQueryParam(params, 'month', filters.month);
+  addHeatmapQueryParam(params, 'client', filters.client);
+  addHeatmapQueryParam(params, 'excludedProfession', filters.excludedProfession);
+  addHeatmapQueryParam(params, 'activeBaseMode', filters.activeBaseMode);
+
+  return `/dashboards/heatmap/section?${params.toString()}`;
+}
+
+function renderHeatmapKpis(summary) {
+  const safeSummary = summary || {};
+  const cards = [
+    { label: 'Регионы с заказом', value: formatNumber(safeSummary.regionsWithOrder) },
+    { label: 'Заказано смен', value: formatNumber(safeSummary.orderedShifts) },
+    { label: 'Активные пользователи', value: formatNumber(safeSummary.activeUsers) },
+    { label: 'Активные / смена', value: formatNumber(safeSummary.avgActiveUsersPerShift, 1) }
+  ];
+
+  return `<div class="kpi-grid">${cards
+    .map((card) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(card.label)}</div><div class="kpi-value">${escapeHtml(card.value)}</div></div>`)
+    .join('')}</div>`;
+}
+
+function heatmapRegionRadius(region) {
+  const ordered = Number(region.orderedShifts) || 0;
+
+  if (ordered <= 0) {
+    return 9;
+  }
+
+  return Math.max(9, Math.min(24, 8 + Math.sqrt(ordered)));
+}
+
+function heatmapRegionTitle(region) {
+  return `${region.region}: активные ${formatNumber(region.activeUsers)}; заказ ${formatNumber(region.orderedShifts)}; актив/смена ${formatNumber(region.activeUsersPerShift, 1)}`;
+}
+
+function intersectsBox(left, right) {
+  return !(
+    left.x + left.width < right.x ||
+    right.x + right.width < left.x ||
+    left.y + left.height < right.y ||
+    right.y + right.height < left.y
+  );
+}
+
+function heatmapLabelRows(regions) {
+  const labels = [];
+  const boxes = [];
+
+  for (const region of regions.filter((item) => Number(item.orderedShifts) > 0).slice(0, 28)) {
+    const radius = heatmapRegionRadius(region);
+    const text = String(region.region || '');
+    const x = Number(region.mapX) + radius + 4;
+    const y = Number(region.mapY) + 4;
+    const box = {
+      x,
+      y: y - 12,
+      width: Math.min(170, 8 + text.length * 7),
+      height: 16
+    };
+
+    if (boxes.some((current) => intersectsBox(current, box))) {
+      continue;
+    }
+
+    boxes.push(box);
+    labels.push({ region, x, y });
+  }
+
+  return labels;
+}
+
+function renderHeatmapMap(regions) {
+  const rows = safeRows(regions);
+
+  if (rows.length === 0) {
+    return `<div class="country-heatmap-panel">
+  <p class="empty">Нет регионов с заказом или активной базой за выбранный период.</p>
+</div>`;
+  }
+
+  const markers = rows
+    .map((region) => {
+      const radius = heatmapRegionRadius(region);
+
+      return `<circle class="country-heatmap-region" data-balance-level="${escapeHtml(region.balanceLevel)}" style="--region-color: ${escapeHtml(region.color)}" cx="${escapeHtml(region.mapX)}" cy="${escapeHtml(region.mapY)}" r="${escapeHtml(radius)}" title="${escapeHtml(heatmapRegionTitle(region))}"></circle>`;
+    })
+    .join('');
+  const labels = rows
+    .length === 0
+    ? []
+    : heatmapLabelRows(rows);
+  const labelsHtml = labels
+    .map(
+      ({ region, x, y }) => `<text class="country-heatmap-label" x="${escapeHtml(x)}" y="${escapeHtml(y)}">${escapeHtml(region.region)}</text>`
+    )
+    .join('');
+
+  return `<div class="country-heatmap-panel">
+  <h2>Карта регионального баланса</h2>
+  <div class="country-heatmap-map-wrap">
+    <svg class="country-heatmap-map" viewBox="0 0 920 430" role="img" aria-label="Карта регионального баланса активной базы и заказа">
+      <path class="country-heatmap-land" d="M54 214 C88 164 154 143 224 150 C286 101 401 91 482 123 C558 83 665 85 731 126 C806 126 869 173 891 235 C846 260 781 252 724 276 C642 304 544 289 463 314 C374 346 267 311 190 293 C128 287 82 262 54 214 Z"></path>
+      <line class="country-heatmap-gridline" x1="80" y1="110" x2="880" y2="110"></line>
+      <line class="country-heatmap-gridline" x1="80" y1="210" x2="880" y2="210"></line>
+      <line class="country-heatmap-gridline" x1="80" y1="310" x2="880" y2="310"></line>
+      <line class="country-heatmap-gridline" x1="240" y1="70" x2="240" y2="360"></line>
+      <line class="country-heatmap-gridline" x1="480" y1="70" x2="480" y2="360"></line>
+      <line class="country-heatmap-gridline" x1="720" y1="70" x2="720" y2="360"></line>
+      ${markers}
+      ${labelsHtml}
+    </svg>
+  </div>
+  <div class="heatmap-legend" aria-hidden="true">
+    <div class="heatmap-gradient"></div>
+    <div class="heatmap-legend-labels">
+      <span>Меньше базы к заказу</span>
+      <span>Больше базы к заказу</span>
+    </div>
+  </div>
+</div>`;
+}
+
+function renderHeatmapRegionTable(regions) {
+  const rows = safeRows(regions).filter((region) => Number(region.orderedShifts) > 0);
+
+  if (rows.length === 0) {
+    return `<div class="country-heatmap-panel">
+  ${renderEmptyDashboardTable()}
+</div>`;
+  }
+
+  return `<div class="country-heatmap-panel">
+  <h2>Регионы</h2>
+  <div class="heatmap-region-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Регион</th>
+          <th>Активные</th>
+          <th>Заказ</th>
+          <th>Заявки</th>
+          <th>Активные / смена</th>
+        </tr>
+      </thead>
+      <tbody>${rows
+        .map(
+          (region) => `<tr>
+          <td>${escapeHtml(region.region)}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(region.activeUsers))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(region.orderedShifts))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(region.orderRequests))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(region.activeUsersPerShift, 1))}</td>
+        </tr>`
+        )
+        .join('')}</tbody>
+    </table>
+  </div>
+</div>`;
+}
+
+function renderHeatmapDashboardSection({ dashboard, section }) {
+  if (section !== 'map') {
+    return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
+  }
+
+  return `<section class="section">
+  ${renderHeatmapKpis(dashboard.summary)}
+  <div class="country-heatmap-layout">
+    ${renderHeatmapMap(dashboard.regions)}
+    ${renderHeatmapRegionTable(dashboard.regions)}
+  </div>
+</section>`;
+}
+
+function renderHeatmapProgressiveSection(filters) {
+  return `<div data-dashboard-fragment-url="${escapeHtml(heatmapSectionUrl(filters, 'map'))}">
+  <section class="section">
+    <h2>Карта регионального баланса</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>`;
+}
+
+function renderHeatmapDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
+  const filters = dashboard.filters || {};
+  const content = `<section class="section">
+  <h1>Тепловая карта</h1>
+  <p class="technical-note">Период заказа: ${escapeHtml(filters.from)} - ${escapeHtml(filters.to)} · Активная база: ${escapeHtml(filters.activeFromDateTime)} - ${escapeHtml(filters.activeToExclusiveDateTime)}.</p>
+</section>
+<section class="section">
+  <form class="filter-bar" action="/dashboards/heatmap" method="get">
+    <div class="field">
+      <label for="year">Год</label>
+      <select id="year" name="year">${renderHeatmapYearOptions(filters.year)}</select>
+    </div>
+    <div class="field">
+      <label for="month">Месяц</label>
+      <select id="month" name="month">${renderHeatmapMonthOptions(filters.month)}</select>
+    </div>
+    ${renderMultiSelectField({
+      id: 'client',
+      label: 'Бренды заказа',
+      options: filterOptions(dashboard, 'client'),
+      selected: filters.client
+    })}
+    ${renderMultiSelectField({
+      id: 'excludedProfession',
+      label: 'Исключить профессии',
+      options: filterOptions(dashboard, 'excludedProfession'),
+      selected: filters.excludedProfession
+    })}
+    ${renderHeatmapActiveMode(filters)}
+    <button type="submit">Применить</button>
+  </form>
+</section>
+${progressive ? renderHeatmapProgressiveSection(filters) : renderHeatmapDashboardSection({ dashboard, section: 'map' })}`;
+
+  return layout({
+    title: 'Тепловая карта',
+    database,
+    content,
+    activeNav: 'heatmap',
+    currentUser,
+    csrfToken
+  });
+}
+
 function renderError({ database, title, message, activeNav = 'tables', currentUser, csrfToken }) {
   const content = `<section class="section">
   <h1>${escapeHtml(title)}</h1>
@@ -4316,6 +4781,8 @@ module.exports = {
   renderCityAnalysisDashboard: renderCityAnalysisDashboardPage,
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,
+  renderHeatmapDashboard,
+  renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
   renderSalesByProjectDashboard,

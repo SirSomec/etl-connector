@@ -4,5 +4,6 @@ node_modules/
 !.env.example
 npm-debug.log*
 logs/
+data/
 *.log
 coverage/

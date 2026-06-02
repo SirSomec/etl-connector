@@ -4,15 +4,20 @@ const assert = require('node:assert/strict');
 const {
   buildDateKeys,
   heatmapLevel,
+  loadWorkplaceAnalysisDashboardSection,
+  loadWorkplaceAnalysisDashboardShell,
   mergeWorkplaceAnalysisRows,
   normalizeWorkplaceAnalysisFilters
 } = require('../src/workplaceAnalysisDashboard');
+
+const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
 
 test('normalizeWorkplaceAnalysisFilters defaults to the current month and whitelists limit and order type', () => {
   const filters = normalizeWorkplaceAnalysisFilters(
     {
       limit: '999',
       orderType: 'once; DROP TABLE mg_orders',
+      sort: 'DROP TABLE',
       client: '  Бренд  ',
       search: '<script>'
     },
@@ -25,14 +30,27 @@ test('normalizeWorkplaceAnalysisFilters defaults to the current month and whitel
     fromDateTime: '2026-06-01 00:00:00',
     toExclusiveDateTime: '2026-06-16 00:00:00',
     rangeDays: 15,
+    pinnedWorkplaceIds: [],
     client: ['Бренд'],
     city: [],
     region: [],
     profession: [],
     orderType: [],
+    jobStatus: [],
     contractor: [],
     search: '<script>',
-    limit: 12
+    includeDeletedOrders: false,
+    includeHiddenOrders: false,
+    sort: 'orders',
+    slaFrom: null,
+    slaTo: null,
+    ordersFrom: null,
+    ordersTo: null,
+    stabilityFrom: null,
+    stabilityTo: null,
+    limit: 12,
+    page: 1,
+    offset: 0
   });
 });
 
@@ -46,8 +64,14 @@ test('normalizeWorkplaceAnalysisFilters accepts repeated values, valid order typ
       city: ['Казань', 'Москва'],
       region: 'Татарстан',
       profession: ['picker', 'driver'],
+      jobStatus: ['confirmed', 'failed', 'confirmed', ' '],
       contractor: ['ООО Ромашка'],
-      limit: '20'
+      includeDeletedOrders: '1',
+      includeHiddenOrders: 'on',
+      sort: 'sla',
+      limit: '20',
+      page: '3',
+      pinnedWorkplaceId: ['wp1', 'wp2', 'wp1', ' ']
     },
     new Date('2026-06-15T12:00:00.000Z')
   );
@@ -56,13 +80,46 @@ test('normalizeWorkplaceAnalysisFilters accepts repeated values, valid order typ
   assert.equal(filters.to, '2026-04-30');
   assert.equal(filters.toExclusiveDateTime, '2026-05-01 00:00:00');
   assert.equal(filters.rangeDays, 30);
+  assert.deepEqual(filters.pinnedWorkplaceIds, ['wp1', 'wp2']);
   assert.deepEqual(filters.client, ['Brand A', 'Brand B']);
   assert.deepEqual(filters.orderType, ['regular', 'once']);
   assert.deepEqual(filters.city, ['Казань', 'Москва']);
   assert.deepEqual(filters.region, ['Татарстан']);
   assert.deepEqual(filters.profession, ['picker', 'driver']);
+  assert.deepEqual(filters.jobStatus, ['confirmed', 'failed']);
   assert.deepEqual(filters.contractor, ['ООО Ромашка']);
+  assert.equal(filters.includeDeletedOrders, true);
+  assert.equal(filters.includeHiddenOrders, true);
+  assert.equal(filters.sort, 'sla');
   assert.equal(filters.limit, 20);
+  assert.equal(filters.page, 3);
+  assert.equal(filters.offset, 40);
+});
+
+test('normalizeWorkplaceAnalysisFilters accepts metric ranges and clamps percent values', () => {
+  const filters = normalizeWorkplaceAnalysisFilters(
+    {
+      from: '2026-04-01',
+      to: '2026-04-30',
+      slaFrom: '-5',
+      slaTo: '105',
+      ordersFrom: '10',
+      ordersTo: '25.5',
+      stabilityFrom: '20,5',
+      stabilityTo: '80',
+      page: '4'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(filters.slaFrom, 0);
+  assert.equal(filters.slaTo, 100);
+  assert.equal(filters.ordersFrom, 10);
+  assert.equal(filters.ordersTo, 25.5);
+  assert.equal(filters.stabilityFrom, 20.5);
+  assert.equal(filters.stabilityTo, 80);
+  assert.equal(filters.page, 4);
+  assert.equal(filters.offset, 36);
 });
 
 test('buildDateKeys returns every inclusive date in the selected range', () => {
@@ -107,8 +164,22 @@ test('mergeWorkplaceAnalysisRows calculates stability and fills missing heatmap 
       }
     ],
     [
-      { workplace_id: 'wp1', order_date: '2026-06-01', ordered_shifts: 3 },
-      { workplace_id: 'wp1', order_date: '2026-06-03', ordered_shifts: 6 }
+      {
+        workplace_id: 'wp1',
+        order_date: '2026-06-01',
+        ordered_shifts: 3,
+        completed_shifts: 2,
+        sla_ordered_shifts: 3,
+        sla_completed_shifts: 2
+      },
+      {
+        workplace_id: 'wp1',
+        order_date: '2026-06-03',
+        ordered_shifts: 6,
+        completed_shifts: 3,
+        sla_ordered_shifts: 6,
+        sla_completed_shifts: 3
+      }
     ]
   );
 
@@ -121,11 +192,14 @@ test('mergeWorkplaceAnalysisRows calculates stability and fills missing heatmap 
   assert.equal(dashboard.points[0].activeDays, 2);
   assert.equal(dashboard.points[0].rangeDays, 3);
   assert.equal(dashboard.points[0].stabilityPercent, 66.66666666666666);
+  assert.equal(dashboard.points[0].slaPercent, 55.55555555555556);
+  assert.equal(dashboard.points[0].slaOrderedShifts, 9);
+  assert.equal(dashboard.points[0].slaCompletedShifts, 5);
   assert.equal(dashboard.points[0].avgDailyOrder, 4.5);
   assert.deepEqual(dashboard.points[0].heatmapDays, [
-    { date: '2026-06-01', amount: 3, level: 2 },
-    { date: '2026-06-02', amount: 0, level: 0 },
-    { date: '2026-06-03', amount: 6, level: 4 }
+    { date: '2026-06-01', amount: 3, completedShifts: 2, level: 2 },
+    { date: '2026-06-02', amount: 0, completedShifts: 0, level: 0 },
+    { date: '2026-06-03', amount: 6, completedShifts: 3, level: 4 }
   ]);
 });
 
@@ -147,6 +221,8 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
           { filter: 'profession', value: 'Комплектовщик' },
           { filter: 'orderType', value: 'regular' },
           { filter: 'orderType', value: 'once' },
+          { filter: 'jobStatus', value: 'confirmed' },
+          { filter: 'jobStatus', value: 'failed' },
           { filter: 'contractor', value: 'Ромашка' }
         ];
       }
@@ -167,10 +243,28 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
         ];
       }
 
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 13 }];
+      }
+
       if (operation === 'workplace analysis daily orders') {
         return [
-          { workplace_id: 'wp1', order_date: '2026-06-01', ordered_shifts: 3 },
-          { workplace_id: 'wp1', order_date: '2026-06-03', ordered_shifts: 6 }
+          {
+            workplace_id: 'wp1',
+            order_date: '2026-06-01',
+            ordered_shifts: 3,
+            completed_shifts: 2,
+            sla_ordered_shifts: 3,
+            sla_completed_shifts: 2
+          },
+          {
+            workplace_id: 'wp1',
+            order_date: '2026-06-03',
+            ordered_shifts: 6,
+            completed_shifts: 3,
+            sla_ordered_shifts: 6,
+            sla_completed_shifts: 3
+          }
         ];
       }
 
@@ -188,29 +282,49 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
       region: ['Москва'],
       profession: ['Комплектовщик'],
       orderType: ['regular', 'once'],
+      jobStatus: ['confirmed', 'failed'],
       contractor: ['Ромашка'],
-      search: maliciousSearch
+      search: maliciousSearch,
+      page: '2'
     },
     new Date('2026-06-15T12:00:00.000Z')
   );
 
   assert.equal(dashboard.points.length, 1);
+  assert.deepEqual(dashboard.pagination, {
+    page: 2,
+    limit: 12,
+    totalWorkplaces: 13,
+    totalPages: 2,
+    hasPrevious: true,
+    hasNext: false
+  });
   assert.equal(dashboard.points[0].totalOrderedShifts, 9);
+  assert.equal(dashboard.points[0].slaPercent, 55.55555555555556);
   assert.equal(dashboard.points[0].heatmapDays.length, 3);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.equal(calls[0].operation, 'workplace analysis filter options');
-  assert.equal(calls[1].operation, 'workplace analysis top workplaces');
-  assert.equal(calls[2].operation, 'workplace analysis daily orders');
-  assert.equal(calls[2].query.includes('WITH top_workplaces'), true);
-  assert.equal(calls[2].query.includes('INNER JOIN top_workplaces AS tw'), true);
+  assert.equal(calls[1].operation, 'workplace analysis total workplaces');
+  assert.equal(calls[2].operation, 'workplace analysis top workplaces');
+  assert.equal(calls[3].operation, 'workplace analysis daily orders');
+  assert.equal(calls[1].query.includes('countDistinct(o.workplace)'), true);
+  assert.equal(calls[3].query.includes('WITH top_workplaces'), true);
+  assert.equal(calls[3].query.includes('INNER JOIN top_workplaces AS tw'), true);
+  assert.equal(calls[3].query.includes('mg_jobs AS completed_job'), true);
+  assert.equal(calls[3].query.includes("ifNull(completed_job.status, '') = 'confirmed'"), true);
+  assert.equal(calls[3].query.includes('sla_ordered_shifts'), true);
+  assert.equal(calls[3].query.includes('sla_completed_shifts'), true);
   assert.deepEqual(dashboard.filterOptions.client, ['Бренд', 'Бренд 2']);
   assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
+  assert.deepEqual(dashboard.filterOptions.jobStatus, ['confirmed', 'failed']);
 
   for (const call of calls) {
     assert.equal(call.params.param_from, '2026-06-01 00:00:00');
     assert.equal(call.params.param_to, '2026-06-04 00:00:00');
     assert.equal(call.query.includes(maliciousSearch), false);
     assert.equal(call.query.includes('DROP TABLE'), false);
+    assert.equal(call.query.includes('ifNull(o.deleted, 0) = 0'), true);
+    assert.equal(call.query.includes('ifNull(o.is_hidden, 0) = 0'), true);
   }
 
   for (const call of calls.slice(1)) {
@@ -219,13 +333,644 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     assert.equal(call.params.param_regions, "['Москва']");
     assert.equal(call.params.param_professions, "['Комплектовщик']");
     assert.equal(call.params.param_order_types, "['regular','once']");
+    assert.equal(call.params.param_job_statuses, "['confirmed','failed']");
     assert.equal(call.params.param_contractors, "['Ромашка']");
     assert.equal(call.params.param_search, maliciousSearch);
     assert.equal(Object.values(call.params).includes(maliciousSearch), true);
     assert.equal(call.query.includes('IN {clients:Array(String)}'), true);
     assert.equal(call.query.includes('IN {cities:Array(String)}'), true);
     assert.equal(call.query.includes('IN {order_types:Array(String)}'), true);
+    assert.equal(call.query.includes('IN {job_statuses:Array(String)}'), true);
+    assert.equal(call.query.includes('FROM mg_jobs AS j'), true);
+    assert.equal(call.query.includes('SELECT DISTINCT j.source'), true);
+  }
+
+  for (const call of calls.slice(2)) {
     assert.equal(call.query.includes('{limit:UInt64}'), true);
+    assert.equal(call.query.includes('OFFSET {offset:UInt64}'), true);
+    assert.equal(call.params.param_limit, 12);
+    assert.equal(call.params.param_offset, 12);
     assert.equal(call.query.includes('ORDER BY total_ordered_shifts DESC, workplace_id ASC'), true);
+  }
+});
+
+test('loadWorkplaceAnalysisDashboardShell loads filter options without point datasets', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis filter options') {
+        return [
+          { filter: 'client', value: 'Бренд' },
+          { filter: 'city', value: 'Москва' },
+          { filter: 'region', value: 'Москва' },
+          { filter: 'profession', value: 'Комплектовщик' },
+          { filter: 'orderType', value: 'regular' },
+          { filter: 'jobStatus', value: 'confirmed' },
+          { filter: 'contractor', value: 'Ромашка' }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardShell(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-03',
+      city: ['Москва', 'Казань'],
+      orderType: ['regular', 'once']
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), ['workplace analysis filter options']);
+  assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
+  assert.deepEqual(dashboard.filters.city, ['Москва']);
+  assert.deepEqual(dashboard.filters.orderType, ['regular']);
+  assert.deepEqual(dashboard.points, []);
+  assert.deepEqual(dashboard.pagination, {
+    page: 1,
+    limit: 12,
+    totalWorkplaces: 0,
+    totalPages: 1,
+    hasPrevious: false,
+    hasNext: false
+  });
+});
+
+test('loadWorkplaceAnalysisDashboardSection loads and caches points independently', async () => {
+  let timestamp = Date.parse('2026-06-15T12:00:00.000Z');
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 13 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Точка',
+            client_title: 'Бренд',
+            city: 'Москва',
+            total_ordered_shifts: 9,
+            active_days: 2
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [
+          {
+            workplace_id: 'wp1',
+            order_date: '2026-06-01',
+            ordered_shifts: 9,
+            sla_ordered_shifts: 9,
+            sla_completed_shifts: 8
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const cache = createDashboardSectionCache({ now: () => timestamp });
+  const input = {
+    from: '2026-06-01',
+    to: '2026-06-03',
+    city: 'Москва',
+    limit: '12',
+    page: '2'
+  };
+
+  const first = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    input,
+    'points',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { cache }
+  );
+  const second = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    input,
+    'points',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.equal(first.points.length, 1);
+  assert.equal(first.points[0].workplaceId, 'wp1');
+  assert.equal(first.pagination.totalWorkplaces, 13);
+  assert.equal(second.points[0].workplaceId, 'wp1');
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'workplace analysis total workplaces',
+    'workplace analysis top workplaces',
+    'workplace analysis daily orders'
+  ]);
+
+  timestamp += 10 * 60 * 60 * 1000 + 1;
+
+  await loadWorkplaceAnalysisDashboardSection(
+    client,
+    input,
+    'points',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'workplace analysis total workplaces',
+    'workplace analysis top workplaces',
+    'workplace analysis daily orders',
+    'workplace analysis total workplaces',
+    'workplace analysis top workplaces',
+    'workplace analysis daily orders'
+  ]);
+});
+
+test('loadWorkplaceAnalysisDashboard keeps pinned workplaces above filtered and sorted results', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis filter options') {
+        return [
+          { filter: 'client', value: 'Filtered Brand' },
+          { filter: 'city', value: 'Москва' },
+          { filter: 'region', value: 'Москва' },
+          { filter: 'profession', value: 'Комплектовщик' },
+          { filter: 'orderType', value: 'regular' },
+          { filter: 'jobStatus', value: 'confirmed' },
+          { filter: 'contractor', value: 'Ромашка' }
+        ];
+      }
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 1 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp-regular',
+            workplace_title: 'Filtered point',
+            client_title: 'Filtered Brand',
+            city: 'Москва',
+            total_ordered_shifts: 5,
+            active_days: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis pinned workplaces') {
+        return [
+          {
+            workplace_id: 'wp-pin',
+            workplace_title: 'Pinned point',
+            client_title: 'Other Brand',
+            city: 'Казань',
+            total_ordered_shifts: 7,
+            active_days: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis pinned daily orders') {
+        return [
+          {
+            workplace_id: 'wp-pin',
+            order_date: '2026-06-01',
+            ordered_shifts: 7,
+            completed_shifts: 6,
+            sla_ordered_shifts: 7,
+            sla_completed_shifts: 6
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [
+          {
+            workplace_id: 'wp-regular',
+            order_date: '2026-06-01',
+            ordered_shifts: 5,
+            completed_shifts: 4,
+            sla_ordered_shifts: 5,
+            sla_completed_shifts: 4
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-01',
+      pinnedWorkplaceId: 'wp-pin',
+      client: 'Filtered Brand',
+      city: 'Москва',
+      region: 'Москва',
+      profession: 'Комплектовщик',
+      orderType: 'regular',
+      jobStatus: 'confirmed',
+      contractor: 'Ромашка',
+      search: 'North hub',
+      sort: 'sla',
+      slaFrom: '50',
+      stabilityTo: '90'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+  const totalCall = calls.find((call) => call.operation === 'workplace analysis total workplaces');
+  const topCall = calls.find((call) => call.operation === 'workplace analysis top workplaces');
+  const pinnedCall = calls.find((call) => call.operation === 'workplace analysis pinned workplaces');
+  const pinnedDailyCall = calls.find((call) => call.operation === 'workplace analysis pinned daily orders');
+  const regularDailyCall = calls.find((call) => call.operation === 'workplace analysis daily orders');
+
+  assert.equal(dashboard.points.length, 2);
+  assert.equal(dashboard.points[0].workplaceId, 'wp-pin');
+  assert.equal(dashboard.points[0].pinned, true);
+  assert.equal(dashboard.points[1].workplaceId, 'wp-regular');
+  assert.equal(dashboard.points[1].pinned, false);
+  assert.deepEqual(dashboard.filters.pinnedWorkplaceIds, ['wp-pin']);
+
+  assert.equal(totalCall.query.includes('o.workplace NOT IN {pinned_workplace_ids:Array(String)}'), true);
+  assert.equal(topCall.query.includes('o.workplace NOT IN {pinned_workplace_ids:Array(String)}'), true);
+  assert.equal(regularDailyCall.query.includes('o.workplace NOT IN {pinned_workplace_ids:Array(String)}'), true);
+  assert.equal(regularDailyCall.params.param_workplace_ids, "['wp-regular']");
+
+  assert.equal(pinnedCall.params.param_pinned_workplace_ids, "['wp-pin']");
+  assert.equal(pinnedCall.params.param_professions, "['Комплектовщик']");
+  assert.equal(pinnedDailyCall.params.param_workplace_ids, "['wp-pin']");
+  assert.equal(pinnedDailyCall.params.param_pinned_workplace_ids, "['wp-pin']");
+  assert.equal(pinnedDailyCall.params.param_professions, "['Комплектовщик']");
+
+  for (const call of [pinnedCall, pinnedDailyCall]) {
+    assert.equal(call.query.includes('o.workplace IN {pinned_workplace_ids:Array(String)}'), true);
+    assert.equal(call.query.includes("if(ifNull(p.caption, '') = '', o.spec, p.caption) IN {professions:Array(String)}"), true);
+    assert.equal(call.query.includes('ifNull(o.deleted, 0) = 0'), true);
+    assert.equal(call.query.includes('ifNull(o.is_hidden, 0) = 0'), true);
+    assert.equal(call.query.includes('IN {clients:Array(String)}'), false);
+    assert.equal(call.query.includes('IN {cities:Array(String)}'), false);
+    assert.equal(call.query.includes('IN {regions:Array(String)}'), false);
+    assert.equal(call.query.includes('IN {order_types:Array(String)}'), false);
+    assert.equal(call.query.includes('IN {job_statuses:Array(String)}'), false);
+    assert.equal(call.query.includes('IN {contractors:Array(String)}'), false);
+    assert.equal(call.query.includes('positionCaseInsensitive'), false);
+    assert.equal(call.query.includes('metrics.sla_percent >= {sla_from:Float64}'), false);
+    assert.equal(call.query.includes('metrics.stability_percent <= {stability_to:Float64}'), false);
+    assert.equal(call.query.includes('ORDER BY sla_sort DESC'), false);
+  }
+});
+
+test('loadWorkplaceAnalysisDashboard adds cached active gigers and refreshes stale workplace values', async () => {
+  const calls = [];
+  const writtenCacheValues = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis filter options') {
+        return [];
+      }
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 3 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Point 1',
+            total_ordered_shifts: 9,
+            active_days: 2
+          },
+          {
+            workplace_id: 'wp2',
+            workplace_title: 'Point 2',
+            total_ordered_shifts: 8,
+            active_days: 1
+          },
+          {
+            workplace_id: 'wp3',
+            workplace_title: 'Point 3',
+            total_ordered_shifts: 7,
+            active_days: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [
+          {
+            workplace_id: 'wp1',
+            order_date: '2026-06-01',
+            ordered_shifts: 9,
+            sla_ordered_shifts: 9,
+            sla_completed_shifts: 8
+          },
+          {
+            workplace_id: 'wp2',
+            order_date: '2026-06-01',
+            ordered_shifts: 8,
+            sla_ordered_shifts: 8,
+            sla_completed_shifts: 6
+          },
+          {
+            workplace_id: 'wp3',
+            order_date: '2026-06-01',
+            ordered_shifts: 7,
+            sla_ordered_shifts: 7,
+            sla_completed_shifts: 5
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [{ workplace_id: 'wp2', active_gigers_5km: 9 }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const activeGigersCache = {
+    async readFresh(workplaceIds) {
+      assert.deepEqual(workplaceIds, ['wp1', 'wp2', 'wp3']);
+
+      return {
+        values: new Map([['wp1', 5]]),
+        staleWorkplaceIds: ['wp2', 'wp3']
+      };
+    },
+    async writeValues(values) {
+      writtenCacheValues.push(new Map(values));
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-01'
+    },
+    new Date('2026-06-15T12:00:00.000Z'),
+    { activeGigersCache }
+  );
+  const activeCall = calls.find((call) => call.operation === 'workplace analysis active gigers 5km');
+
+  assert.equal(dashboard.points[0].activeGigers5km, 5);
+  assert.equal(dashboard.points[1].activeGigers5km, 9);
+  assert.equal(dashboard.points[2].activeGigers5km, 0);
+  assert.deepEqual(writtenCacheValues[0], new Map([
+    ['wp2', 9],
+    ['wp3', 0]
+  ]));
+  assert.equal(activeCall.params.param_workplace_ids, "['wp2','wp3']");
+  assert.equal(activeCall.query.includes('appmetrica_sessions'), true);
+  assert.equal(activeCall.query.includes('mg_workers'), true);
+  assert.equal(activeCall.query.includes("ifNull(worker.status, '') IN ('ready', 'worked', 'booked')"), true);
+  assert.equal(activeCall.query.includes('parseDateTimeBestEffortOrNull(session_start_datetime) >= now() - INTERVAL 30 DAY'), true);
+  assert.equal(activeCall.query.includes('greatCircleDistance'), true);
+});
+
+test('loadWorkplaceAnalysisDashboard applies SLA and stability sort before pagination', async () => {
+  const scenarios = [
+    {
+      sort: 'sla',
+      orderBy: 'ORDER BY sla_sort DESC, total_ordered_shifts DESC, workplace_id ASC'
+    },
+    {
+      sort: 'stability',
+      orderBy: 'ORDER BY active_days DESC, total_ordered_shifts DESC, workplace_id ASC'
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const calls = [];
+    const client = {
+      async queryJSONEachRow(query, params, operation) {
+        calls.push({ query, params, operation });
+
+        if (operation === 'workplace analysis total workplaces') {
+          return [{ total_workplaces: 0 }];
+        }
+
+        return [];
+      }
+    };
+
+    const dashboard = await loadWorkplaceAnalysisDashboard(
+      client,
+      {
+        from: '2026-06-01',
+        to: '2026-06-30',
+        sort: scenario.sort,
+        limit: '10',
+        page: '2'
+      },
+      new Date('2026-06-15T12:00:00.000Z')
+    );
+    const topCall = calls.find((call) => call.operation === 'workplace analysis top workplaces');
+    const dailyCall = calls.find((call) => call.operation === 'workplace analysis daily orders');
+
+    assert.equal(dashboard.filters.sort, scenario.sort);
+    assert.equal(topCall.query.includes('sla_ordered_shifts'), true);
+    assert.equal(topCall.query.includes('sla_completed_shifts'), true);
+    assert.equal(topCall.query.includes('sla_sort'), true);
+    assert.equal(topCall.query.includes(scenario.orderBy), true);
+    assert.equal(dailyCall.query.includes(scenario.orderBy), true);
+  }
+});
+
+test('loadWorkplaceAnalysisDashboard applies metric range filters before pagination', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 0 }];
+      }
+
+      return [];
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-30',
+      slaFrom: '50',
+      slaTo: '95',
+      ordersFrom: '10',
+      ordersTo: '100',
+      stabilityFrom: '25',
+      stabilityTo: '90',
+      limit: '10',
+      page: '2'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+  const filteredCalls = calls.filter((call) => call.operation !== 'workplace analysis filter options');
+
+  assert.equal(dashboard.filters.slaFrom, 50);
+  assert.equal(dashboard.filters.slaTo, 95);
+  assert.equal(dashboard.filters.ordersFrom, 10);
+  assert.equal(dashboard.filters.ordersTo, 100);
+  assert.equal(dashboard.filters.stabilityFrom, 25);
+  assert.equal(dashboard.filters.stabilityTo, 90);
+
+  for (const call of filteredCalls) {
+    assert.equal(call.params.param_sla_from, 50);
+    assert.equal(call.params.param_sla_to, 95);
+    assert.equal(call.params.param_orders_from, 10);
+    assert.equal(call.params.param_orders_to, 100);
+    assert.equal(call.params.param_stability_from, 25);
+    assert.equal(call.params.param_stability_to, 90);
+    assert.equal(call.params.param_range_days, 30);
+    assert.equal(call.query.includes('metrics.sla_percent >= {sla_from:Float64}'), true);
+    assert.equal(call.query.includes('metrics.sla_percent <= {sla_to:Float64}'), true);
+    assert.equal(call.query.includes('metrics.total_ordered_shifts >= {orders_from:Float64}'), true);
+    assert.equal(call.query.includes('metrics.total_ordered_shifts <= {orders_to:Float64}'), true);
+    assert.equal(call.query.includes('metrics.stability_percent >= {stability_from:Float64}'), true);
+    assert.equal(call.query.includes('metrics.stability_percent <= {stability_to:Float64}'), true);
+  }
+});
+
+test('loadWorkplaceAnalysisDashboard can include deleted and hidden orders', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 0 }];
+      }
+
+      return [];
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-01',
+      includeDeletedOrders: '1',
+      includeHiddenOrders: '1'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(dashboard.filters.includeDeletedOrders, true);
+  assert.equal(dashboard.filters.includeHiddenOrders, true);
+
+  for (const call of calls.filter((item) =>
+    ['workplace analysis filter options', 'workplace analysis total workplaces'].includes(item.operation)
+  )) {
+    assert.equal(call.query.includes('ifNull(o.deleted, 0) = 0'), false);
+    assert.equal(call.query.includes('ifNull(o.is_hidden, 0) = 0'), false);
+  }
+
+  const topCall = calls.find((item) => item.operation === 'workplace analysis top workplaces');
+  const dailyCall = calls.find((item) => item.operation === 'workplace analysis daily orders');
+
+  assert.equal(topCall.query.includes('sla_ordered_shifts'), true);
+  assert.equal(topCall.query.includes('sla_completed_shifts'), true);
+  assert.equal(dailyCall.query.includes('sla_ordered_shifts'), true);
+  assert.equal(dailyCall.query.includes('sla_completed_shifts'), true);
+  assert.equal(dailyCall.query.includes('ifNull(o.deleted, 0) = 0'), true);
+  assert.equal(dailyCall.query.includes('ifNull(o.is_hidden, 0) = 0'), true);
+});
+
+test('loadWorkplaceAnalysisDashboard uses total count for pagination', async () => {
+  const calls = [];
+  const workplaceRows = Array.from({ length: 10 }, (_, index) => {
+    const number = index + 1;
+
+    return {
+      workplace_id: `wp${number}`,
+      workplace_title: `Point ${number}`,
+      technical_name: `tech-${number}`,
+      client_title: 'Brand',
+      city: 'Moscow',
+      region: 'Moscow',
+      street: `Street ${number}`,
+      total_ordered_shifts: 100 - index,
+      active_days: 1
+    };
+  });
+  const dailyRows = workplaceRows.map((row) => ({
+    workplace_id: row.workplace_id,
+    order_date: '2026-06-01',
+    ordered_shifts: 10
+  }));
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis filter options') {
+        return [];
+      }
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 101 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return workplaceRows;
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return dailyRows;
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-01',
+      limit: '10',
+      page: '3'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+  const pagedCalls = calls.filter((call) => call.operation !== 'workplace analysis filter options');
+
+  assert.equal(dashboard.points.length, 10);
+  assert.equal(dashboard.context.maxDailyAmount, 10);
+  assert.deepEqual(dashboard.pagination, {
+    page: 3,
+    limit: 10,
+    totalWorkplaces: 101,
+    totalPages: 11,
+    hasPrevious: true,
+    hasNext: true
+  });
+
+  assert.equal(pagedCalls[0].operation, 'workplace analysis total workplaces');
+
+  for (const call of pagedCalls.slice(1)) {
+    assert.equal(call.params.param_limit, 10);
+    assert.equal(call.params.param_offset, 20);
+    assert.equal(call.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
   }
 });

@@ -4,8 +4,12 @@ const assert = require('node:assert/strict');
 const {
   buildPeriodExpression,
   loadSalesByProjectDashboard,
+  loadSalesByProjectDashboardSection,
+  loadSalesByProjectDashboardShell,
   normalizeSalesByProjectFilters
 } = require('../src/salesByProjectDashboard');
+
+const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
 
 function createDashboardClient(rowsByOperation) {
   const calls = [];
@@ -181,9 +185,12 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.ok(calls.every((call) => call.params.param_from_string === '2026-04-01 00:00:00'));
   assert.ok(calls.every((call) => call.params.param_to_string === '2026-05-01 00:00:00'));
   assert.equal(calls.some((call) => call.query.includes('DROP TABLE')), false);
-  assert.ok(calls.some((call) => call.query.includes('FROM mg_job_history AS h')));
-  assert.ok(calls.some((call) => call.query.includes("h.start != 'NaT'")));
-  assert.ok(calls.some((call) => call.query.includes('h.start >= {from_string:String}')));
+  assert.ok(calls.some((call) => call.query.includes('FROM mg_jobs AS j')));
+  assert.ok(calls.some((call) => call.query.includes('j.start >= {from:DateTime}')));
+  assert.ok(calls.some((call) => call.query.includes('j.start < {to:DateTime}')));
+  assert.ok(calls.some((call) => call.query.includes('LEFT JOIN self_bookings AS sb ON sf.job = sb.job')));
+  assert.equal(calls.some((call) => call.query.includes("h.start != 'NaT'")), false);
+  assert.equal(calls.some((call) => call.query.includes('h.start >= {from_string:String}')), false);
   assert.ok(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0))")));
   assert.ok(calls.some((call) => call.query.includes('AS cancellation_reason')));
   assert.ok(calls.some((call) => call.query.includes("uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts")));
@@ -219,6 +226,111 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
     calls.some((call) => call.query.includes("nullIf(ct.contract_type, '')")),
     false
   );
+});
+
+test('loadSalesByProjectDashboardShell returns filters and does not query dashboard datasets', async () => {
+  const { calls, client } = createDashboardClient({});
+
+  const dashboard = await loadSalesByProjectDashboardShell(
+    client,
+    {
+      period: 'week',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.equal(calls.length, 0);
+  assert.equal(dashboard.filters.period, 'week');
+  assert.equal(dashboard.filters.from, '2026-04-01');
+  assert.equal(dashboard.filters.to, '2026-04-30');
+  assert.deepEqual(dashboard.summary, {
+    orderedShifts: 0,
+    workedShifts: 0,
+    slaPercent: 0,
+    revenueRub: 0,
+    uniqueWorkers: 0,
+    workplacesWithOrders: 0,
+    workplacesWithWorkedShifts: 0,
+    cancelledShifts: 0,
+    selfBookingPercent: 0,
+    avgWorkerRateHour: 0
+  });
+  assert.deepEqual(dashboard.trendRows, []);
+  assert.deepEqual(dashboard.brandRows, []);
+  assert.deepEqual(dashboard.statusRows, []);
+});
+
+test('loadSalesByProjectDashboardSection loads and caches summary independently', async () => {
+  let timestamp = Date.parse('2026-06-01T12:00:00.000Z');
+  const { calls, client } = createDashboardClient({
+    'sales by project orders summary': [
+      {
+        ordered_shifts: 10,
+        workplaces_with_orders: 3
+      }
+    ],
+    'sales by project shifts summary': [
+      {
+        worked_shifts: 8,
+        revenue_rub: 12000,
+        unique_workers: 5,
+        workplaces_with_worked_shifts: 2,
+        cancelled_shifts: 1,
+        self_booked_confirmed_shifts: 4,
+        avg_worker_rate_hour: 300
+      }
+    ]
+  });
+  const cache = createDashboardSectionCache({ now: () => timestamp });
+  const input = {
+    period: 'month',
+    from: '2026-04-01',
+    to: '2026-04-30'
+  };
+
+  const first = await loadSalesByProjectDashboardSection(
+    client,
+    input,
+    'summary',
+    new Date('2026-06-01T12:00:00.000Z'),
+    { cache }
+  );
+  const second = await loadSalesByProjectDashboardSection(
+    client,
+    input,
+    'summary',
+    new Date('2026-06-01T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.equal(first.summary.orderedShifts, 10);
+  assert.equal(first.summary.workedShifts, 8);
+  assert.equal(first.summary.slaPercent, 80);
+  assert.equal(first.summary.revenueRub, 12000);
+  assert.equal(second.summary.orderedShifts, 10);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'sales by project orders summary',
+    'sales by project shifts summary'
+  ]);
+
+  timestamp += 10 * 60 * 60 * 1000 + 1;
+
+  await loadSalesByProjectDashboardSection(
+    client,
+    input,
+    'summary',
+    new Date('2026-06-01T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'sales by project orders summary',
+    'sales by project shifts summary',
+    'sales by project orders summary',
+    'sales by project shifts summary'
+  ]);
 });
 
 test('loadSalesByProjectDashboard merges brand rows before limiting them', async () => {

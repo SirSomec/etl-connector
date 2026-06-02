@@ -9,6 +9,8 @@ const DEFAULT_PERIOD = 'month';
 const DEFAULT_LOOKBACK_DAYS = 90;
 const MAX_BRAND_ROWS = 50;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SALES_BY_PROJECT_SECTION_NAMES = ['summary', 'trend', 'brands', 'statuses'];
+const SALES_BY_PROJECT_SECTIONS = new Set(SALES_BY_PROJECT_SECTION_NAMES);
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -246,32 +248,38 @@ function shiftFactsOnlyCte() {
   return `
 WITH shift_facts AS (
   SELECT
-    h.job AS job,
-    min(parseDateTimeBestEffortOrNull(h.start)) AS shift_start,
-    coalesce(argMaxIf(h.status, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.status, '') != ''), '') AS status,
-    argMaxIf(h.client, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.client, '') != '') AS client,
-    argMaxIf(h.workplace, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.workplace, '') != '') AS workplace,
-    argMaxIf(h.worker, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.worker, '') != '') AS worker,
-    argMaxIf(h.source, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.source, '') != '') AS source,
-    argMaxIf(h.cancellation_reason, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC')), ifNull(h.cancellation_reason, '') != '') AS cancellation_reason,
-    argMax(h.salary_per_hour, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_hour,
-    argMax(h.salary_per_job, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS salary_per_job,
-    argMax(h.payment_per_hour, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_hour,
-    argMax(h.payment_per_job, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS payment_per_job,
-    argMax(h.hours, coalesce(h.updatedAt, h.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS hours,
-    max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0)) AS is_self_booked
-  FROM mg_job_history AS h
-  WHERE h.job != ''
-    AND h.start IS NOT NULL
-    AND h.start != 'NaT'
-    AND h.start >= {from_string:String}
-    AND h.start < {to_string:String}
-  GROUP BY h.job
+    j._id AS job,
+    j.start AS shift_start,
+    ifNull(j.status, '') AS status,
+    j.client AS client,
+    j.workplace AS workplace,
+    j.worker AS worker,
+    j.source AS source,
+    j.cancellation_reason AS cancellation_reason,
+    j.salary_per_hour AS salary_per_hour,
+    j.salary_per_job AS salary_per_job,
+    j.payment_per_hour AS payment_per_hour,
+    j.payment_per_job AS payment_per_job,
+    j.hours AS hours
+  FROM mg_jobs AS j
+  WHERE j._id != ''
+    AND j.deleted = 0
+    AND j.start >= {from:DateTime}
+    AND j.start < {to:DateTime}
 )`;
 }
 
 function shiftFactsCte() {
   return `${shiftFactsOnlyCte()},
+self_bookings AS (
+  SELECT
+    h.job AS job,
+    max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0)) AS is_self_booked
+  FROM mg_job_history AS h
+  INNER JOIN shift_facts AS sf ON h.job = sf.job
+  WHERE h.job != ''
+  GROUP BY h.job
+),
 surcharges AS (
   SELECT
     t.entityId AS job,
@@ -292,7 +300,7 @@ shift_enriched AS (
     sf.salary_per_hour AS salary_per_hour,
     coalesce(nullIf(sf.client, ''), o.client) AS client,
     coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
-    sf.is_self_booked AS is_self_booked,
+    ifNull(sb.is_self_booked, 0) AS is_self_booked,
     ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type,
     ifNull(ct.comission, 0) AS commission_percent,
     if(ifNull(sf.salary_per_job, 0) > 0, ifNull(sf.salary_per_job, 0), ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0)) AS worker_shift_amount,
@@ -302,6 +310,7 @@ shift_enriched AS (
   LEFT JOIN mg_orders AS o ON sf.source = o._id
   LEFT JOIN mg_workplaces AS w ON coalesce(nullIf(sf.workplace, ''), o.workplace) = w._id
   LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  LEFT JOIN self_bookings AS sb ON sf.job = sb.job
   LEFT JOIN surcharges AS s ON sf.job = s.job
 )`;
 }
@@ -339,8 +348,50 @@ function paramsForFilters(filters) {
   };
 }
 
-async function loadSalesByProjectDashboard(client, input = {}, now = new Date()) {
-  const filters = normalizeSalesByProjectFilters(input, now);
+function emptySalesByProjectDashboard(filters) {
+  return {
+    filters,
+    summary: mapSummaryRows([], []),
+    trendRows: [],
+    brandRows: [],
+    statusRows: []
+  };
+}
+
+function assertSalesByProjectSection(section) {
+  if (SALES_BY_PROJECT_SECTIONS.has(section)) {
+    return;
+  }
+
+  const error = new Error(`Unknown sales by project section: ${section}`);
+
+  error.status = 400;
+  throw error;
+}
+
+async function readThroughCache(cache, key, loader) {
+  if (!cache || typeof cache.getOrLoad !== 'function') {
+    return loader();
+  }
+
+  return cache.getOrLoad(key, loader);
+}
+
+function cacheKeyForSalesByProjectSection(section, filters) {
+  return JSON.stringify({
+    board: 'sales-by-project',
+    section,
+    filters: {
+      period: filters.period,
+      from: filters.from,
+      to: filters.to
+    }
+  });
+}
+
+async function loadSalesByProjectSectionRows(client, filters, section) {
+  assertSalesByProjectSection(section);
+
   const periodOrders = buildPeriodExpression(filters.period, 'o.start');
   const periodShifts = buildPeriodExpression(filters.period, 'shift_start');
   const params = paramsForFilters(filters);
@@ -349,27 +400,20 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
   const cancelledShifts = cancelledShiftsExpression();
   const avgWorkerRateHour = avgWorkerRateHourExpression();
 
-  const [
-    orderSummaryRows,
-    shiftSummaryRows,
-    orderTrendRows,
-    shiftTrendRows,
-    brandOrderRows,
-    brandShiftRows,
-    statusRows
-  ] = await Promise.all([
-    client.queryJSONEachRow(
-      `SELECT
+  if (section === 'summary') {
+    const [orderSummaryRows, shiftSummaryRows] = await Promise.all([
+      client.queryJSONEachRow(
+        `SELECT
         sum(o.amount) AS ordered_shifts,
         countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders
       FROM mg_orders AS o
       WHERE ${orderBaseWhere()}
       FORMAT JSONEachRow`,
-      params,
-      'sales by project orders summary'
-    ),
-    client.queryJSONEachRow(
-      `${shiftFactsCte()}
+        params,
+        'sales by project orders summary'
+      ),
+      client.queryJSONEachRow(
+        `${shiftFactsCte()}
       SELECT
         ${workedShifts} AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
@@ -380,11 +424,18 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
         ${avgWorkerRateHour} AS avg_worker_rate_hour
       FROM shift_enriched
       FORMAT JSONEachRow`,
-      params,
-      'sales by project shifts summary'
-    ),
-    client.queryJSONEachRow(
-      `SELECT
+        params,
+        'sales by project shifts summary'
+      )
+    ]);
+
+    return { orderSummaryRows, shiftSummaryRows };
+  }
+
+  if (section === 'trend') {
+    const [orderTrendRows, shiftTrendRows] = await Promise.all([
+      client.queryJSONEachRow(
+        `SELECT
         ${periodOrders} AS period,
         sum(o.amount) AS ordered_shifts
       FROM mg_orders AS o
@@ -392,11 +443,11 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       GROUP BY period
       ORDER BY period
       FORMAT JSONEachRow`,
-      params,
-      'sales by project orders trend'
-    ),
-    client.queryJSONEachRow(
-      `${shiftFactsCte()}
+        params,
+        'sales by project orders trend'
+      ),
+      client.queryJSONEachRow(
+        `${shiftFactsCte()}
       SELECT
         ${periodShifts} AS period,
         ${workedShifts} AS worked_shifts,
@@ -406,11 +457,18 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       GROUP BY period
       ORDER BY period
       FORMAT JSONEachRow`,
-      params,
-      'sales by project shifts trend'
-    ),
-    client.queryJSONEachRow(
-      `SELECT
+        params,
+        'sales by project shifts trend'
+      )
+    ]);
+
+    return { orderTrendRows, shiftTrendRows };
+  }
+
+  if (section === 'brands') {
+    const [brandOrderRows, brandShiftRows] = await Promise.all([
+      client.queryJSONEachRow(
+        `SELECT
         ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
         sum(o.amount) AS ordered_shifts,
         countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders
@@ -420,11 +478,11 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       GROUP BY brand
       ORDER BY ordered_shifts DESC
       FORMAT JSONEachRow`,
-      params,
-      'sales by project brand orders'
-    ),
-    client.queryJSONEachRow(
-      `${shiftFactsCte()}
+        params,
+        'sales by project brand orders'
+      ),
+      client.queryJSONEachRow(
+        `${shiftFactsCte()}
       SELECT
         ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
         ${workedShifts} AS worked_shifts,
@@ -439,11 +497,16 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       GROUP BY brand
       ORDER BY worked_shifts DESC
       FORMAT JSONEachRow`,
-      params,
-      'sales by project brand shifts'
-    ),
-    client.queryJSONEachRow(
-      `${shiftFactsOnlyCte()}
+        params,
+        'sales by project brand shifts'
+      )
+    ]);
+
+    return { brandOrderRows, brandShiftRows };
+  }
+
+  const statusRows = await client.queryJSONEachRow(
+    `${shiftFactsOnlyCte()}
       SELECT
         if(status = '', 'empty', status) AS status,
         count() AS shifts
@@ -451,22 +514,90 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       GROUP BY status
       ORDER BY shifts DESC
       FORMAT JSONEachRow`,
-      params,
-      'sales by project status breakdown'
+    params,
+    'sales by project status breakdown'
+  );
+
+  return { statusRows };
+}
+
+function mergeSalesByProjectSection(filters, section, rows) {
+  const dashboard = emptySalesByProjectDashboard(filters);
+
+  if (section === 'summary') {
+    return {
+      ...dashboard,
+      summary: mapSummaryRows(rows.orderSummaryRows || [], rows.shiftSummaryRows || [])
+    };
+  }
+
+  if (section === 'trend') {
+    return {
+      ...dashboard,
+      trendRows: mergeTrendRows(rows.orderTrendRows || [], rows.shiftTrendRows || [])
+    };
+  }
+
+  if (section === 'brands') {
+    return {
+      ...dashboard,
+      brandRows: mergeBrandRows(rows.brandOrderRows || [], rows.brandShiftRows || [])
+    };
+  }
+
+  return {
+    ...dashboard,
+    statusRows: mapStatusRows(rows.statusRows || [])
+  };
+}
+
+async function loadSalesByProjectDashboardShell(client, input = {}, now = new Date()) {
+  const filters = normalizeSalesByProjectFilters(input, now);
+
+  return emptySalesByProjectDashboard(filters);
+}
+
+async function loadSalesByProjectDashboardSection(
+  client,
+  input = {},
+  section,
+  now = new Date(),
+  options = {}
+) {
+  assertSalesByProjectSection(section);
+
+  const filters = normalizeSalesByProjectFilters(input, now);
+  const rows = await readThroughCache(
+    options.cache,
+    cacheKeyForSalesByProjectSection(section, filters),
+    () => loadSalesByProjectSectionRows(client, filters, section)
+  );
+
+  return mergeSalesByProjectSection(filters, section, rows);
+}
+
+async function loadSalesByProjectDashboard(client, input = {}, now = new Date()) {
+  const filters = normalizeSalesByProjectFilters(input, now);
+  const [summaryRows, trendRows, brandRows, statusRows] = await Promise.all(
+    SALES_BY_PROJECT_SECTION_NAMES.map((section) =>
+      loadSalesByProjectSectionRows(client, filters, section)
     )
-  ]);
+  );
 
   return {
     filters,
-    summary: mapSummaryRows(orderSummaryRows, shiftSummaryRows),
-    trendRows: mergeTrendRows(orderTrendRows, shiftTrendRows),
-    brandRows: mergeBrandRows(brandOrderRows, brandShiftRows),
-    statusRows: mapStatusRows(statusRows)
+    summary: mapSummaryRows(summaryRows.orderSummaryRows, summaryRows.shiftSummaryRows),
+    trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows),
+    brandRows: mergeBrandRows(brandRows.brandOrderRows, brandRows.brandShiftRows),
+    statusRows: mapStatusRows(statusRows.statusRows)
   };
 }
 
 module.exports = {
+  SALES_BY_PROJECT_SECTIONS,
   buildPeriodExpression,
   loadSalesByProjectDashboard,
+  loadSalesByProjectDashboardSection,
+  loadSalesByProjectDashboardShell,
   normalizeSalesByProjectFilters
 };

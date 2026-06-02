@@ -738,7 +738,7 @@ test('GET /dashboards/heatmap renders dashboard with query filters', async () =>
     assert.match(text, /Тепловая карта/);
     assert.match(text, /data-dashboard-fragment-url="\/dashboards\/heatmap\/section\?section=map/);
     assert.match(text, /Загружается/);
-    assert.doesNotMatch(text, /data-heatmap-leaflet-map/);
+    assert.doesNotMatch(text, /class="country-heatmap-map" data-heatmap-leaflet-map/);
   });
 
   const heatmapCalls = client.calls.filter(

@@ -219,7 +219,7 @@ test('loadHeatmapDashboardSection queries weighted demand points with safe param
   assert.equal(orderCall.params.param_excluded_professions, "['Курьер']");
   assert.equal(orderCall.query.includes('c.title IN {clients:Array(String)}'), true);
   assert.equal(orderCall.query.includes('NOT IN {excluded_professions:Array(String)}'), true);
-  assert.equal(orderCall.query.includes('sum(ifNull(o.amount, 0)) AS ordered_shifts'), true);
+  assert.equal(orderCall.query.includes('ifNull(o.amount, 0) AS amount'), true);
   assert.equal(orderCall.query.includes('w.location__coordinates AS workplace_coordinates'), true);
   assert.equal(orderCall.query.includes('greatCircleDistance'), true);
   assert.equal(orderCall.query.includes('distance_m <= 5000'), true);

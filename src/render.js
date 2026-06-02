@@ -1554,7 +1554,8 @@ function layout({
       display: block;
       width: 100%;
       min-width: 620px;
-      height: auto;
+      height: 560px;
+      min-height: 420px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #f5f8fb;
@@ -1621,7 +1622,7 @@ function layout({
     }
 
     .heatmap-region-table table {
-      min-width: 520px;
+      min-width: 760px;
     }
 
     @media (max-width: 980px) {
@@ -1825,6 +1826,10 @@ function renderDashboardProgressiveScript() {
 
     template.innerHTML = html;
     root.replaceWith(template.content);
+
+    if (typeof window.initHeatmapLeafletMaps === 'function') {
+      window.initHeatmapLeafletMaps();
+    }
   }
 
   function renderError(root, message) {
@@ -4528,10 +4533,10 @@ function heatmapSectionUrl(filters, section) {
 function renderHeatmapKpis(summary) {
   const safeSummary = summary || {};
   const cards = [
-    { label: 'Регионы с заказом', value: formatNumber(safeSummary.regionsWithOrder) },
+    { label: 'Точки с заказом', value: formatNumber(safeSummary.pointsWithOrder) },
     { label: 'Заказано смен', value: formatNumber(safeSummary.orderedShifts) },
-    { label: 'Активные пользователи', value: formatNumber(safeSummary.activeUsers) },
-    { label: 'Активные / смена', value: formatNumber(safeSummary.avgActiveUsersPerShift, 1) }
+    { label: 'Взвешенная база', value: formatNumber(safeSummary.weightedActiveUsers, 1) },
+    { label: 'Взвешенная база / смена', value: formatNumber(safeSummary.avgWeightedActiveUsersPerShift, 1) }
   ];
 
   return `<div class="kpi-grid">${cards
@@ -4539,96 +4544,162 @@ function renderHeatmapKpis(summary) {
     .join('')}</div>`;
 }
 
-function heatmapRegionRadius(region) {
-  const ordered = Number(region.orderedShifts) || 0;
+function validHeatmapPoint(point) {
+  const lat = Number(point.lat);
+  const lon = Number(point.lon);
 
-  if (ordered <= 0) {
-    return 9;
+  return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+}
+
+function heatmapPointRadius(point) {
+  const ordered = Number(point.orderedShifts) || 0;
+
+  return Math.max(7, Math.min(24, 6 + Math.sqrt(ordered)));
+}
+
+function heatmapPointAddress(point) {
+  return [point.city, point.street, point.region].filter((part) => String(part || '').trim() !== '').join(', ');
+}
+
+function heatmapPointTitle(point) {
+  const place = point.workplaceTitle || heatmapPointAddress(point) || point.region || 'Точка заказа';
+
+  return `${place}: заказ ${formatNumber(point.orderedShifts)}; взвешенная база ${formatNumber(point.weightedActiveUsers, 1)}; база/смена ${formatNumber(point.weightedActiveUsersPerShift, 1)}`;
+}
+
+function heatmapMapPoints(points) {
+  return safeRows(points)
+    .filter(validHeatmapPoint)
+    .map((point) => ({
+      lat: Number(point.lat),
+      lon: Number(point.lon),
+      color: String(point.color || '#e5e7eb'),
+      radius: heatmapPointRadius(point),
+      title: heatmapPointTitle(point),
+      address: heatmapPointAddress(point),
+      orderedShifts: Number(point.orderedShifts) || 0,
+      weightedActiveUsers: Number(point.weightedActiveUsers) || 0,
+      weightedActiveUsersPerShift: Number(point.weightedActiveUsersPerShift) || 0,
+      radiusUsers: point.radiusUsers || { near: 0, medium: 0, far: 0 }
+    }));
+}
+
+function renderHeatmapLeafletAssets() {
+  return `<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>`;
+}
+
+function renderHeatmapLeafletScript() {
+  return `<script>
+(function () {
+  var tileUrl = window.ETL_HEATMAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  var tileAttribution = window.ETL_HEATMAP_TILE_ATTRIBUTION || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+  function formatNumber(value, digits) {
+    return new Intl.NumberFormat('ru-RU', {
+      minimumFractionDigits: digits || 0,
+      maximumFractionDigits: digits || 0
+    }).format(Number(value) || 0).replace(/\\u00a0/g, ' ');
   }
 
-  return Math.max(9, Math.min(24, 8 + Math.sqrt(ordered)));
-}
+  function escapeClientHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-function heatmapRegionTitle(region) {
-  return `${region.region}: активные ${formatNumber(region.activeUsers)}; заказ ${formatNumber(region.orderedShifts)}; актив/смена ${formatNumber(region.activeUsersPerShift, 1)}`;
-}
+  function popupHtml(point) {
+    return '<strong>' + escapeClientHtml(point.title) + '</strong>' +
+      (point.address ? '<br>' + escapeClientHtml(point.address) : '') +
+      '<br>0-5 км: ' + formatNumber(point.radiusUsers.near) +
+      '; 5-10 км: ' + formatNumber(point.radiusUsers.medium) +
+      '; 10-15 км: ' + formatNumber(point.radiusUsers.far);
+  }
 
-function intersectsBox(left, right) {
-  return !(
-    left.x + left.width < right.x ||
-    right.x + right.width < left.x ||
-    left.y + left.height < right.y ||
-    right.y + right.height < left.y
-  );
-}
-
-function heatmapLabelRows(regions) {
-  const labels = [];
-  const boxes = [];
-
-  for (const region of regions.filter((item) => Number(item.orderedShifts) > 0).slice(0, 28)) {
-    const radius = heatmapRegionRadius(region);
-    const text = String(region.region || '');
-    const x = Number(region.mapX) + radius + 4;
-    const y = Number(region.mapY) + 4;
-    const box = {
-      x,
-      y: y - 12,
-      width: Math.min(170, 8 + text.length * 7),
-      height: 16
-    };
-
-    if (boxes.some((current) => intersectsBox(current, box))) {
-      continue;
+  window.initHeatmapLeafletMaps = function initHeatmapLeafletMaps() {
+    if (!window.L) {
+      window.setTimeout(window.initHeatmapLeafletMaps, 80);
+      return;
     }
 
-    boxes.push(box);
-    labels.push({ region, x, y });
-  }
+    document.querySelectorAll('[data-heatmap-leaflet-map]').forEach(function (root) {
+      if (root.dataset.initialized === 'true') {
+        return;
+      }
 
-  return labels;
+      var points = [];
+
+      try {
+        points = JSON.parse(root.getAttribute('data-heatmap-points') || '[]');
+      } catch (error) {
+        points = [];
+      }
+
+      root.dataset.initialized = 'true';
+
+      var map = L.map(root, {
+        preferCanvas: true,
+        zoomControl: true
+      });
+
+      L.tileLayer(tileUrl, {
+        maxZoom: 19,
+        attribution: tileAttribution
+      }).addTo(map);
+
+      if (points.length === 0) {
+        map.setView([55.751244, 37.618423], 5);
+        return;
+      }
+
+      var bounds = [];
+
+      points.forEach(function (point) {
+        var marker = L.circleMarker([point.lat, point.lon], {
+          radius: point.radius,
+          color: '#ffffff',
+          weight: 1,
+          fillColor: point.color,
+          fillOpacity: 0.72
+        }).addTo(map);
+
+        marker.bindPopup(popupHtml(point));
+        bounds.push([point.lat, point.lon]);
+      });
+
+      map.fitBounds(bounds, {
+        padding: [28, 28],
+        maxZoom: 12
+      });
+    });
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', window.initHeatmapLeafletMaps);
+  } else {
+    window.initHeatmapLeafletMaps();
+  }
+})();
+</script>`;
 }
 
-function renderHeatmapMap(regions) {
-  const rows = safeRows(regions);
+function renderHeatmapMap(points) {
+  const rows = safeRows(points);
+  const mapPoints = heatmapMapPoints(rows);
 
   if (rows.length === 0) {
     return `<div class="country-heatmap-panel">
-  <p class="empty">Нет регионов с заказом или активной базой за выбранный период.</p>
+  <p class="empty">Нет точек заказа с координатами за выбранный период.</p>
 </div>`;
   }
 
-  const markers = rows
-    .map((region) => {
-      const radius = heatmapRegionRadius(region);
-
-      return `<circle class="country-heatmap-region" data-balance-level="${escapeHtml(region.balanceLevel)}" style="--region-color: ${escapeHtml(region.color)}" cx="${escapeHtml(region.mapX)}" cy="${escapeHtml(region.mapY)}" r="${escapeHtml(radius)}" title="${escapeHtml(heatmapRegionTitle(region))}"></circle>`;
-    })
-    .join('');
-  const labels = rows
-    .length === 0
-    ? []
-    : heatmapLabelRows(rows);
-  const labelsHtml = labels
-    .map(
-      ({ region, x, y }) => `<text class="country-heatmap-label" x="${escapeHtml(x)}" y="${escapeHtml(y)}">${escapeHtml(region.region)}</text>`
-    )
-    .join('');
-
   return `<div class="country-heatmap-panel">
-  <h2>Карта регионального баланса</h2>
+  <h2>Карта баланса по точкам заказа</h2>
   <div class="country-heatmap-map-wrap">
-    <svg class="country-heatmap-map" viewBox="0 0 920 430" role="img" aria-label="Карта регионального баланса активной базы и заказа">
-      <path class="country-heatmap-land" d="M54 214 C88 164 154 143 224 150 C286 101 401 91 482 123 C558 83 665 85 731 126 C806 126 869 173 891 235 C846 260 781 252 724 276 C642 304 544 289 463 314 C374 346 267 311 190 293 C128 287 82 262 54 214 Z"></path>
-      <line class="country-heatmap-gridline" x1="80" y1="110" x2="880" y2="110"></line>
-      <line class="country-heatmap-gridline" x1="80" y1="210" x2="880" y2="210"></line>
-      <line class="country-heatmap-gridline" x1="80" y1="310" x2="880" y2="310"></line>
-      <line class="country-heatmap-gridline" x1="240" y1="70" x2="240" y2="360"></line>
-      <line class="country-heatmap-gridline" x1="480" y1="70" x2="480" y2="360"></line>
-      <line class="country-heatmap-gridline" x1="720" y1="70" x2="720" y2="360"></line>
-      ${markers}
-      ${labelsHtml}
-    </svg>
+    <div class="country-heatmap-map" data-heatmap-leaflet-map data-heatmap-points="${escapeHtml(JSON.stringify(mapPoints))}" role="img" aria-label="Реалистичная карта баланса активной базы и заказа"></div>
   </div>
   <div class="heatmap-legend" aria-hidden="true">
     <div class="heatmap-gradient"></div>
@@ -4640,8 +4711,8 @@ function renderHeatmapMap(regions) {
 </div>`;
 }
 
-function renderHeatmapRegionTable(regions) {
-  const rows = safeRows(regions).filter((region) => Number(region.orderedShifts) > 0);
+function renderHeatmapRegionTable(points) {
+  const rows = safeRows(points).filter((point) => Number(point.orderedShifts) > 0);
 
   if (rows.length === 0) {
     return `<div class="country-heatmap-panel">
@@ -4650,26 +4721,32 @@ function renderHeatmapRegionTable(regions) {
   }
 
   return `<div class="country-heatmap-panel">
-  <h2>Регионы</h2>
+  <h2>Точки заказа</h2>
   <div class="heatmap-region-table">
     <table>
       <thead>
         <tr>
-          <th>Регион</th>
-          <th>Активные</th>
+          <th>Точка</th>
+          <th>Адрес</th>
           <th>Заказ</th>
-          <th>Заявки</th>
-          <th>Активные / смена</th>
+          <th>Взвешенная база</th>
+          <th>База / смена</th>
+          <th>5 км</th>
+          <th>10 км</th>
+          <th>15 км</th>
         </tr>
       </thead>
       <tbody>${rows
         .map(
-          (region) => `<tr>
-          <td>${escapeHtml(region.region)}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(region.activeUsers))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(region.orderedShifts))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(region.orderRequests))}</td>
-          <td class="number-cell">${escapeHtml(formatNumber(region.activeUsersPerShift, 1))}</td>
+          (point) => `<tr>
+          <td>${escapeHtml(point.workplaceTitle || point.workplaceId || 'Точка заказа')}</td>
+          <td>${escapeHtml(heatmapPointAddress(point) || point.region)}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(point.orderedShifts))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(point.weightedActiveUsers, 1))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(point.weightedActiveUsersPerShift, 1))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(point.radiusUsers && point.radiusUsers.near))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(point.radiusUsers && point.radiusUsers.medium))}</td>
+          <td class="number-cell">${escapeHtml(formatNumber(point.radiusUsers && point.radiusUsers.far))}</td>
         </tr>`
         )
         .join('')}</tbody>
@@ -4684,21 +4761,25 @@ function renderHeatmapDashboardSection({ dashboard, section }) {
   }
 
   return `<section class="section">
+  ${renderHeatmapLeafletAssets()}
   ${renderHeatmapKpis(dashboard.summary)}
   <div class="country-heatmap-layout">
-    ${renderHeatmapMap(dashboard.regions)}
-    ${renderHeatmapRegionTable(dashboard.regions)}
+    ${renderHeatmapMap(dashboard.points)}
+    ${renderHeatmapRegionTable(dashboard.points)}
   </div>
+  ${renderHeatmapLeafletScript()}
 </section>`;
 }
 
 function renderHeatmapProgressiveSection(filters) {
-  return `<div data-dashboard-fragment-url="${escapeHtml(heatmapSectionUrl(filters, 'map'))}">
+  return `${renderHeatmapLeafletAssets()}
+<div data-dashboard-fragment-url="${escapeHtml(heatmapSectionUrl(filters, 'map'))}">
   <section class="section">
-    <h2>Карта регионального баланса</h2>
+    <h2>Карта баланса по точкам заказа</h2>
     <p class="loading">Загружается</p>
   </section>
-</div>`;
+</div>
+${renderHeatmapLeafletScript()}`;
 }
 
 function renderHeatmapDashboard({

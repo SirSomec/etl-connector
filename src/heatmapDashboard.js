@@ -141,33 +141,20 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function balanceLevel(orderedShifts, activeUsersPerShift) {
+function balanceLevel(orderedShifts, weightedActiveUsersPerShift) {
   if (numberValue(orderedShifts) <= 0) {
     return 'no-order';
   }
 
-  if (activeUsersPerShift < 1) {
+  if (weightedActiveUsersPerShift < 1) {
     return 'low';
   }
 
-  if (activeUsersPerShift < 3) {
+  if (weightedActiveUsersPerShift < 3) {
     return 'medium';
   }
 
   return 'high';
-}
-
-function balanceColor(orderedShifts, activeUsersPerShift) {
-  if (numberValue(orderedShifts) <= 0) {
-    return '#e5e7eb';
-  }
-
-  const progress = clamp(activeUsersPerShift / 3, 0, 1);
-  const hue = 12 + progress * 126;
-  const saturation = 72 - progress * 8;
-  const lightness = 44 - progress * 9;
-
-  return `hsl(${formatCssNumber(hue)}, ${formatCssNumber(saturation)}%, ${formatCssNumber(lightness)}%)`;
 }
 
 function formatCssNumber(value) {
@@ -176,26 +163,17 @@ function formatCssNumber(value) {
   return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(',', '.');
 }
 
-function projectedPoint(lonValue, latValue, region) {
-  const lon = numberValue(lonValue);
-  const lat = numberValue(latValue);
-
-  if (lon >= 20 && lon <= 180 && lat >= 40 && lat <= 83) {
-    return {
-      mapX: Math.round(70 + ((lon - 20) / 160) * 820),
-      mapY: Math.round(372 - ((lat - 40) / 43) * 320)
-    };
+function balanceColor(orderedShifts, weightedActiveUsersPerShift) {
+  if (numberValue(orderedShifts) <= 0) {
+    return '#e5e7eb';
   }
 
-  const hash = Array.from(String(region || '')).reduce(
-    (total, char) => total + char.charCodeAt(0),
-    0
-  );
+  const progress = clamp(weightedActiveUsersPerShift / 3, 0, 1);
+  const hue = 12 + progress * 126;
+  const saturation = 72 - progress * 8;
+  const lightness = 44 - progress * 9;
 
-  return {
-    mapX: 90 + (hash % 760),
-    mapY: 80 + (hash % 280)
-  };
+  return `hsl(${formatCssNumber(hue)}, ${formatCssNumber(saturation)}%, ${formatCssNumber(lightness)}%)`;
 }
 
 function emptyFilterOptions() {
@@ -234,90 +212,76 @@ function filterOptionsFromRows(rows) {
 
 function mergeHeatmapRows(filters, datasets) {
   const filterOptions = filterOptionsFromRows(datasets.filterOptionRows || []);
-  const byRegion = new Map();
+  const points = [];
 
-  for (const row of datasets.regionOrderRows || []) {
-    const region = cleanText(row.region);
+  for (const row of datasets.demandPointRows || []) {
+    const orderedShifts = numberValue(row.ordered_shifts);
 
-    if (region === '') {
+    if (orderedShifts <= 0) {
       continue;
     }
 
-    byRegion.set(region, {
-      region,
-      orderedShifts: numberValue(row.ordered_shifts),
+    const weightedActiveUsers = numberValue(row.weighted_active_users);
+    const weightedActiveUsersPerShift = weightedActiveUsers / orderedShifts;
+    const level = balanceLevel(orderedShifts, weightedActiveUsersPerShift);
+
+    points.push({
+      workplaceId: cleanText(row.workplace_id),
+      workplaceTitle: cleanText(row.workplace_title),
+      region: cleanText(row.region),
+      city: cleanText(row.city),
+      street: cleanText(row.street),
+      lon: numberValue(row.lon),
+      lat: numberValue(row.lat),
+      orderedShifts,
       orderRequests: numberValue(row.order_requests),
-      activeUsers: 0,
-      avgLon: numberValue(row.avg_lon),
-      avgLat: numberValue(row.avg_lat)
+      weightedActiveUsers,
+      weightedActiveUsersPerShift,
+      radiusUsers: {
+        near: numberValue(row.active_users_5km),
+        medium: numberValue(row.active_users_10km),
+        far: numberValue(row.active_users_15km)
+      },
+      balanceLevel: level,
+      color: balanceColor(orderedShifts, weightedActiveUsersPerShift)
     });
   }
 
-  for (const row of datasets.activeUserRows || []) {
-    const region = cleanText(row.region);
-
-    if (region === '') {
-      continue;
-    }
-
-    const current = byRegion.get(region) || {
-      region,
-      orderedShifts: 0,
-      orderRequests: 0,
-      activeUsers: 0,
-      avgLon: 0,
-      avgLat: 0
-    };
-
-    current.activeUsers = numberValue(row.active_users);
-    byRegion.set(region, current);
-  }
-
-  const regions = Array.from(byRegion.values()).map((row) => {
-    const activeUsersPerShift =
-      row.orderedShifts > 0 ? row.activeUsers / row.orderedShifts : 0;
-    const level = balanceLevel(row.orderedShifts, activeUsersPerShift);
-    const point = projectedPoint(row.avgLon, row.avgLat, row.region);
-
-    return {
-      region: row.region,
-      orderedShifts: row.orderedShifts,
-      orderRequests: row.orderRequests,
-      activeUsers: row.activeUsers,
-      activeUsersPerShift,
-      balanceLevel: level,
-      color: balanceColor(row.orderedShifts, activeUsersPerShift),
-      mapX: point.mapX,
-      mapY: point.mapY
-    };
-  });
-
-  regions.sort((left, right) => {
+  points.sort((left, right) => {
     if (right.orderedShifts !== left.orderedShifts) {
       return right.orderedShifts - left.orderedShifts;
     }
 
-    if (right.activeUsers !== left.activeUsers) {
-      return right.activeUsers - left.activeUsers;
+    if (right.weightedActiveUsers !== left.weightedActiveUsers) {
+      return right.weightedActiveUsers - left.weightedActiveUsers;
     }
 
-    return left.region.localeCompare(right.region, 'ru');
+    return `${left.city} ${left.street} ${left.workplaceTitle}`.localeCompare(
+      `${right.city} ${right.street} ${right.workplaceTitle}`,
+      'ru'
+    );
   });
 
-  const regionsWithOrder = regions.filter((row) => row.orderedShifts > 0);
-  const orderedShifts = regionsWithOrder.reduce((sum, row) => sum + row.orderedShifts, 0);
-  const activeUsers = regionsWithOrder.reduce((sum, row) => sum + row.activeUsers, 0);
+  const orderedShifts = points.reduce((sum, row) => sum + row.orderedShifts, 0);
+  const weightedActiveUsers = points.reduce((sum, row) => sum + row.weightedActiveUsers, 0);
+  const regionsWithOrder = new Set(points.map((point) => point.region).filter(Boolean)).size;
 
   return {
     filters,
     filterOptions,
     summary: {
-      regionsWithOrder: regionsWithOrder.length,
+      pointsWithOrder: points.length,
+      regionsWithOrder,
       orderedShifts,
-      activeUsers,
-      avgActiveUsersPerShift: orderedShifts > 0 ? activeUsers / orderedShifts : 0
+      weightedActiveUsers,
+      activeUsers: weightedActiveUsers,
+      avgWeightedActiveUsersPerShift:
+        orderedShifts > 0 ? weightedActiveUsers / orderedShifts : 0,
+      avgActiveUsersPerShift:
+        orderedShifts > 0 ? weightedActiveUsers / orderedShifts : 0
     },
-    regions
+    points,
+    regions: points
   };
 }
 
@@ -333,6 +297,14 @@ function periodParams(filters) {
   return {
     param_from: filters.fromDateTime,
     param_to: filters.toExclusiveDateTime
+  };
+}
+
+function mapParams(filters) {
+  return {
+    ...periodParams(filters),
+    param_active_from: filters.activeFromDateTime,
+    param_active_to: filters.activeToExclusiveDateTime
   };
 }
 
@@ -354,8 +326,7 @@ function baseOrderWhere(filters, params, { withOptionalFilters = true } = {}) {
     'ifNull(o.is_hidden, 0) = 0',
     'o.start >= {from:DateTime}',
     'o.start < {to:DateTime}',
-    'ifNull(o.amount, 0) > 0',
-    "ifNull(w.address__region, '') != ''"
+    'ifNull(o.amount, 0) > 0'
   ];
 
   if (withOptionalFilters) {
@@ -387,34 +358,70 @@ function filterOptionsQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
-function regionalOrdersQuery(whereSql) {
-  return `SELECT
-    ifNull(w.address__region, '') AS region,
-    sum(ifNull(o.amount, 0)) AS ordered_shifts,
-    countDistinct(o._id) AS order_requests,
-    avgIf(w.location__coordinates[1], length(w.location__coordinates) >= 2
-      AND w.location__coordinates[1] BETWEEN 20 AND 180
-      AND w.location__coordinates[2] BETWEEN 40 AND 83) AS avg_lon,
-    avgIf(w.location__coordinates[2], length(w.location__coordinates) >= 2
-      AND w.location__coordinates[1] BETWEEN 20 AND 180
-      AND w.location__coordinates[2] BETWEEN 40 AND 83) AS avg_lat
-  FROM mg_orders AS o
-  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  WHERE ${whereSql}
-  GROUP BY region
-  ORDER BY ordered_shifts DESC, region
-  FORMAT JSONEachRow`;
+function activeWorkersWhere(filters) {
+  const where = [
+    'bounds.points > 0',
+    'length(worker_coordinates) >= 2',
+    'worker_coordinates[1] BETWEEN -180 AND 180',
+    'worker_coordinates[2] BETWEEN -90 AND 90',
+    'worker_coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin',
+    'worker_coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin'
+  ];
+
+  if (filters.activeBaseMode === 'ready') {
+    where.push("status IN ('ready', 'booked', 'worked')");
+  }
+
+  return where.join('\n      AND ');
 }
 
-function activeUsersQuery(filters) {
-  const statusWhere =
-    filters.activeBaseMode === 'ready'
-      ? "WHERE latest.status IN ('ready', 'booked', 'worked')"
-      : '';
-
-  return `WITH app_active_users AS (
+function demandPointsQuery(whereSql, filters) {
+  return `WITH filtered_orders AS (
+    SELECT
+      o._id AS order_id,
+      ifNull(w._id, o.workplace) AS workplace_id,
+      ifNull(w.title, '') AS workplace_title,
+      ifNull(w.address__region, '') AS region,
+      ifNull(w.address__city, '') AS city,
+      ifNull(w.address__street, '') AS street,
+      w.location__coordinates AS workplace_coordinates,
+      ifNull(o.amount, 0) AS amount
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    WHERE ${whereSql}
+  ),
+  demand_points AS (
+    SELECT
+      workplace_id AS workplace_id,
+      any(workplace_title) AS workplace_title,
+      any(region) AS region,
+      any(city) AS city,
+      any(street) AS street,
+      any(workplace_coordinates[1]) AS lon,
+      any(workplace_coordinates[2]) AS lat,
+      sum(amount) AS ordered_shifts,
+      countDistinct(order_id) AS order_requests
+    FROM filtered_orders
+    WHERE workplace_id != ''
+      AND length(workplace_coordinates) >= 2
+      AND workplace_coordinates[1] BETWEEN -180 AND 180
+      AND workplace_coordinates[2] BETWEEN -90 AND 90
+    GROUP BY workplace_id
+  ),
+  demand_bounds AS (
+    SELECT
+      count() AS points,
+      min(lon) AS min_lon,
+      max(lon) AS max_lon,
+      min(lat) AS min_lat,
+      max(lat) AS max_lat,
+      15000 / 111000 AS lat_margin,
+      15000 / (111320 * greatest(abs(cos(((min(lat) + max(lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
+    FROM demand_points
+  ),
+  app_active_users AS (
     SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
     FROM appmetrica_sessions AS s
     WHERE ifNull(s.profile_id, '') != ''
@@ -424,12 +431,8 @@ function activeUsersQuery(filters) {
   worker_rows AS (
     SELECT
       worker.user AS user_id,
-      if(
-        ifNull(worker.full_address__state, '') != '',
-        worker.full_address__state,
-        ifNull(u.region, '')
-      ) AS region,
       ifNull(worker.status, '') AS status,
+      worker.location__coordinates AS worker_coordinates,
       ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
     FROM mg_workers AS worker
     INNER JOIN app_active_users AS active ON active.user_id = worker.user
@@ -439,31 +442,78 @@ function activeUsersQuery(filters) {
       AND ifNull(u.deleted, 0) = 0
       AND ifNull(u.createdAt, worker.createdAt) < {active_to:DateTime}
   ),
-  latest_worker_by_user AS (
+  latest_workers AS (
     SELECT
-      user_id,
-      argMax(region, updated_at) AS region,
-      argMax(status, updated_at) AS status
+      user_id AS user_id,
+      argMax(status, updated_at) AS status,
+      argMax(worker_coordinates, updated_at) AS worker_coordinates
     FROM worker_rows
     GROUP BY user_id
+  ),
+  active_workers AS (
+    SELECT
+      user_id AS user_id,
+      worker_coordinates AS worker_coordinates
+    FROM latest_workers
+    CROSS JOIN demand_bounds AS bounds
+    WHERE ${activeWorkersWhere(filters)}
+  ),
+  influence_pairs AS (
+    SELECT
+      workplace_id,
+      user_id,
+      distance_m,
+      multiIf(distance_m <= 5000, 1.0, distance_m <= 10000, 0.5, distance_m <= 15000, 0.25, 0.0) AS influence_weight
+    FROM (
+      SELECT
+        dp.workplace_id AS workplace_id,
+        aw.user_id AS user_id,
+        greatCircleDistance(
+          dp.lon,
+          dp.lat,
+          aw.worker_coordinates[1],
+          aw.worker_coordinates[2]
+        ) AS distance_m
+      FROM demand_points AS dp
+      CROSS JOIN active_workers AS aw
+      WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
+        AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
+        AND greatCircleDistance(
+          dp.lon,
+          dp.lat,
+          aw.worker_coordinates[1],
+          aw.worker_coordinates[2]
+        ) <= 15000
+    )
+  ),
+  worker_influence AS (
+    SELECT
+      workplace_id AS workplace_id,
+      sum(influence_weight) AS weighted_active_users,
+      uniqExactIf(user_id, distance_m <= 5000) AS active_users_5km,
+      uniqExactIf(user_id, distance_m > 5000 AND distance_m <= 10000) AS active_users_10km,
+      uniqExactIf(user_id, distance_m > 10000 AND distance_m <= 15000) AS active_users_15km
+    FROM influence_pairs
+    GROUP BY workplace_id
   )
   SELECT
-    latest.region AS region,
-    uniqExact(latest.user_id) AS active_users
-  FROM latest_worker_by_user AS latest
-  ${statusWhere}
-  GROUP BY region
-  HAVING region != ''
-  ORDER BY active_users DESC, region
+    dp.workplace_id AS workplace_id,
+    dp.workplace_title AS workplace_title,
+    dp.region AS region,
+    dp.city AS city,
+    dp.street AS street,
+    dp.lon AS lon,
+    dp.lat AS lat,
+    dp.ordered_shifts AS ordered_shifts,
+    dp.order_requests AS order_requests,
+    ifNull(wi.weighted_active_users, 0) AS weighted_active_users,
+    ifNull(wi.active_users_5km, 0) AS active_users_5km,
+    ifNull(wi.active_users_10km, 0) AS active_users_10km,
+    ifNull(wi.active_users_15km, 0) AS active_users_15km
+  FROM demand_points AS dp
+  LEFT JOIN worker_influence AS wi ON dp.workplace_id = wi.workplace_id
+  ORDER BY ordered_shifts DESC, weighted_active_users DESC, city, street, workplace_title
   FORMAT JSONEachRow`;
-}
-
-function mapParams(filters) {
-  return {
-    ...periodParams(filters),
-    param_active_from: filters.activeFromDateTime,
-    param_active_to: filters.activeToExclusiveDateTime
-  };
 }
 
 async function readThroughCache(cache, key, loader) {
@@ -493,11 +543,15 @@ function emptyHeatmapDashboard(filters, filterOptions = emptyFilterOptions()) {
     filters,
     filterOptions,
     summary: {
+      pointsWithOrder: 0,
       regionsWithOrder: 0,
       orderedShifts: 0,
+      weightedActiveUsers: 0,
       activeUsers: 0,
+      avgWeightedActiveUsersPerShift: 0,
       avgActiveUsersPerShift: 0
     },
+    points: [],
     regions: []
   };
 }
@@ -527,20 +581,13 @@ async function loadFilterOptionRows(client, filters) {
 async function loadHeatmapMapRows(client, filters) {
   const params = mapParams(filters);
   const whereSql = baseOrderWhere(filters, params);
-  const [regionOrderRows, activeUserRows] = await Promise.all([
-    client.queryJSONEachRow(
-      regionalOrdersQuery(whereSql),
-      params,
-      'heatmap regional orders'
-    ),
-    client.queryJSONEachRow(
-      activeUsersQuery(filters),
-      params,
-      'heatmap active users'
-    )
-  ]);
+  const demandPointRows = await client.queryJSONEachRow(
+    demandPointsQuery(whereSql, filters),
+    params,
+    'heatmap demand points'
+  );
 
-  return { regionOrderRows, activeUserRows };
+  return { demandPointRows };
 }
 
 async function loadHeatmapDashboardShell(client, input = {}, now = new Date()) {

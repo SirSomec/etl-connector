@@ -1343,7 +1343,7 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
   assert.match(html, /leaflet\.css/);
   assert.match(html, /leaflet\.js/);
   assert.match(html, /data-heatmap-leaflet-map/);
-  assert.match(html, /id="heatmap-points-json"/);
+  assert.match(html, /data-heatmap-points="/);
   assert.match(html, /&quot;lat&quot;:55\.7/);
   assert.match(html, /&quot;lon&quot;:37\.6/);
   assert.match(html, /&quot;color&quot;:&quot;hsl\(24, 72%, 44%\)&quot;/);

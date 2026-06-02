@@ -1,0 +1,1235 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
+const FILTER_OPTION_KEYS = ['client', 'profession', 'orderType', 'jobStatus', 'contractor'];
+const CITY_ANALYSIS_CACHE_VERSION = 1;
+const CITY_ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_CITY_ANALYSIS_CACHE_PATH = path.join(process.cwd(), 'data', 'city-analysis-cache.json');
+const CITY_ANALYSIS_SECTION_NAMES = [
+  'summary-demand',
+  'summary-base',
+  'summary-app',
+  'summary-responses',
+  'summary-ratio',
+  'composition',
+  'dynamics'
+];
+const CITY_ANALYSIS_SECTIONS = new Set(CITY_ANALYSIS_SECTION_NAMES);
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatDateUTC(date) {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+function parseDateOnly(value) {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) {
+    return null;
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  if (Number.isNaN(date.getTime()) || formatDateUTC(date) !== value) {
+    return null;
+  }
+
+  return date;
+}
+
+function addDaysUTC(date, days) {
+  const next = new Date(date.getTime());
+
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function firstDayOfMonthUTC(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function buildDateKeys(from, to) {
+  const start = parseDateOnly(from);
+  const end = parseDateOnly(to);
+  const dates = [];
+
+  for (let current = start; current.getTime() <= end.getTime(); current = addDaysUTC(current, 1)) {
+    dates.push(formatDateUTC(current));
+  }
+
+  return dates;
+}
+
+function toDateTimeParam(dateOnly) {
+  return `${dateOnly} 00:00:00`;
+}
+
+function cleanText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function firstCleanText(value) {
+  const values = Array.isArray(value) ? value : [value];
+
+  for (const rawValue of values) {
+    const text = cleanText(rawValue);
+
+    if (text !== '') {
+      return text;
+    }
+  }
+
+  return '';
+}
+
+function cleanValues(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const values = [];
+  const seen = new Set();
+
+  for (const rawValue of rawValues) {
+    const text = cleanText(rawValue);
+
+    if (text === '' || seen.has(text)) {
+      continue;
+    }
+
+    seen.add(text);
+    values.push(text);
+  }
+
+  return values;
+}
+
+function cleanBooleanFlag(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+
+  return rawValues.some((rawValue) => {
+    const text = cleanText(rawValue).toLowerCase();
+
+    return text === '1' || text === 'true' || text === 'on' || text === 'yes';
+  });
+}
+
+function normalizePositiveNumber(value) {
+  const text = firstCleanText(value).replace(',', '.');
+
+  if (text === '') {
+    return null;
+  }
+
+  const number = Number(text);
+
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+
+  return Math.max(0, number);
+}
+
+function normalizeCityAnalysisFilters(input = {}, now = new Date()) {
+  const today = parseDateOnly(formatDateUTC(now));
+  const defaultFromDate = firstDayOfMonthUTC(today);
+  const requestedFrom = parseDateOnly(input.from);
+  const requestedTo = parseDateOnly(input.to);
+  let fromDate = requestedFrom || defaultFromDate;
+  let toDate = requestedTo || today;
+
+  if (fromDate.getTime() > toDate.getTime()) {
+    fromDate = defaultFromDate;
+    toDate = today;
+  }
+
+  const from = formatDateUTC(fromDate);
+  const to = formatDateUTC(toDate);
+  const toExclusive = formatDateUTC(addDaysUTC(toDate, 1));
+  const active30dFromDate = addDaysUTC(today, -29);
+  const active30dToExclusiveDate = addDaysUTC(today, 1);
+
+  return {
+    from,
+    to,
+    fromDateTime: toDateTimeParam(from),
+    toExclusiveDateTime: toDateTimeParam(toExclusive),
+    active30dFromDateTime: toDateTimeParam(formatDateUTC(active30dFromDate)),
+    active30dToExclusiveDateTime: toDateTimeParam(formatDateUTC(active30dToExclusiveDate)),
+    rangeDays: buildDateKeys(from, to).length,
+    city: firstCleanText(input.city),
+    client: cleanValues(input.client),
+    profession: cleanValues(input.profession),
+    orderType: cleanValues(input.orderType).filter((value) => ALLOWED_ORDER_TYPES.has(value)),
+    jobStatus: cleanValues(input.jobStatus),
+    contractor: cleanValues(input.contractor),
+    salaryFrom: normalizePositiveNumber(input.salaryFrom),
+    salaryTo: normalizePositiveNumber(input.salaryTo),
+    includeDeletedOrders: cleanBooleanFlag(input.includeDeletedOrders),
+    includeHiddenOrders: cleanBooleanFlag(input.includeHiddenOrders)
+  };
+}
+
+function numberValue(value) {
+  const number = Number(value || 0);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function percent(numerator, denominator) {
+  const bottom = numberValue(denominator);
+
+  if (bottom <= 0) {
+    return 0;
+  }
+
+  return (numberValue(numerator) / bottom) * 100;
+}
+
+function uniqueTextRows(rows, key) {
+  const values = [];
+  const seen = new Set();
+
+  for (const row of rows) {
+    const text = cleanText(row[key]);
+
+    if (text === '' || seen.has(text)) {
+      continue;
+    }
+
+    seen.add(text);
+    values.push(text);
+  }
+
+  return values;
+}
+
+function emptyFilterOptions() {
+  return FILTER_OPTION_KEYS.reduce((options, key) => {
+    options[key] = [];
+    return options;
+  }, {});
+}
+
+function filterOptionsFromRows(rows) {
+  const options = emptyFilterOptions();
+  const seenByKey = FILTER_OPTION_KEYS.reduce((seen, key) => {
+    seen[key] = new Set();
+    return seen;
+  }, {});
+
+  for (const row of rows) {
+    const key = String(row.filter || '');
+    const value = cleanText(row.value);
+
+    if (!Object.prototype.hasOwnProperty.call(options, key) || value === '') {
+      continue;
+    }
+
+    if (key === 'orderType' && !ALLOWED_ORDER_TYPES.has(value)) {
+      continue;
+    }
+
+    if (seenByKey[key].has(value)) {
+      continue;
+    }
+
+    seenByKey[key].add(value);
+    options[key].push(value);
+  }
+
+  return options;
+}
+
+function compositionRows(rows) {
+  const total = rows.reduce((sum, row) => sum + numberValue(row.ordered_shifts), 0);
+
+  return rows.map((row) => {
+    const orderedShifts = numberValue(row.ordered_shifts);
+
+    return {
+      label: String(row.label || ''),
+      orderedShifts,
+      sharePercent: percent(orderedShifts, total)
+    };
+  });
+}
+
+function rateRows(rows) {
+  const total = rows.reduce((sum, row) => sum + numberValue(row.ordered_shifts), 0);
+
+  return rows.map((row) => {
+    const orderedShifts = numberValue(row.ordered_shifts);
+
+    return {
+      label: String(row.label || ''),
+      orderedShifts,
+      sharePercent: percent(orderedShifts, total),
+      avgSalaryPerHour: numberValue(row.avg_salary_per_hour)
+    };
+  });
+}
+
+function dynamicRows(rows) {
+  return rows.map((row) => ({
+    period: String(row.period || ''),
+    orderedShifts: numberValue(row.ordered_shifts),
+    appActiveUsers: numberValue(row.app_active_users),
+    bookedUsers: numberValue(row.booked_users),
+    completedUsers: numberValue(row.completed_users),
+    activeUsersPerRequest: numberValue(row.active_users_per_request)
+  }));
+}
+
+function mergeCityAnalysisRows(filters, datasets) {
+  const hasCity = filters.city !== '';
+  const summaryRow = hasCity ? (datasets.summaryRows || [])[0] || {} : {};
+  const filterOptions = filterOptionsFromRows(datasets.filterOptionRows || []);
+  const brandRows = hasCity ? datasets.brandRows || [] : [];
+  const professionRows = hasCity ? datasets.professionRows || [] : [];
+  const rateBucketRows = hasCity ? datasets.rateRows || [] : [];
+  const dynamics = hasCity ? datasets.dynamicRows || [] : [];
+
+  return {
+    filters,
+    filterOptions: {
+      city: uniqueTextRows(datasets.cityOptionRows || [], 'city'),
+      ...filterOptions
+    },
+    context: {
+      selectedCity: filters.city,
+      hasCity,
+      hasCityCoordinates: hasCity && (datasets.cityCoordinateRows || []).length > 0,
+      periodLabel: `${filters.from} - ${filters.to}`
+    },
+    summary: {
+      orderedShifts: numberValue(summaryRow.ordered_shifts),
+      activeOrderRequests: numberValue(summaryRow.active_order_requests),
+      totalLocatedUsers: numberValue(summaryRow.total_located_users),
+      readyLocatedUsers: numberValue(summaryRow.ready_located_users),
+      readyStatusLocatedUsers: numberValue(summaryRow.ready_status_located_users),
+      bookedStatusLocatedUsers: numberValue(summaryRow.booked_status_located_users),
+      workedStatusLocatedUsers: numberValue(summaryRow.worked_status_located_users),
+      appActiveUsers: numberValue(summaryRow.app_active_users),
+      bookedUsers: numberValue(summaryRow.booked_users),
+      completedUsers: numberValue(summaryRow.completed_users),
+      avgDaily30dActiveUsersPerRequest: numberValue(summaryRow.avg_daily_30d_active_users_per_request)
+    },
+    composition: {
+      brands: compositionRows(brandRows),
+      professions: compositionRows(professionRows),
+      rateBuckets: rateRows(rateBucketRows)
+    },
+    dynamics: dynamicRows(dynamics)
+  };
+}
+
+function escapeClickHouseString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
+}
+
+function cityAnalysisCachePathFromEnv(env = process.env) {
+  return env.CITY_ANALYSIS_CACHE_PATH || DEFAULT_CITY_ANALYSIS_CACHE_PATH;
+}
+
+function normalizeCityAnalysisCache(data) {
+  if (!data || data.version !== CITY_ANALYSIS_CACHE_VERSION || typeof data.entries !== 'object') {
+    return {
+      version: CITY_ANALYSIS_CACHE_VERSION,
+      entries: {}
+    };
+  }
+
+  return data;
+}
+
+async function readCityAnalysisCacheFile(filePath) {
+  try {
+    const body = await fs.readFile(filePath, 'utf8');
+
+    return normalizeCityAnalysisCache(JSON.parse(body));
+  } catch (_) {
+    return normalizeCityAnalysisCache();
+  }
+}
+
+async function writeCityAnalysisCacheFile(filePath, entries) {
+  const data = {
+    version: CITY_ANALYSIS_CACHE_VERSION,
+    entries: {}
+  };
+
+  for (const [key, entry] of entries) {
+    if (!entry || entry.value === undefined || !Number.isFinite(entry.expiresAt)) {
+      continue;
+    }
+
+    data.entries[key] = {
+      value: entry.value,
+      expiresAt: new Date(entry.expiresAt).toISOString()
+    };
+  }
+
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+
+  await fs.writeFile(tempPath, `${JSON.stringify(data)}\n`, 'utf8');
+  await fs.rename(tempPath, filePath);
+}
+
+function createCityAnalysisCache({
+  ttlMs = CITY_ANALYSIS_CACHE_TTL_MS,
+  now = () => Date.now(),
+  filePath = null
+} = {}) {
+  const entries = new Map();
+  let fileLoaded = false;
+  let fileLoadPromise = null;
+
+  async function loadFileEntries() {
+    if (!filePath || fileLoaded) {
+      return;
+    }
+
+    if (fileLoadPromise) {
+      await fileLoadPromise;
+      return;
+    }
+
+    fileLoadPromise = (async () => {
+      const data = await readCityAnalysisCacheFile(filePath);
+
+      for (const [key, entry] of Object.entries(data.entries)) {
+        const expiresAt = Date.parse(entry && entry.expiresAt);
+
+        if (Number.isFinite(expiresAt)) {
+          entries.set(key, {
+            value: entry.value,
+            expiresAt
+          });
+        }
+      }
+
+      fileLoaded = true;
+    })();
+
+    await fileLoadPromise;
+  }
+
+  async function persistEntries() {
+    if (!filePath) {
+      return;
+    }
+
+    await writeCityAnalysisCacheFile(filePath, entries);
+  }
+
+  return {
+    async getOrLoad(key, loader) {
+      await loadFileEntries();
+
+      const current = now();
+      const cached = entries.get(key);
+
+      if (cached && cached.value !== undefined && cached.expiresAt > current) {
+        return cached.value;
+      }
+
+      if (cached && cached.promise) {
+        return cached.promise;
+      }
+
+      const promise = Promise.resolve()
+        .then(loader)
+        .then(
+          async (value) => {
+            entries.set(key, {
+              value,
+              expiresAt: now() + ttlMs
+            });
+
+            await persistEntries();
+
+            return value;
+          },
+          (error) => {
+            entries.delete(key);
+            throw error;
+          }
+        );
+
+      entries.set(key, {
+        promise,
+        expiresAt: current + ttlMs
+      });
+
+      return promise;
+    },
+    clear() {
+      entries.clear();
+      fileLoaded = false;
+      fileLoadPromise = null;
+    }
+  };
+}
+
+async function readThroughCache(cache, key, loader) {
+  if (!cache || typeof cache.getOrLoad !== 'function') {
+    return loader();
+  }
+
+  return cache.getOrLoad(key, loader);
+}
+
+function cacheKeyForFilters(scope, filters) {
+  return JSON.stringify({
+    board: 'city-analysis',
+    scope,
+    filters: {
+      from: filters.from,
+      to: filters.to,
+      active30dFromDateTime: filters.active30dFromDateTime,
+      active30dToExclusiveDateTime: filters.active30dToExclusiveDateTime,
+      city: filters.city,
+      client: filters.client,
+      profession: filters.profession,
+      orderType: filters.orderType,
+      jobStatus: filters.jobStatus,
+      contractor: filters.contractor,
+      salaryFrom: filters.salaryFrom,
+      salaryTo: filters.salaryTo,
+      includeDeletedOrders: filters.includeDeletedOrders,
+      includeHiddenOrders: filters.includeHiddenOrders
+    }
+  });
+}
+
+function periodParams(filters) {
+  return {
+    param_from: filters.fromDateTime,
+    param_to: filters.toExclusiveDateTime
+  };
+}
+
+function baseParams(filters) {
+  return {
+    ...periodParams(filters),
+    param_active_30d_from: filters.active30dFromDateTime,
+    param_active_30d_to: filters.active30dToExclusiveDateTime
+  };
+}
+
+function addOptionalOrderWhere(filters, where, params) {
+  if (filters.city) {
+    where.push('w.address__city = {city:String}');
+    params.param_city = filters.city;
+  }
+  if (filters.client.length > 0) {
+    where.push('c.title IN {clients:Array(String)}');
+    params.param_clients = serializeStringArray(filters.client);
+  }
+  if (filters.profession.length > 0) {
+    where.push("if(ifNull(p.caption, '') = '', o.spec, p.caption) IN {professions:Array(String)}");
+    params.param_professions = serializeStringArray(filters.profession);
+  }
+  if (filters.orderType.length > 0) {
+    where.push('o.type IN {order_types:Array(String)}');
+    params.param_order_types = serializeStringArray(filters.orderType);
+  }
+  if (filters.jobStatus.length > 0) {
+    where.push(`o._id IN (
+      SELECT DISTINCT j.source
+      FROM mg_jobs AS j
+      WHERE ifNull(j.deleted, 0) = 0
+        AND ifNull(j.source, '') != ''
+        AND ifNull(j.status, '') IN {job_statuses:Array(String)}
+    )`);
+    params.param_job_statuses = serializeStringArray(filters.jobStatus);
+  }
+  if (filters.contractor.length > 0) {
+    where.push("ifNull(ct.legal_name, '') IN {contractors:Array(String)}");
+    params.param_contractors = serializeStringArray(filters.contractor);
+  }
+  if (filters.salaryFrom !== null) {
+    where.push('ifNull(o.salary_per_hour, 0) >= {salary_from:Float64}');
+    params.param_salary_from = filters.salaryFrom;
+  }
+  if (filters.salaryTo !== null) {
+    where.push('ifNull(o.salary_per_hour, 0) <= {salary_to:Float64}');
+    params.param_salary_to = filters.salaryTo;
+  }
+}
+
+function orderWhereForFilters(
+  filters,
+  params,
+  { forceActiveRequests = false, fromParam = 'from', toParam = 'to' } = {}
+) {
+  const where = [
+    `o.start >= {${fromParam}:DateTime}`,
+    `o.start < {${toParam}:DateTime}`,
+    "ifNull(o.workplace, '') != ''",
+    'ifNull(o.amount, 0) > 0'
+  ];
+
+  if (forceActiveRequests || !filters.includeDeletedOrders) {
+    where.unshift('ifNull(o.deleted, 0) = 0');
+  }
+
+  if (!filters.includeHiddenOrders) {
+    where.unshift('ifNull(o.is_hidden, 0) = 0');
+  }
+
+  addOptionalOrderWhere(filters, where, params);
+
+  return where.join('\n    AND ');
+}
+
+function paramsAndWhere(filters) {
+  const params = baseParams(filters);
+  const whereSql = orderWhereForFilters(filters, params);
+  const active30dWhereSql = orderWhereForFilters(filters, params, {
+    forceActiveRequests: true,
+    fromParam: 'active_30d_from',
+    toParam: 'active_30d_to'
+  });
+
+  return { params, whereSql, active30dWhereSql };
+}
+
+function cityOptionsQuery() {
+  return `SELECT
+    ifNull(w.address__city, '') AS city
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  WHERE o.start >= {from:DateTime}
+    AND o.start < {to:DateTime}
+    AND ifNull(o.deleted, 0) = 0
+    AND ifNull(o.is_hidden, 0) = 0
+    AND ifNull(o.amount, 0) > 0
+  GROUP BY city
+  HAVING city != ''
+  ORDER BY city
+  FORMAT JSONEachRow`;
+}
+
+function filterOptionSelect(filter, valueExpression, whereSql) {
+  return `SELECT
+    '${filter}' AS filter,
+    ${valueExpression} AS value
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE ${whereSql}
+  GROUP BY value
+  HAVING value != ''`;
+}
+
+function jobStatusFilterOptionSelect(whereSql) {
+  return `SELECT
+    'jobStatus' AS filter,
+    ifNull(j.status, '') AS value
+  FROM mg_orders AS o
+  INNER JOIN mg_jobs AS j ON j.source = o._id
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE ${whereSql}
+    AND ifNull(j.deleted, 0) = 0
+  GROUP BY value
+  HAVING value != ''`;
+}
+
+function filterOptionsQuery(whereSql) {
+  return `${[
+    filterOptionSelect('client', "ifNull(c.title, '')", whereSql),
+    filterOptionSelect('profession', "if(ifNull(p.caption, '') = '', o.spec, p.caption)", whereSql),
+    filterOptionSelect('orderType', "ifNull(o.type, '')", whereSql),
+    jobStatusFilterOptionSelect(whereSql),
+    filterOptionSelect('contractor', "ifNull(ct.legal_name, '')", whereSql)
+  ].join('\n  UNION ALL\n  ')}
+  ORDER BY filter, value
+  FORMAT JSONEachRow`;
+}
+
+function cityCoordinatesQuery() {
+  return `SELECT
+    _id AS workplace_id
+  FROM mg_workplaces
+  WHERE address__city = {city:String}
+    AND length(location__coordinates) >= 2
+  LIMIT 1
+  FORMAT JSONEachRow`;
+}
+
+function cityWorkplacesCte() {
+  return `city_workplaces AS (
+    SELECT DISTINCT
+      location__coordinates AS workplace_coordinates
+    FROM mg_workplaces
+    WHERE address__city = {city:String}
+      AND length(location__coordinates) >= 2
+  )`;
+}
+
+function cityBoundsCte() {
+  return `city_bounds AS (
+    SELECT
+      min(workplace_coordinates[1]) AS min_lon,
+      max(workplace_coordinates[1]) AS max_lon,
+      min(workplace_coordinates[2]) AS min_lat,
+      max(workplace_coordinates[2]) AS max_lat
+    FROM city_workplaces
+  )`;
+}
+
+function candidateWorkersCte() {
+  return `candidate_workers AS (
+    SELECT
+      worker.user AS user_id,
+      worker.status AS status,
+      worker.location__coordinates AS location__coordinates
+    FROM mg_workers AS worker
+    CROSS JOIN city_bounds AS bounds
+    WHERE ifNull(worker.user, '') != ''
+      AND length(worker.location__coordinates) >= 2
+      AND worker.location__coordinates[1] BETWEEN bounds.min_lon - 1 AND bounds.max_lon + 1
+      AND worker.location__coordinates[2] BETWEEN bounds.min_lat - 0.25 AND bounds.max_lat + 0.25
+  )`;
+}
+
+function locatedUsersCte() {
+  return `located_users AS (
+    SELECT
+      worker.user_id AS user_id,
+      max(ifNull(worker.status, '') IN ('ready', 'booked', 'worked')) AS is_ready_base,
+      max(ifNull(worker.status, '') = 'ready') AS is_ready_status,
+      max(ifNull(worker.status, '') = 'booked') AS is_booked_status,
+      max(ifNull(worker.status, '') = 'worked') AS is_worked_status
+    FROM candidate_workers AS worker
+    CROSS JOIN city_workplaces AS cw
+    WHERE greatCircleDistance(
+        cw.workplace_coordinates[1],
+        cw.workplace_coordinates[2],
+        worker.location__coordinates[1],
+        worker.location__coordinates[2]
+      ) <= 15000
+    GROUP BY user_id
+  )`;
+}
+
+function filteredOrdersCte(whereSql, name = 'filtered_orders') {
+  return `${name} AS (
+    SELECT
+      o._id AS order_id,
+      o.workplace AS workplace_id,
+      toString(toDate(o.start)) AS period,
+      ifNull(o.amount, 0) AS amount,
+      ifNull(o.salary_per_hour, 0) AS salary_per_hour,
+      ifNull(c.title, '') AS brand,
+      if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession,
+      ifNull(o.deleted, 0) = 0 AS is_active_request
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    WHERE ${whereSql}
+  )`;
+}
+
+function appActiveUsersCte() {
+  return `app_active_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {to:DateTime}
+  )`;
+}
+
+function bookedUsersCte() {
+  return `booked_users AS (
+    SELECT DISTINCT worker.user AS user_id
+    FROM mg_job_history AS history
+    INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+    INNER JOIN mg_workers AS worker ON history.worker = worker._id
+    WHERE ifNull(history.status, '') = 'booked'
+      AND ifNull(worker.user, '') != ''
+  )`;
+}
+
+function completedUsersCte() {
+  return `completed_users AS (
+    SELECT DISTINCT worker.user AS user_id
+    FROM mg_jobs AS job
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
+    INNER JOIN mg_workers AS worker ON job.worker = worker._id
+    WHERE ifNull(job.deleted, 0) = 0
+      AND ifNull(job.status, '') = 'confirmed'
+      AND ifNull(worker.user, '') != ''
+  )`;
+}
+
+function daily30dRatioCte(active30dWhereSql) {
+  return `active_30d_orders AS (
+    SELECT
+      o._id AS order_id,
+      toString(toDate(o.start)) AS period,
+      ifNull(o.deleted, 0) = 0 AS is_active_request
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    WHERE ${active30dWhereSql}
+  ),
+  daily_30d_active AS (
+    SELECT
+      toString(toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime))) AS period,
+      uniqExact(ifNull(s.profile_id, '')) AS active_users
+    FROM appmetrica_sessions AS s
+    INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_30d_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_30d_to:DateTime}
+    GROUP BY period
+  ),
+  daily_30d_requests AS (
+    SELECT
+      period,
+      countDistinctIf(order_id, is_active_request) AS active_requests
+    FROM active_30d_orders
+    GROUP BY period
+  ),
+  daily_30d_ratio AS (
+    SELECT avg(if(active_requests > 0, ifNull(active_users, 0) / active_requests, NULL)) AS avg_ratio
+    FROM daily_30d_requests AS requests
+    LEFT JOIN daily_30d_active AS active ON active.period = requests.period
+    WHERE active_requests > 0
+  )`;
+}
+
+function summaryQuery(whereSql, active30dWhereSql) {
+  return `WITH ${cityWorkplacesCte()},
+  ${cityBoundsCte()},
+  ${candidateWorkersCte()},
+  ${locatedUsersCte()},
+  ${filteredOrdersCte(whereSql)},
+  ${appActiveUsersCte()},
+  ${bookedUsersCte()},
+  ${completedUsersCte()},
+  ${daily30dRatioCte(active30dWhereSql)}
+  SELECT
+    (SELECT sum(amount) FROM filtered_orders) AS ordered_shifts,
+    (SELECT countDistinctIf(order_id, is_active_request) FROM filtered_orders) AS active_order_requests,
+    (SELECT uniqExact(user_id) FROM located_users) AS total_located_users,
+    (SELECT uniqExactIf(located.user_id, located.is_ready_base) FROM located_users AS located) AS ready_located_users,
+    (SELECT uniqExactIf(located.user_id, located.is_ready_status) FROM located_users AS located) AS ready_status_located_users,
+    (SELECT uniqExactIf(located.user_id, located.is_booked_status) FROM located_users AS located) AS booked_status_located_users,
+    (SELECT uniqExactIf(located.user_id, located.is_worked_status) FROM located_users AS located) AS worked_status_located_users,
+    (SELECT uniqExact(user_id) FROM app_active_users) AS app_active_users,
+    (SELECT uniqExact(user_id) FROM booked_users) AS booked_users,
+    (SELECT uniqExact(user_id) FROM completed_users) AS completed_users,
+    ifNull((SELECT avg_ratio FROM daily_30d_ratio), 0) AS avg_daily_30d_active_users_per_request
+  FORMAT JSONEachRow`;
+}
+
+function summaryDemandQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)}
+  SELECT
+    sum(amount) AS ordered_shifts,
+    countDistinctIf(order_id, is_active_request) AS active_order_requests
+  FROM filtered_orders
+  FORMAT JSONEachRow`;
+}
+
+function summaryBaseQuery() {
+  return `WITH ${cityWorkplacesCte()},
+  ${cityBoundsCte()},
+  ${candidateWorkersCte()},
+  ${locatedUsersCte()}
+  SELECT
+    uniqExact(user_id) AS total_located_users,
+    uniqExactIf(located.user_id, located.is_ready_base) AS ready_located_users,
+    uniqExactIf(located.user_id, located.is_ready_status) AS ready_status_located_users,
+    uniqExactIf(located.user_id, located.is_booked_status) AS booked_status_located_users,
+    uniqExactIf(located.user_id, located.is_worked_status) AS worked_status_located_users
+  FROM located_users AS located
+  FORMAT JSONEachRow`;
+}
+
+function summaryAppQuery() {
+  return `WITH ${cityWorkplacesCte()},
+  ${cityBoundsCte()},
+  ${candidateWorkersCte()},
+  ${locatedUsersCte()},
+  ${appActiveUsersCte()}
+  SELECT
+    uniqExact(user_id) AS app_active_users
+  FROM app_active_users
+  FORMAT JSONEachRow`;
+}
+
+function summaryResponsesQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${bookedUsersCte()},
+  ${completedUsersCte()}
+  SELECT
+    (SELECT uniqExact(user_id) FROM booked_users) AS booked_users,
+    (SELECT uniqExact(user_id) FROM completed_users) AS completed_users
+  FORMAT JSONEachRow`;
+}
+
+function summaryRatioQuery(active30dWhereSql) {
+  return `WITH ${cityWorkplacesCte()},
+  ${cityBoundsCte()},
+  ${candidateWorkersCte()},
+  ${locatedUsersCte()},
+  ${daily30dRatioCte(active30dWhereSql)}
+  SELECT
+    ifNull((SELECT avg_ratio FROM daily_30d_ratio), 0) AS avg_daily_30d_active_users_per_request
+  FORMAT JSONEachRow`;
+}
+
+function compositionQuery(whereSql, dimensionExpression) {
+  return `WITH ${filteredOrdersCte(whereSql)}
+  SELECT
+    ${dimensionExpression} AS label,
+    sum(amount) AS ordered_shifts
+  FROM filtered_orders
+  GROUP BY label
+  HAVING label != ''
+  ORDER BY ordered_shifts DESC, label
+  LIMIT 8
+  FORMAT JSONEachRow`;
+}
+
+function rateBucketsQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)}
+  SELECT
+    multiIf(
+      salary_per_hour < 250, '0-250',
+      salary_per_hour < 350, '250-350',
+      salary_per_hour < 450, '350-450',
+      '450+'
+    ) AS label,
+    sum(amount) AS ordered_shifts,
+    avgIf(salary_per_hour, salary_per_hour > 0) AS avg_salary_per_hour
+  FROM filtered_orders
+  GROUP BY label
+  ORDER BY label
+  FORMAT JSONEachRow`;
+}
+
+function dynamicsQuery(whereSql) {
+  return `WITH ${cityWorkplacesCte()},
+  ${cityBoundsCte()},
+  ${candidateWorkersCte()},
+  ${locatedUsersCte()},
+  ${filteredOrdersCte(whereSql)},
+  daily_orders AS (
+    SELECT
+      period,
+      sum(amount) AS ordered_shifts,
+      countDistinctIf(order_id, is_active_request) AS active_order_requests
+    FROM filtered_orders
+    GROUP BY period
+  ),
+  daily_app AS (
+    SELECT
+      toString(toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime))) AS period,
+      uniqExact(ifNull(s.profile_id, '')) AS app_active_users
+    FROM appmetrica_sessions AS s
+    INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {to:DateTime}
+    GROUP BY period
+  ),
+  daily_booked AS (
+    SELECT
+      fo.period AS period,
+      uniqExact(worker.user) AS booked_users
+    FROM mg_job_history AS history
+    INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+    INNER JOIN mg_workers AS worker ON history.worker = worker._id
+    WHERE ifNull(history.status, '') = 'booked'
+      AND ifNull(worker.user, '') != ''
+    GROUP BY period
+  ),
+  daily_completed AS (
+    SELECT
+      fo.period AS period,
+      uniqExact(worker.user) AS completed_users
+    FROM mg_jobs AS job
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
+    INNER JOIN mg_workers AS worker ON job.worker = worker._id
+    WHERE ifNull(job.deleted, 0) = 0
+      AND ifNull(job.status, '') = 'confirmed'
+      AND ifNull(worker.user, '') != ''
+    GROUP BY period
+  )
+  SELECT
+    orders.period AS period,
+    orders.ordered_shifts AS ordered_shifts,
+    ifNull(app.app_active_users, 0) AS app_active_users,
+    ifNull(booked.booked_users, 0) AS booked_users,
+    ifNull(completed.completed_users, 0) AS completed_users,
+    if(orders.active_order_requests > 0, ifNull(app.app_active_users, 0) / orders.active_order_requests, 0) AS active_users_per_request
+  FROM daily_orders AS orders
+  LEFT JOIN daily_app AS app ON app.period = orders.period
+  LEFT JOIN daily_booked AS booked ON booked.period = orders.period
+  LEFT JOIN daily_completed AS completed ON completed.period = orders.period
+  ORDER BY orders.period
+  FORMAT JSONEachRow`;
+}
+
+function cityAnalysisEmptyDatasets(overrides = {}) {
+  return {
+    cityOptionRows: [],
+    filterOptionRows: [],
+    cityCoordinateRows: [],
+    summaryRows: [],
+    brandRows: [],
+    professionRows: [],
+    rateRows: [],
+    dynamicRows: [],
+    ...overrides
+  };
+}
+
+function filterOptionsBaseFilters(filters) {
+  return {
+    ...filters,
+    client: [],
+    profession: [],
+    orderType: [],
+    jobStatus: [],
+    contractor: [],
+    salaryFrom: null,
+    salaryTo: null,
+    includeDeletedOrders: false,
+    includeHiddenOrders: false
+  };
+}
+
+async function loadCityOptionRows(client, filters, cache) {
+  return readThroughCache(cache, cacheKeyForFilters('city-options', filters), () =>
+    client.queryJSONEachRow(cityOptionsQuery(), periodParams(filters), 'city analysis city options')
+  );
+}
+
+async function loadFilterOptionRows(client, filters, cache) {
+  const optionFilters = filterOptionsBaseFilters(filters);
+  const { params, whereSql } = paramsAndWhere(optionFilters);
+
+  return readThroughCache(cache, cacheKeyForFilters('filter-options', optionFilters), () =>
+    client.queryJSONEachRow(filterOptionsQuery(whereSql), params, 'city analysis filter options')
+  );
+}
+
+function markProgressiveDashboard(dashboard) {
+  return {
+    ...dashboard,
+    context: {
+      ...dashboard.context,
+      isProgressive: true
+    }
+  };
+}
+
+async function loadCityAnalysisDashboardShell(client, input = {}, now = new Date(), options = {}) {
+  const filters = normalizeCityAnalysisFilters(input, now);
+  const cityOptionRows = await loadCityOptionRows(client, filters, options.cache);
+
+  if (filters.city === '') {
+    return markProgressiveDashboard(
+      mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ cityOptionRows }))
+    );
+  }
+
+  const filterOptionRows = await loadFilterOptionRows(client, filters, options.cache);
+
+  return markProgressiveDashboard(
+    mergeCityAnalysisRows(
+      filters,
+      cityAnalysisEmptyDatasets({
+        cityOptionRows,
+        filterOptionRows
+      })
+    )
+  );
+}
+
+function assertCityAnalysisSection(section) {
+  if (CITY_ANALYSIS_SECTIONS.has(section)) {
+    return;
+  }
+
+  const error = new Error(`Unknown city analysis section: ${section}`);
+  error.status = 400;
+  throw error;
+}
+
+async function loadCityAnalysisDashboardSection(client, input = {}, section, now = new Date(), options = {}) {
+  assertCityAnalysisSection(section);
+
+  const filters = normalizeCityAnalysisFilters(input, now);
+
+  if (filters.city === '') {
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets());
+  }
+
+  const { params, whereSql, active30dWhereSql } = paramsAndWhere(filters);
+  const cache = options.cache;
+
+  if (section === 'summary-demand') {
+    const summaryRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
+      client.queryJSONEachRow(summaryDemandQuery(whereSql), params, 'city analysis summary demand')
+    );
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ summaryRows }));
+  }
+
+  if (section === 'summary-base') {
+    const [cityCoordinateRows, summaryRows] = await Promise.all([
+      readThroughCache(cache, cacheKeyForFilters('city-coordinates', { ...filters, client: [] }), () =>
+        client.queryJSONEachRow(cityCoordinatesQuery(), params, 'city analysis city coordinates')
+      ),
+      readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
+        client.queryJSONEachRow(summaryBaseQuery(), params, 'city analysis summary base')
+      )
+    ]);
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ cityCoordinateRows, summaryRows }));
+  }
+
+  if (section === 'summary-app') {
+    const summaryRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
+      client.queryJSONEachRow(summaryAppQuery(), params, 'city analysis summary app')
+    );
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ summaryRows }));
+  }
+
+  if (section === 'summary-responses') {
+    const summaryRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
+      client.queryJSONEachRow(summaryResponsesQuery(whereSql), params, 'city analysis summary responses')
+    );
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ summaryRows }));
+  }
+
+  if (section === 'summary-ratio') {
+    const summaryRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
+      client.queryJSONEachRow(summaryRatioQuery(active30dWhereSql), params, 'city analysis summary ratio')
+    );
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ summaryRows }));
+  }
+
+  if (section === 'composition') {
+    const rows = await readThroughCache(cache, cacheKeyForFilters(section, filters), async () => {
+      const [brandRows, professionRows, rateRows] = await Promise.all([
+        client.queryJSONEachRow(compositionQuery(whereSql, 'brand'), params, 'city analysis brands'),
+        client.queryJSONEachRow(compositionQuery(whereSql, 'profession'), params, 'city analysis professions'),
+        client.queryJSONEachRow(rateBucketsQuery(whereSql), params, 'city analysis rate buckets')
+      ]);
+
+      return { brandRows, professionRows, rateRows };
+    });
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets(rows));
+  }
+
+  const dynamicRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
+    client.queryJSONEachRow(dynamicsQuery(whereSql), params, 'city analysis dynamics')
+  );
+
+  return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ dynamicRows }));
+}
+
+async function loadCityAnalysisDashboard(client, input = {}, now = new Date()) {
+  const filters = normalizeCityAnalysisFilters(input, now);
+  const cityOptionRows = await client.queryJSONEachRow(
+    cityOptionsQuery(),
+    periodParams(filters),
+    'city analysis city options'
+  );
+
+  if (filters.city === '') {
+    return mergeCityAnalysisRows(filters, {
+      cityOptionRows,
+      filterOptionRows: [],
+      cityCoordinateRows: [],
+      summaryRows: [],
+      brandRows: [],
+      professionRows: [],
+      rateRows: [],
+      dynamicRows: []
+    });
+  }
+
+  const optionFilters = {
+    ...filters,
+    client: [],
+    profession: [],
+    orderType: [],
+    jobStatus: [],
+    contractor: [],
+    salaryFrom: null,
+    salaryTo: null,
+    includeDeletedOrders: false,
+    includeHiddenOrders: false
+  };
+  const { params: optionParams, whereSql: optionWhereSql } = paramsAndWhere(optionFilters);
+  const { params, whereSql, active30dWhereSql } = paramsAndWhere(filters);
+  const [
+    filterOptionRows,
+    cityCoordinateRows,
+    summaryRows,
+    brandRows,
+    professionRows,
+    rateRows,
+    dynamicRowsResult
+  ] = await Promise.all([
+    client.queryJSONEachRow(filterOptionsQuery(optionWhereSql), optionParams, 'city analysis filter options'),
+    client.queryJSONEachRow(cityCoordinatesQuery(), params, 'city analysis city coordinates'),
+    client.queryJSONEachRow(summaryQuery(whereSql, active30dWhereSql), params, 'city analysis summary'),
+    client.queryJSONEachRow(compositionQuery(whereSql, 'brand'), params, 'city analysis brands'),
+    client.queryJSONEachRow(compositionQuery(whereSql, 'profession'), params, 'city analysis professions'),
+    client.queryJSONEachRow(rateBucketsQuery(whereSql), params, 'city analysis rate buckets'),
+    client.queryJSONEachRow(dynamicsQuery(whereSql), params, 'city analysis dynamics')
+  ]);
+
+  return mergeCityAnalysisRows(filters, {
+    cityOptionRows,
+    filterOptionRows,
+    cityCoordinateRows,
+    summaryRows,
+    brandRows,
+    professionRows,
+    rateRows,
+    dynamicRows: dynamicRowsResult
+  });
+}
+
+module.exports = {
+  CITY_ANALYSIS_SECTIONS,
+  cityAnalysisCachePathFromEnv,
+  createCityAnalysisCache,
+  loadCityAnalysisDashboardSection,
+  loadCityAnalysisDashboardShell,
+  mergeCityAnalysisRows,
+  normalizeCityAnalysisFilters,
+  loadCityAnalysisDashboard
+};

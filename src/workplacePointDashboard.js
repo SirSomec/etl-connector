@@ -1,0 +1,820 @@
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
+const FILTER_OPTION_KEYS = ['profession', 'orderType', 'jobStatus'];
+const RADIUS_KM = [5, 10, 15, 20];
+const WORKPLACE_POINT_SECTION_NAMES = ['summary', 'charts', 'radius'];
+const WORKPLACE_POINT_SECTIONS = new Set(WORKPLACE_POINT_SECTION_NAMES);
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatDateUTC(date) {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+function formatDateTimeUTC(date) {
+  return `${formatDateUTC(date)} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`;
+}
+
+function parseDateOnly(value) {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) {
+    return null;
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  if (Number.isNaN(date.getTime()) || formatDateUTC(date) !== value) {
+    return null;
+  }
+
+  return date;
+}
+
+function addDaysUTC(date, days) {
+  const next = new Date(date.getTime());
+
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function firstDayOfMonthUTC(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function buildDateKeys(from, to) {
+  const start = parseDateOnly(from);
+  const end = parseDateOnly(to);
+  const dates = [];
+
+  for (let current = start; current.getTime() <= end.getTime(); current = addDaysUTC(current, 1)) {
+    dates.push(formatDateUTC(current));
+  }
+
+  return dates;
+}
+
+function toDateTimeParam(dateOnly) {
+  return `${dateOnly} 00:00:00`;
+}
+
+function cleanText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function cleanValues(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const values = [];
+  const seen = new Set();
+
+  for (const rawValue of rawValues) {
+    const text = cleanText(rawValue);
+
+    if (text === '' || seen.has(text)) {
+      continue;
+    }
+
+    seen.add(text);
+    values.push(text);
+  }
+
+  return values;
+}
+
+function cleanBooleanFlag(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+
+  return rawValues.some((rawValue) => {
+    const text = cleanText(rawValue).toLowerCase();
+
+    return text === '1' || text === 'true' || text === 'on' || text === 'yes';
+  });
+}
+
+function numberValue(value) {
+  const number = Number(value || 0);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function nullableNumberValue(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : null;
+}
+
+function percent(numerator, denominator) {
+  const bottom = numberValue(denominator);
+
+  if (bottom <= 0) {
+    return 0;
+  }
+
+  return (numberValue(numerator) / bottom) * 100;
+}
+
+function normalizeWorkplacePointFilters(input = {}, now = new Date()) {
+  const today = parseDateOnly(formatDateUTC(now));
+  const defaultFromDate = firstDayOfMonthUTC(today);
+  const requestedFrom = parseDateOnly(input.from);
+  const requestedTo = parseDateOnly(input.to);
+  let fromDate = requestedFrom || defaultFromDate;
+  let toDate = requestedTo || today;
+
+  if (fromDate.getTime() > toDate.getTime()) {
+    fromDate = defaultFromDate;
+    toDate = today;
+  }
+
+  const from = formatDateUTC(fromDate);
+  const to = formatDateUTC(toDate);
+  const toExclusive = formatDateUTC(addDaysUTC(toDate, 1));
+  const activeSessionToDate = new Date(now.getTime());
+  const activeSessionFromDate = new Date(now.getTime());
+
+  activeSessionFromDate.setUTCDate(activeSessionFromDate.getUTCDate() - 30);
+
+  return {
+    workplaceId: cleanText(input.workplaceId),
+    from,
+    to,
+    fromDateTime: toDateTimeParam(from),
+    toExclusiveDateTime: toDateTimeParam(toExclusive),
+    activeSessionFromDateTime: formatDateTimeUTC(activeSessionFromDate),
+    activeSessionToDateTime: formatDateTimeUTC(activeSessionToDate),
+    rangeDays: buildDateKeys(from, to).length,
+    profession: cleanValues(input.profession),
+    orderType: cleanValues(input.orderType).filter((value) => ALLOWED_ORDER_TYPES.has(value)),
+    jobStatus: cleanValues(input.jobStatus),
+    includeDeletedOrders: cleanBooleanFlag(input.includeDeletedOrders),
+    includeHiddenOrders: cleanBooleanFlag(input.includeHiddenOrders)
+  };
+}
+
+function escapeClickHouseString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
+}
+
+function emptyFilterOptions() {
+  return FILTER_OPTION_KEYS.reduce((options, key) => {
+    options[key] = [];
+    return options;
+  }, {});
+}
+
+function filterOptionsFromRows(rows) {
+  const options = emptyFilterOptions();
+  const seenByKey = FILTER_OPTION_KEYS.reduce((seen, key) => {
+    seen[key] = new Set();
+    return seen;
+  }, {});
+
+  for (const row of rows) {
+    const key = String(row.filter || '');
+    const value = cleanText(row.value);
+
+    if (!Object.prototype.hasOwnProperty.call(options, key) || value === '') {
+      continue;
+    }
+
+    if (key === 'orderType' && !ALLOWED_ORDER_TYPES.has(value)) {
+      continue;
+    }
+
+    if (seenByKey[key].has(value)) {
+      continue;
+    }
+
+    seenByKey[key].add(value);
+    options[key].push(value);
+  }
+
+  return options;
+}
+
+function restrictFiltersToOptions(filters, filterOptions) {
+  const restricted = { ...filters };
+
+  for (const key of FILTER_OPTION_KEYS) {
+    const allowed = new Set(filterOptions[key] || []);
+
+    restricted[key] = filters[key].filter((value) => allowed.has(value));
+  }
+
+  return restricted;
+}
+
+function titleForPoint(row) {
+  return String(row.workplace_title || row.technical_name || row.workplace_id || 'Без названия');
+}
+
+function compactAddress(row) {
+  return [row.city, row.street].map((part) => String(part || '').trim()).filter(Boolean).join(', ');
+}
+
+function mergeWorkplacePointRows(filters, datasets) {
+  const metadataRow = (datasets.metadataRows || [])[0] || {};
+  const summaryRow = (datasets.summaryRows || [])[0] || {};
+  const orderedShifts = numberValue(summaryRow.ordered_shifts);
+  const completedShifts = numberValue(summaryRow.completed_shifts);
+  const activeDays = numberValue(summaryRow.active_days);
+  const filterOptions = filterOptionsFromRows(datasets.filterOptionRows || []);
+  const radiusWorkers = RADIUS_KM.reduce((values, radius) => {
+    values[radius] = 0;
+    return values;
+  }, {});
+  const radiusActiveSessionWorkers = RADIUS_KM.reduce((values, radius) => {
+    values[radius] = 0;
+    return values;
+  }, {});
+
+  for (const row of datasets.radiusRows || []) {
+    const radius = numberValue(row.radius_km);
+
+    if (RADIUS_KM.includes(radius)) {
+      radiusWorkers[radius] = numberValue(row.workers);
+      radiusActiveSessionWorkers[radius] = numberValue(row.active_session_workers);
+    }
+  }
+
+  const dailyRows = (datasets.dailyRows || []).map((row) => {
+    const dailyOrderedShifts = numberValue(row.ordered_shifts);
+    const dailyCompletedShifts = numberValue(row.completed_shifts);
+
+    return {
+      period: String(row.period || ''),
+      orderedShifts: dailyOrderedShifts,
+      completedShifts: dailyCompletedShifts,
+      slaPercent: percent(dailyCompletedShifts, dailyOrderedShifts),
+      dropoffs24h: numberValue(row.dropoffs_24h),
+      orderLeadAvgMinutes: nullableNumberValue(row.avg_order_lead_minutes),
+      orderLeadMinMinutes: nullableNumberValue(row.min_order_lead_minutes)
+    };
+  });
+  const totalProfessionOrders = (datasets.professionRows || []).reduce(
+    (total, row) => total + numberValue(row.ordered_shifts),
+    0
+  );
+  const professionRows = (datasets.professionRows || []).map((row) => {
+    const professionOrders = numberValue(row.ordered_shifts);
+
+    return {
+      profession: String(row.profession || 'Без специальности'),
+      orderedShifts: professionOrders,
+      sharePercent: percent(professionOrders, totalProfessionOrders)
+    };
+  });
+
+  return {
+    filters,
+    point: {
+      workplaceId: String(metadataRow.workplace_id || filters.workplaceId),
+      title: titleForPoint(metadataRow),
+      clientTitle: String(metadataRow.client_title || ''),
+      city: String(metadataRow.city || ''),
+      region: String(metadataRow.region || ''),
+      address: compactAddress(metadataRow)
+    },
+    filterOptions,
+    summary: {
+      orderedShifts,
+      completedShifts,
+      slaPercent: percent(completedShifts, orderedShifts),
+      stabilityPercent: percent(activeDays, filters.rangeDays),
+      activeDays,
+      rangeDays: filters.rangeDays,
+      uniqueCompletedWorkers: numberValue(summaryRow.unique_completed_workers),
+      uniqueBookedWorkers: numberValue(summaryRow.unique_booked_workers),
+      dropoffs24h: numberValue(summaryRow.dropoffs_24h),
+      radiusWorkers,
+      radiusActiveSessionWorkers
+    },
+    dailyRows,
+    professionRows
+  };
+}
+
+function baseParams(filters) {
+  return {
+    param_workplace_id: filters.workplaceId,
+    param_from: filters.fromDateTime,
+    param_to: filters.toExclusiveDateTime,
+    param_active_session_from: filters.activeSessionFromDateTime,
+    param_active_session_to: filters.activeSessionToDateTime
+  };
+}
+
+function addOptionalWhere(filters, where, params) {
+  if (filters.profession.length > 0) {
+    where.push("if(ifNull(p.caption, '') = '', o.spec, p.caption) IN {professions:Array(String)}");
+    params.param_professions = serializeStringArray(filters.profession);
+  }
+  if (filters.orderType.length > 0) {
+    where.push('o.type IN {order_types:Array(String)}');
+    params.param_order_types = serializeStringArray(filters.orderType);
+  }
+  if (filters.jobStatus.length > 0) {
+    where.push(`o._id IN (
+      SELECT DISTINCT j.source
+      FROM mg_jobs AS j
+      WHERE j.deleted = 0
+        AND ifNull(j.source, '') != ''
+        AND ifNull(j.status, '') IN {job_statuses:Array(String)}
+    )`);
+    params.param_job_statuses = serializeStringArray(filters.jobStatus);
+  }
+}
+
+function orderWhereForFilters(filters, params) {
+  const where = [
+    'o.workplace = {workplace_id:String}',
+    'o.start >= {from:DateTime}',
+    'o.start < {to:DateTime}',
+    'ifNull(o.amount, 0) > 0'
+  ];
+
+  if (!filters.includeDeletedOrders) {
+    where.unshift('ifNull(o.deleted, 0) = 0');
+  }
+
+  if (!filters.includeHiddenOrders) {
+    where.unshift('ifNull(o.is_hidden, 0) = 0');
+  }
+
+  addOptionalWhere(filters, where, params);
+
+  return where.join('\n    AND ');
+}
+
+function metadataQuery() {
+  return `SELECT
+    w._id AS workplace_id,
+    ifNull(w.title, '') AS workplace_title,
+    ifNull(w.technical_name, '') AS technical_name,
+    ifNull(c.title, '') AS client_title,
+    ifNull(w.address__city, '') AS city,
+    ifNull(w.address__region, '') AS region,
+    ifNull(w.address__street, '') AS street
+  FROM mg_workplaces AS w
+  LEFT JOIN mg_clients AS c ON w.client = c._id
+  WHERE w._id = {workplace_id:String}
+  LIMIT 1
+  FORMAT JSONEachRow`;
+}
+
+function filterOptionsQuery(filters) {
+  const params = baseParams(filters);
+  const whereSql = orderWhereForFilters(
+    {
+      ...filters,
+      profession: [],
+      orderType: [],
+      jobStatus: []
+    },
+    params
+  );
+
+  return {
+    params,
+    query: `${[
+      `SELECT
+    'profession' AS filter,
+    if(ifNull(p.caption, '') = '', o.spec, p.caption) AS value
+  FROM mg_orders AS o
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  WHERE ${whereSql}
+  GROUP BY value
+  HAVING value != ''`,
+      `SELECT
+    'orderType' AS filter,
+    ifNull(o.type, '') AS value
+  FROM mg_orders AS o
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  WHERE ${whereSql}
+  GROUP BY value
+  HAVING value != ''`,
+      `SELECT
+    'jobStatus' AS filter,
+    ifNull(j.status, '') AS value
+  FROM mg_orders AS o
+  INNER JOIN mg_jobs AS j ON j.source = o._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  WHERE ${whereSql}
+    AND j.deleted = 0
+  GROUP BY value
+  HAVING value != ''`
+    ].join('\n  UNION ALL\n  ')}
+  ORDER BY filter, value
+  FORMAT JSONEachRow`
+  };
+}
+
+function filteredOrdersCte(whereSql) {
+  return `filtered_orders AS (
+    SELECT
+      o._id AS order_id,
+      toString(toDate(o.start)) AS period,
+      o.start AS order_start,
+      o.createdAt AS order_created_at,
+      if(
+        o.createdAt IS NOT NULL
+        AND o.start IS NOT NULL
+        AND o.createdAt <= o.start,
+        dateDiff('minute', o.createdAt, o.start),
+        NULL
+      ) AS order_lead_minutes,
+      ifNull(o.amount, 0) AS amount,
+      if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession
+    FROM mg_orders AS o
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    WHERE ${whereSql}
+  )`;
+}
+
+function shiftFactsCte() {
+  return `shift_facts AS (
+    SELECT
+      j._id AS job_id,
+      j.source AS order_id,
+      j.worker AS worker,
+      j.status AS status,
+      j.start AS start,
+      ifNull(j.cancellation_reason, '') AS cancellation_reason,
+      ifNull(j.failure_reason, '') AS failure_reason
+    FROM mg_jobs AS j
+    INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
+    WHERE j.deleted = 0
+  )`;
+}
+
+function dropEventsCte() {
+  return `drop_events AS (
+    SELECT
+      h.job AS job_id,
+      minIf(
+        coalesce(h.createdAt, h.updatedAt),
+        (
+          ifNull(h.status, '') IN ('cancelled', 'failed')
+          OR ifNull(h.cancellation_reason, '') != ''
+          OR ifNull(h.failure_reason, '') != ''
+        )
+        AND (
+          ifNull(h.initiator, '') = 'worker'
+          OR ifNull(h.status, '') = 'failed'
+          OR ifNull(h.failure_reason, '') != ''
+        )
+      ) AS drop_at
+    FROM mg_job_history AS h
+    INNER JOIN shift_facts AS sf ON h.job = sf.job_id
+    GROUP BY h.job
+  )`;
+}
+
+function bookedWorkersCte() {
+  return `booked_workers AS (
+    SELECT
+      uniqExact(ifNull(h.worker, '')) AS unique_booked_workers
+    FROM mg_job_history AS h
+    INNER JOIN shift_facts AS sf ON h.job = sf.job_id
+    WHERE ifNull(h.status, '') = 'booked'
+      AND ifNull(h.worker, '') != ''
+  )`;
+}
+
+function summaryQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${shiftFactsCte()},
+  ${dropEventsCte()},
+  ${bookedWorkersCte()},
+  order_summary AS (
+    SELECT
+      sum(amount) AS ordered_shifts,
+      countDistinct(period) AS active_days
+    FROM filtered_orders
+  ),
+  shift_summary AS (
+    SELECT
+      countIf(status = 'confirmed') AS completed_shifts,
+      uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_completed_workers,
+      uniqExactIf(
+        sf.job_id,
+        de.drop_at IS NOT NULL
+        AND sf.start IS NOT NULL
+        AND de.drop_at >= sf.start - INTERVAL 24 HOUR
+        AND de.drop_at <= sf.start
+      ) AS dropoffs_24h
+    FROM shift_facts AS sf
+    LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
+  )
+  SELECT
+    os.ordered_shifts AS ordered_shifts,
+    ifNull(ss.completed_shifts, 0) AS completed_shifts,
+    os.active_days AS active_days,
+    ifNull(ss.unique_completed_workers, 0) AS unique_completed_workers,
+    ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
+    ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
+  FROM order_summary AS os
+  CROSS JOIN shift_summary AS ss
+  CROSS JOIN booked_workers AS bw
+  FORMAT JSONEachRow`;
+}
+
+function dailyQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${shiftFactsCte()},
+  ${dropEventsCte()},
+  order_daily AS (
+    SELECT
+      period,
+      sum(amount) AS ordered_shifts,
+      avgOrNull(order_lead_minutes) AS avg_order_lead_minutes,
+      minOrNull(order_lead_minutes) AS min_order_lead_minutes
+    FROM filtered_orders
+    GROUP BY period
+  ),
+  shift_daily AS (
+    SELECT
+      toString(toDate(sf.start)) AS period,
+      countIf(sf.status = 'confirmed') AS completed_shifts,
+      uniqExactIf(
+        sf.job_id,
+        de.drop_at IS NOT NULL
+        AND sf.start IS NOT NULL
+        AND de.drop_at >= sf.start - INTERVAL 24 HOUR
+        AND de.drop_at <= sf.start
+      ) AS dropoffs_24h
+    FROM shift_facts AS sf
+    LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
+    GROUP BY period
+  )
+  SELECT
+    od.period AS period,
+    od.ordered_shifts AS ordered_shifts,
+    od.avg_order_lead_minutes AS avg_order_lead_minutes,
+    od.min_order_lead_minutes AS min_order_lead_minutes,
+    ifNull(sd.completed_shifts, 0) AS completed_shifts,
+    ifNull(sd.dropoffs_24h, 0) AS dropoffs_24h
+  FROM order_daily AS od
+  LEFT JOIN shift_daily AS sd ON od.period = sd.period
+  ORDER BY od.period
+  FORMAT JSONEachRow`;
+}
+
+function professionsQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)}
+  SELECT
+    profession AS profession,
+    sum(amount) AS ordered_shifts
+  FROM filtered_orders
+  GROUP BY profession
+  ORDER BY ordered_shifts DESC, profession
+  FORMAT JSONEachRow`;
+}
+
+function radiusWorkersQuery() {
+  return `WITH workplace AS (
+    SELECT location__coordinates AS workplace_coordinates
+    FROM mg_workplaces
+    WHERE _id = {workplace_id:String}
+      AND length(location__coordinates) >= 2
+    LIMIT 1
+  ),
+  radii AS (
+    SELECT arrayJoin([5, 10, 15, 20]) AS radius_km
+  ),
+  active_workers AS (
+    SELECT
+      _id AS worker_id,
+      user AS user_id,
+      location__coordinates AS worker_coordinates
+    FROM mg_workers
+    WHERE length(location__coordinates) >= 2
+      AND ifNull(deleted, 0) = 0
+      AND ifNull(status, '') IN ('ready', 'worked', 'booked')
+  ),
+  active_session_users AS (
+    SELECT DISTINCT ifNull(profile_id, '') AS user_id
+    FROM appmetrica_sessions
+    WHERE ifNull(profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_session_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_session_to:DateTime}
+  )
+  SELECT
+    r.radius_km AS radius_km,
+    uniqExactIf(
+      aw.worker_id,
+      greatCircleDistance(
+        w.workplace_coordinates[1],
+        w.workplace_coordinates[2],
+        aw.worker_coordinates[1],
+        aw.worker_coordinates[2]
+      ) <= r.radius_km * 1000
+    ) AS workers,
+    uniqExactIf(
+      aw.worker_id,
+      greatCircleDistance(
+        w.workplace_coordinates[1],
+        w.workplace_coordinates[2],
+        aw.worker_coordinates[1],
+        aw.worker_coordinates[2]
+      ) <= r.radius_km * 1000
+      AND asu.user_id != ''
+    ) AS active_session_workers
+  FROM radii AS r
+  CROSS JOIN workplace AS w
+  CROSS JOIN active_workers AS aw
+  LEFT JOIN active_session_users AS asu ON aw.user_id = asu.user_id
+  GROUP BY r.radius_km
+  ORDER BY r.radius_km
+  FORMAT JSONEachRow`;
+}
+
+function paramsAndWhere(filters) {
+  const params = baseParams(filters);
+  const whereSql = orderWhereForFilters(filters, params);
+
+  return { params, whereSql };
+}
+
+function httpError(status, message) {
+  const error = new Error(message);
+
+  error.status = status;
+  return error;
+}
+
+function assertWorkplacePointSection(section) {
+  if (WORKPLACE_POINT_SECTIONS.has(section)) {
+    return;
+  }
+
+  throw httpError(400, `Unknown workplace point section: ${section}`);
+}
+
+async function readThroughCache(cache, key, loader) {
+  if (!cache || typeof cache.getOrLoad !== 'function') {
+    return loader();
+  }
+
+  return cache.getOrLoad(key, loader);
+}
+
+function cacheKeyForWorkplacePointSection(section, filters) {
+  return JSON.stringify({
+    board: 'workplace-point',
+    section,
+    filters: {
+      workplaceId: filters.workplaceId,
+      from: filters.from,
+      to: filters.to,
+      activeSessionFromDateTime: filters.activeSessionFromDateTime,
+      activeSessionToDateTime: filters.activeSessionToDateTime,
+      profession: filters.profession,
+      orderType: filters.orderType,
+      jobStatus: filters.jobStatus,
+      includeDeletedOrders: filters.includeDeletedOrders,
+      includeHiddenOrders: filters.includeHiddenOrders
+    }
+  });
+}
+
+function metadataRowsForSection(filters) {
+  return [{ workplace_id: filters.workplaceId }];
+}
+
+async function loadWorkplacePointSectionRows(client, filters, section) {
+  assertWorkplacePointSection(section);
+
+  const { params, whereSql } = paramsAndWhere(filters);
+
+  if (section === 'summary') {
+    const summaryRows = await client.queryJSONEachRow(
+      summaryQuery(whereSql),
+      params,
+      'workplace point summary'
+    );
+
+    return { summaryRows };
+  }
+
+  if (section === 'charts') {
+    const [dailyRows, professionRows] = await Promise.all([
+      client.queryJSONEachRow(dailyQuery(whereSql), params, 'workplace point daily'),
+      client.queryJSONEachRow(professionsQuery(whereSql), params, 'workplace point professions')
+    ]);
+
+    return { dailyRows, professionRows };
+  }
+
+  const radiusRows = await client.queryJSONEachRow(
+    radiusWorkersQuery(),
+    params,
+    'workplace point radius workers'
+  );
+
+  return { radiusRows };
+}
+
+function mergeWorkplacePointSection(filters, sectionRows, shellRows = {}) {
+  return mergeWorkplacePointRows(filters, {
+    metadataRows: shellRows.metadataRows || metadataRowsForSection(filters),
+    filterOptionRows: shellRows.filterOptionRows || [],
+    ...sectionRows
+  });
+}
+
+async function loadWorkplacePointDashboardShell(client, input = {}, now = new Date()) {
+  let filters = normalizeWorkplacePointFilters(input, now);
+
+  if (filters.workplaceId === '') {
+    throw httpError(400, 'Missing workplaceId');
+  }
+
+  const metadataRows = await client.queryJSONEachRow(
+    metadataQuery(),
+    baseParams(filters),
+    'workplace point metadata'
+  );
+
+  if (metadataRows.length === 0) {
+    throw httpError(404, `Workplace not found: ${filters.workplaceId}`);
+  }
+
+  const filterOptionsRequest = filterOptionsQuery(filters);
+  const filterOptionRows = await client.queryJSONEachRow(
+    filterOptionsRequest.query,
+    filterOptionsRequest.params,
+    'workplace point filter options'
+  );
+  const filterOptions = filterOptionsFromRows(filterOptionRows);
+
+  filters = restrictFiltersToOptions(filters, filterOptions);
+
+  return {
+    ...mergeWorkplacePointRows(filters, {
+      metadataRows,
+      filterOptionRows
+    }),
+    _metadataRows: metadataRows,
+    _filterOptionRows: filterOptionRows
+  };
+}
+
+async function loadWorkplacePointDashboardSection(
+  client,
+  input = {},
+  section,
+  now = new Date(),
+  options = {}
+) {
+  assertWorkplacePointSection(section);
+
+  const filters = normalizeWorkplacePointFilters(input, now);
+
+  if (filters.workplaceId === '') {
+    throw httpError(400, 'Missing workplaceId');
+  }
+
+  const sectionRows = await readThroughCache(
+    options.cache,
+    cacheKeyForWorkplacePointSection(section, filters),
+    () => loadWorkplacePointSectionRows(client, filters, section)
+  );
+
+  return mergeWorkplacePointSection(filters, sectionRows);
+}
+
+async function loadWorkplacePointDashboard(client, input = {}, now = new Date()) {
+  const shell = await loadWorkplacePointDashboardShell(client, input, now);
+  const sectionRows = await Promise.all(
+    WORKPLACE_POINT_SECTION_NAMES.map((section) =>
+      loadWorkplacePointSectionRows(client, shell.filters, section)
+    )
+  );
+
+  return mergeWorkplacePointSection(
+    shell.filters,
+    Object.assign({}, ...sectionRows),
+    {
+      metadataRows: shell._metadataRows,
+      filterOptionRows: shell._filterOptionRows
+    }
+  );
+}
+
+module.exports = {
+  WORKPLACE_POINT_SECTIONS,
+  loadWorkplacePointDashboard,
+  loadWorkplacePointDashboardSection,
+  loadWorkplacePointDashboardShell,
+  mergeWorkplacePointRows,
+  normalizeWorkplacePointFilters
+};

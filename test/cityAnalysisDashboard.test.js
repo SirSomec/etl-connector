@@ -445,6 +445,87 @@ test('loadCityAnalysisDashboardSection keeps geo base summary separate from app 
   assert.equal(calls[1].query.includes('greatCircleDistance'), true);
 });
 
+test('city geo base sections locate users from filtered demand workplaces', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'city analysis city coordinates') {
+        return [{ workplace_id: 'wp1' }];
+      }
+
+      if (operation === 'city analysis summary base') {
+        return [{
+          total_located_users: 120,
+          ready_located_users: 80,
+          ready_status_located_users: 20,
+          booked_status_located_users: 30,
+          worked_status_located_users: 50
+        }];
+      }
+
+      if (operation === 'city analysis summary app') {
+        return [{ app_active_users: 25 }];
+      }
+
+      if (operation === 'city analysis summary ratio') {
+        return [{ avg_daily_30d_active_users_per_request: 2.4 }];
+      }
+
+      if (operation === 'city analysis dynamics') {
+        return [{
+          period: '2026-06-01',
+          ordered_shifts: 10,
+          app_active_users: 4,
+          booked_users: 3,
+          completed_users: 2,
+          active_users_per_request: 1.3
+        }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const input = {
+    city: 'Москва',
+    from: '2026-06-01',
+    to: '2026-06-03',
+    client: 'Brand A'
+  };
+
+  for (const section of ['summary-base', 'summary-app', 'summary-ratio', 'dynamics']) {
+    await loadCityAnalysisDashboardSection(
+      client,
+      input,
+      section,
+      new Date('2026-06-15T12:00:00.000Z')
+    );
+  }
+
+  const summaryBaseCall = calls.find((call) => call.operation === 'city analysis summary base');
+  const summaryAppCall = calls.find((call) => call.operation === 'city analysis summary app');
+  const summaryRatioCall = calls.find((call) => call.operation === 'city analysis summary ratio');
+  const dynamicsCall = calls.find((call) => call.operation === 'city analysis dynamics');
+
+  for (const call of [summaryBaseCall, summaryAppCall, dynamicsCall]) {
+    assert.equal(call.query.includes('filtered_orders AS ('), true);
+    assert.equal(call.query.includes('w.location__coordinates AS workplace_coordinates'), true);
+    assert.match(call.query, /raw_city_workplaces AS \([\s\S]*FROM filtered_orders/s);
+    assert.equal(call.query.includes('city_coordinate_bounds AS ('), true);
+    assert.equal(call.query.includes('quantileExact(0.01)'), true);
+    assert.equal(call.query.includes('raw_points < 100'), true);
+    assert.equal(call.query.includes('bounds.lon_margin'), true);
+    assert.equal(call.query.includes('bounds.lat_margin'), true);
+    assert.doesNotMatch(call.query, /bounds\.min_lon\s*-\s*1\b/);
+    assert.doesNotMatch(call.query, /bounds\.min_lat\s*-\s*0\.25\b/);
+  }
+
+  assert.equal(summaryRatioCall.query.includes('active_30d_orders AS ('), true);
+  assert.equal(summaryRatioCall.query.includes('w.location__coordinates AS workplace_coordinates'), true);
+  assert.match(summaryRatioCall.query, /raw_city_workplaces AS \([\s\S]*FROM active_30d_orders/s);
+});
+
 test('loadCityAnalysisDashboard queries city datasets with safe parameters', async () => {
   const calls = [];
   const maliciousCity = 'Москва; DROP TABLE mg_orders';
@@ -582,10 +663,16 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   const cityCoordinatesCall = calls.find((call) => call.operation === 'city analysis city coordinates');
 
   assert.match(cityCoordinatesCall.query, /\bLIMIT\s+1\b/);
+  assert.equal(cityCoordinatesCall.query.includes('FROM mg_orders AS o'), true);
+  assert.equal(cityCoordinatesCall.query.includes('w.location__coordinates'), true);
   assert.match(
     summaryCall.query,
-    /city_workplaces AS \(\s*SELECT\s+DISTINCT\s+location__coordinates AS workplace_coordinates/s
+    /raw_city_workplaces AS \([\s\S]*FROM filtered_orders/s
   );
+  assert.equal(summaryCall.query.includes('w.location__coordinates AS workplace_coordinates'), true);
+  assert.equal(summaryCall.query.includes('city_coordinate_bounds AS ('), true);
+  assert.equal(summaryCall.query.includes('quantileExact(0.01)'), true);
+  assert.equal(summaryCall.query.includes('raw_points < 100'), true);
   assert.match(summaryCall.query, /city_bounds AS \(/);
   assert.doesNotMatch(summaryCall.query, /\bJOIN\s+city_bounds\s+AS\s+bounds\s+ON\b/i);
   assert.doesNotMatch(summaryCall.query, /\bINNER\s+JOIN\s+city_bounds\b/i);
@@ -600,11 +687,11 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   );
   assert.match(
     summaryCall.query,
-    /worker\.location__coordinates\[1\]\s+BETWEEN\s+bounds\.min_lon\s*-\s*1\s+AND\s+bounds\.max_lon\s*\+\s*1/s
+    /worker\.location__coordinates\[1\]\s+BETWEEN\s+bounds\.min_lon\s*-\s*bounds\.lon_margin\s+AND\s+bounds\.max_lon\s*\+\s*bounds\.lon_margin/s
   );
   assert.match(
     summaryCall.query,
-    /worker\.location__coordinates\[2\]\s+BETWEEN\s+bounds\.min_lat\s*-\s*0\.25\s+AND\s+bounds\.max_lat\s*\+\s*0\.25/s
+    /worker\.location__coordinates\[2\]\s+BETWEEN\s+bounds\.min_lat\s*-\s*bounds\.lat_margin\s+AND\s+bounds\.max_lat\s*\+\s*bounds\.lat_margin/s
   );
   assert.equal(summaryCall.query.includes('greatCircleDistance'), true);
   assert.equal(summaryCall.query.includes('<= 15000'), true);

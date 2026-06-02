@@ -659,34 +659,72 @@ function filterOptionsQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
-function cityCoordinatesQuery() {
+function cityCoordinatesQuery(whereSql) {
   return `SELECT
-    _id AS workplace_id
-  FROM mg_workplaces
-  WHERE address__city = {city:String}
-    AND length(location__coordinates) >= 2
+    w._id AS workplace_id
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE ${whereSql}
+    AND length(w.location__coordinates) >= 2
+    AND w.location__coordinates[1] BETWEEN -180 AND 180
+    AND w.location__coordinates[2] BETWEEN -90 AND 90
   LIMIT 1
   FORMAT JSONEachRow`;
 }
 
-function cityWorkplacesCte() {
-  return `city_workplaces AS (
+function demandCityWorkplacesCtes(sourceName = 'filtered_orders') {
+  return `raw_city_workplaces AS (
     SELECT DISTINCT
-      location__coordinates AS workplace_coordinates
-    FROM mg_workplaces
-    WHERE address__city = {city:String}
-      AND length(location__coordinates) >= 2
+      workplace_coordinates AS workplace_coordinates
+    FROM ${sourceName}
+    WHERE length(workplace_coordinates) >= 2
+      AND workplace_coordinates[1] BETWEEN -180 AND 180
+      AND workplace_coordinates[2] BETWEEN -90 AND 90
+  ),
+  city_coordinate_bounds AS (
+    SELECT
+      count() AS raw_points,
+      quantileExact(0.01)(workplace_coordinates[1]) AS min_lon,
+      quantileExact(0.99)(workplace_coordinates[1]) AS max_lon,
+      quantileExact(0.01)(workplace_coordinates[2]) AS min_lat,
+      quantileExact(0.99)(workplace_coordinates[2]) AS max_lat
+    FROM raw_city_workplaces
+  ),
+  city_workplaces AS (
+    SELECT
+      raw.workplace_coordinates AS workplace_coordinates
+    FROM raw_city_workplaces AS raw
+    CROSS JOIN city_coordinate_bounds AS coordinate_bounds
+    WHERE coordinate_bounds.raw_points < 100
+      OR (
+        raw.workplace_coordinates[1] BETWEEN coordinate_bounds.min_lon AND coordinate_bounds.max_lon
+        AND raw.workplace_coordinates[2] BETWEEN coordinate_bounds.min_lat AND coordinate_bounds.max_lat
+      )
   )`;
 }
 
 function cityBoundsCte() {
   return `city_bounds AS (
     SELECT
-      min(workplace_coordinates[1]) AS min_lon,
-      max(workplace_coordinates[1]) AS max_lon,
-      min(workplace_coordinates[2]) AS min_lat,
-      max(workplace_coordinates[2]) AS max_lat
-    FROM city_workplaces
+      bounds_base.robust_points AS robust_points,
+      bounds_base.min_lon AS min_lon,
+      bounds_base.max_lon AS max_lon,
+      bounds_base.min_lat AS min_lat,
+      bounds_base.max_lat AS max_lat,
+      15000 / 111000 AS lat_margin,
+      15000 / (111320 * greatest(abs(cos(((bounds_base.min_lat + bounds_base.max_lat) / 2) * pi() / 180)), 0.2)) AS lon_margin
+    FROM (
+      SELECT
+        count() AS robust_points,
+        min(workplace_coordinates[1]) AS min_lon,
+        max(workplace_coordinates[1]) AS max_lon,
+        min(workplace_coordinates[2]) AS min_lat,
+        max(workplace_coordinates[2]) AS max_lat
+      FROM city_workplaces
+    ) AS bounds_base
   )`;
 }
 
@@ -698,10 +736,11 @@ function candidateWorkersCte() {
       worker.location__coordinates AS location__coordinates
     FROM mg_workers AS worker
     CROSS JOIN city_bounds AS bounds
-    WHERE ifNull(worker.user, '') != ''
+    WHERE bounds.robust_points > 0
+      AND ifNull(worker.user, '') != ''
       AND length(worker.location__coordinates) >= 2
-      AND worker.location__coordinates[1] BETWEEN bounds.min_lon - 1 AND bounds.max_lon + 1
-      AND worker.location__coordinates[2] BETWEEN bounds.min_lat - 0.25 AND bounds.max_lat + 0.25
+      AND worker.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
+      AND worker.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
   )`;
 }
 
@@ -735,6 +774,7 @@ function filteredOrdersCte(whereSql, name = 'filtered_orders') {
       ifNull(o.salary_per_hour, 0) AS salary_per_hour,
       ifNull(c.title, '') AS brand,
       if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession,
+      w.location__coordinates AS workplace_coordinates,
       ifNull(o.deleted, 0) = 0 AS is_active_request
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -779,11 +819,12 @@ function completedUsersCte() {
   )`;
 }
 
-function daily30dRatioCte(active30dWhereSql) {
+function active30dOrdersCte(active30dWhereSql) {
   return `active_30d_orders AS (
     SELECT
       o._id AS order_id,
       toString(toDate(o.start)) AS period,
+      w.location__coordinates AS workplace_coordinates,
       ifNull(o.deleted, 0) = 0 AS is_active_request
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -791,8 +832,11 @@ function daily30dRatioCte(active30dWhereSql) {
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
     LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
     WHERE ${active30dWhereSql}
-  ),
-  daily_30d_active AS (
+  )`;
+}
+
+function daily30dRatioAggregationCtes() {
+  return `daily_30d_active AS (
     SELECT
       toString(toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime))) AS period,
       uniqExact(ifNull(s.profile_id, '')) AS active_users
@@ -818,12 +862,17 @@ function daily30dRatioCte(active30dWhereSql) {
   )`;
 }
 
+function daily30dRatioCte(active30dWhereSql) {
+  return `${active30dOrdersCte(active30dWhereSql)},
+  ${daily30dRatioAggregationCtes()}`;
+}
+
 function summaryQuery(whereSql, active30dWhereSql) {
-  return `WITH ${cityWorkplacesCte()},
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${demandCityWorkplacesCtes()},
   ${cityBoundsCte()},
   ${candidateWorkersCte()},
   ${locatedUsersCte()},
-  ${filteredOrdersCte(whereSql)},
   ${appActiveUsersCte()},
   ${bookedUsersCte()},
   ${completedUsersCte()},
@@ -852,8 +901,9 @@ function summaryDemandQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
-function summaryBaseQuery() {
-  return `WITH ${cityWorkplacesCte()},
+function summaryBaseQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${demandCityWorkplacesCtes()},
   ${cityBoundsCte()},
   ${candidateWorkersCte()},
   ${locatedUsersCte()}
@@ -867,8 +917,9 @@ function summaryBaseQuery() {
   FORMAT JSONEachRow`;
 }
 
-function summaryAppQuery() {
-  return `WITH ${cityWorkplacesCte()},
+function summaryAppQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${demandCityWorkplacesCtes()},
   ${cityBoundsCte()},
   ${candidateWorkersCte()},
   ${locatedUsersCte()},
@@ -890,11 +941,12 @@ function summaryResponsesQuery(whereSql) {
 }
 
 function summaryRatioQuery(active30dWhereSql) {
-  return `WITH ${cityWorkplacesCte()},
+  return `WITH ${active30dOrdersCte(active30dWhereSql)},
+  ${demandCityWorkplacesCtes('active_30d_orders')},
   ${cityBoundsCte()},
   ${candidateWorkersCte()},
   ${locatedUsersCte()},
-  ${daily30dRatioCte(active30dWhereSql)}
+  ${daily30dRatioAggregationCtes()}
   SELECT
     ifNull((SELECT avg_ratio FROM daily_30d_ratio), 0) AS avg_daily_30d_active_users_per_request
   FORMAT JSONEachRow`;
@@ -931,11 +983,11 @@ function rateBucketsQuery(whereSql) {
 }
 
 function dynamicsQuery(whereSql) {
-  return `WITH ${cityWorkplacesCte()},
+  return `WITH ${filteredOrdersCte(whereSql)},
+  ${demandCityWorkplacesCtes()},
   ${cityBoundsCte()},
   ${candidateWorkersCte()},
   ${locatedUsersCte()},
-  ${filteredOrdersCte(whereSql)},
   daily_orders AS (
     SELECT
       period,
@@ -1102,11 +1154,11 @@ async function loadCityAnalysisDashboardSection(client, input = {}, section, now
 
   if (section === 'summary-base') {
     const [cityCoordinateRows, summaryRows] = await Promise.all([
-      readThroughCache(cache, cacheKeyForFilters('city-coordinates', { ...filters, client: [] }), () =>
-        client.queryJSONEachRow(cityCoordinatesQuery(), params, 'city analysis city coordinates')
+      readThroughCache(cache, cacheKeyForFilters('city-coordinates', filters), () =>
+        client.queryJSONEachRow(cityCoordinatesQuery(whereSql), params, 'city analysis city coordinates')
       ),
       readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
-        client.queryJSONEachRow(summaryBaseQuery(), params, 'city analysis summary base')
+        client.queryJSONEachRow(summaryBaseQuery(whereSql), params, 'city analysis summary base')
       )
     ]);
 
@@ -1115,7 +1167,7 @@ async function loadCityAnalysisDashboardSection(client, input = {}, section, now
 
   if (section === 'summary-app') {
     const summaryRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>
-      client.queryJSONEachRow(summaryAppQuery(), params, 'city analysis summary app')
+      client.queryJSONEachRow(summaryAppQuery(whereSql), params, 'city analysis summary app')
     );
 
     return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ summaryRows }));
@@ -1203,7 +1255,7 @@ async function loadCityAnalysisDashboard(client, input = {}, now = new Date()) {
     dynamicRowsResult
   ] = await Promise.all([
     client.queryJSONEachRow(filterOptionsQuery(optionWhereSql), optionParams, 'city analysis filter options'),
-    client.queryJSONEachRow(cityCoordinatesQuery(), params, 'city analysis city coordinates'),
+    client.queryJSONEachRow(cityCoordinatesQuery(whereSql), params, 'city analysis city coordinates'),
     client.queryJSONEachRow(summaryQuery(whereSql, active30dWhereSql), params, 'city analysis summary'),
     client.queryJSONEachRow(compositionQuery(whereSql, 'brand'), params, 'city analysis brands'),
     client.queryJSONEachRow(compositionQuery(whereSql, 'profession'), params, 'city analysis professions'),

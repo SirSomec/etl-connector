@@ -423,6 +423,11 @@ test('loadWorkplacePointDayDetails queries one selected day with safe parameters
   assert.equal(calls[0].query.includes("ifNull(j.status, '') IN ('confirmed', 'completed')"), true);
   assert.equal(calls[0].query.includes("j.status = 'cancelled'"), true);
   assert.equal(calls[0].query.includes("payment_status, '') IN ('done', 'bank_done')"), true);
+  assert.equal(calls[0].query.includes('j.hours AS actual_hours'), true);
+  assert.equal(
+    calls[0].query.includes("dateDiff('minute', j.start_fact, j.finish_fact) / 60.0 AS actual_hours"),
+    false
+  );
   assert.equal(calls[0].query.includes("'%F %H:%M'"), false);
   assert.equal(calls[0].query.includes("'%d.%m.%Y %H:%i'"), true);
 });

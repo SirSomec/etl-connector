@@ -727,7 +727,7 @@ function dayDetailsQuery(whereSql) {
       ifNull(j.worker, '') AS worker_id,
       j.start_fact AS start_fact,
       j.finish_fact AS finish_fact,
-      dateDiff('minute', j.start_fact, j.finish_fact) / 60.0 AS actual_hours
+      j.hours AS actual_hours
     FROM filtered_orders AS fo
     LEFT JOIN mg_jobs AS j ON j.source = fo.order_id
       AND ifNull(j.deleted, 0) = 0

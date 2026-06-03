@@ -637,6 +637,11 @@ function layout({
       min-width: 260px;
     }
 
+    .workplace-search-field {
+      flex: 1 1 260px;
+      min-width: 260px;
+    }
+
     .metric-range-input {
       width: 100%;
     }
@@ -837,11 +842,13 @@ function layout({
       outline: none;
     }
 
-    .worker-cancellation-modal[hidden] {
+    .worker-cancellation-modal[hidden],
+    .workplace-point-day-modal[hidden] {
       display: none;
     }
 
-    .worker-cancellation-modal {
+    .worker-cancellation-modal,
+    .workplace-point-day-modal {
       position: fixed;
       inset: 0;
       z-index: 60;
@@ -850,13 +857,15 @@ function layout({
       padding: 24px;
     }
 
-    .worker-cancellation-modal-backdrop {
+    .worker-cancellation-modal-backdrop,
+    .workplace-point-day-modal-backdrop {
       position: absolute;
       inset: 0;
       background: rgba(16, 33, 43, 0.42);
     }
 
-    .worker-cancellation-modal-dialog {
+    .worker-cancellation-modal-dialog,
+    .workplace-point-day-modal-dialog {
       position: relative;
       width: min(1120px, 100%);
       max-height: calc(100vh - 48px);
@@ -867,7 +876,12 @@ function layout({
       box-shadow: 0 18px 50px rgba(31, 41, 55, 0.24);
     }
 
-    .worker-cancellation-modal-head {
+    .workplace-point-day-modal-dialog {
+      width: min(1320px, 100%);
+    }
+
+    .worker-cancellation-modal-head,
+    .workplace-point-day-modal-head {
       position: sticky;
       top: 0;
       z-index: 1;
@@ -880,12 +894,14 @@ function layout({
       background: var(--surface);
     }
 
-    .worker-cancellation-modal-head h2 {
+    .worker-cancellation-modal-head h2,
+    .workplace-point-day-modal-head h2 {
       margin: 0;
       font-size: 18px;
     }
 
-    .worker-cancellation-modal-close {
+    .worker-cancellation-modal-close,
+    .workplace-point-day-modal-close {
       width: 36px;
       min-width: 36px;
       padding: 0;
@@ -897,24 +913,53 @@ function layout({
     }
 
     .worker-cancellation-modal-close:hover,
-    .worker-cancellation-modal-close:focus {
+    .worker-cancellation-modal-close:focus,
+    .workplace-point-day-modal-close:hover,
+    .workplace-point-day-modal-close:focus {
       border-color: var(--accent);
       background: var(--link-bg);
       color: var(--text);
     }
 
-    .worker-cancellation-modal-body {
+    .worker-cancellation-modal-body,
+    .workplace-point-day-modal-body {
       padding: 16px;
     }
 
-    .worker-cancellation-details {
+    .worker-cancellation-details,
+    .workplace-point-day-details {
       display: grid;
       gap: 12px;
     }
 
-    .worker-cancellation-details h2 {
+    .worker-cancellation-details h2,
+    .workplace-point-day-details h2 {
       margin: 0;
       font-size: 18px;
+    }
+
+    .compact-detail-table-wrap {
+      overflow-x: auto;
+    }
+
+    .compact-detail-table {
+      min-width: 1040px;
+      table-layout: fixed;
+    }
+
+    .compact-detail-table th,
+    .compact-detail-table td {
+      padding: 7px 8px;
+      font-size: 12px;
+      line-height: 1.25;
+      vertical-align: middle;
+    }
+
+    .compact-detail-table .compact-text-cell {
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .bar-cell {
@@ -1429,6 +1474,32 @@ function layout({
       background: #fbfcfd;
     }
 
+    .point-calendar-cell-button {
+      display: block;
+      width: 100%;
+      min-height: 68px;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .point-calendar-cell-button:hover,
+    .point-calendar-cell-button:focus {
+      background: transparent;
+      color: inherit;
+      outline: none;
+    }
+
+    .point-calendar-cell:focus-within {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 2px rgba(37, 109, 133, 0.42);
+    }
+
     .point-calendar-cell.empty {
       border-style: dashed;
       background: transparent;
@@ -1819,6 +1890,7 @@ function layout({
       }
 
       .worker-search-field,
+      .workplace-search-field,
       .metric-range-field {
         width: 100%;
         min-width: 0;
@@ -1829,15 +1901,18 @@ function layout({
       }
 
       .metric-detail-trigger,
-      .worker-cancellation-modal-close {
+      .worker-cancellation-modal-close,
+      .workplace-point-day-modal-close {
         width: auto;
       }
 
-      .worker-cancellation-modal {
+      .worker-cancellation-modal,
+      .workplace-point-day-modal {
         padding: 10px;
       }
 
-      .worker-cancellation-modal-dialog {
+      .worker-cancellation-modal-dialog,
+      .workplace-point-day-modal-dialog {
         max-height: calc(100vh - 20px);
       }
     }
@@ -1858,12 +1933,14 @@ function layout({
     </div>
   </div>
   ${content.includes('data-multi-filter') ? renderMultiFilterScript() : ''}
+  ${content.includes('data-workplace-suggest-url') ? renderWorkplaceSuggestScript() : ''}
   ${
     content.includes('data-dashboard-fragment-url') || content.includes('data-city-analysis-fragment-url')
       ? renderDashboardProgressiveScript()
       : ''
   }
   ${content.includes('data-worker-cancellation-modal') ? renderWorkerCancellationDetailsScript() : ''}
+  ${content.includes('data-workplace-point-day-modal') ? renderWorkplacePointDayDetailsScript() : ''}
 </body>
 </html>`;
 }
@@ -1975,6 +2052,73 @@ function renderMultiFilterScript() {
 
   document.querySelectorAll('[data-multi-filter]').forEach(function (root) {
     initMultiFilter(root);
+  });
+})();
+</script>`;
+}
+
+function renderWorkplaceSuggestScript() {
+  return `<script>
+(function () {
+  function labelForSuggestion(item) {
+    return [item.title || item.technicalName || item.workplaceId, item.address, item.clientTitle, item.workplaceId]
+      .filter(function (part) {
+        return String(part || '').trim() !== '';
+      })
+      .join(' · ');
+  }
+
+  function fillOptions(list, suggestions) {
+    list.innerHTML = '';
+
+    suggestions.forEach(function (item) {
+      var option = document.createElement('option');
+      var label = labelForSuggestion(item);
+
+      option.value = item.workplaceId || '';
+      option.label = label;
+      option.textContent = label;
+      list.appendChild(option);
+    });
+  }
+
+  document.querySelectorAll('[data-workplace-suggest-url]').forEach(function (input) {
+    var listId = input.getAttribute('list');
+    var list = listId ? document.getElementById(listId) : null;
+    var url = input.getAttribute('data-workplace-suggest-url');
+    var timer = null;
+
+    if (!list || !url) {
+      return;
+    }
+
+    input.addEventListener('input', function () {
+      var query = input.value.trim();
+
+      window.clearTimeout(timer);
+
+      if (query.length <= 4) {
+        fillOptions(list, []);
+        return;
+      }
+
+      timer = window.setTimeout(function () {
+        fetch(url + '?q=' + encodeURIComponent(query))
+          .then(function (response) {
+            if (!response.ok) {
+              return { suggestions: [] };
+            }
+
+            return response.json();
+          })
+          .then(function (body) {
+            fillOptions(list, Array.isArray(body.suggestions) ? body.suggestions : []);
+          })
+          .catch(function () {
+            fillOptions(list, []);
+          });
+      }, 220);
+    });
   });
 })();
 </script>`;
@@ -2122,6 +2266,106 @@ function renderWorkerCancellationDetailsScript() {
 </script>`;
 }
 
+function renderWorkplacePointDayDetailsScript() {
+  return `<script>
+(function () {
+  var modal = document.querySelector('[data-workplace-point-day-modal]');
+
+  if (!modal) {
+    return;
+  }
+
+  var body = modal.querySelector('[data-workplace-point-day-modal-body]');
+  var closeButton = modal.querySelector('[data-workplace-point-day-modal-close]');
+  var lastFocused = null;
+
+  function escapeClientHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function openModal() {
+    lastFocused = document.activeElement;
+    modal.hidden = false;
+
+    if (closeButton) {
+      closeButton.focus();
+    }
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+
+    if (body) {
+      body.innerHTML = '<p class="loading">Загружается</p>';
+    }
+
+    if (lastFocused && typeof lastFocused.focus === 'function') {
+      lastFocused.focus();
+    }
+  }
+
+  function renderModalError(message) {
+    if (body) {
+      body.innerHTML = '<div class="error">' + escapeClientHtml(message) + '</div>';
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!event.target || typeof event.target.closest !== 'function') {
+      return;
+    }
+
+    var trigger = event.target.closest('[data-workplace-point-day-detail-trigger]');
+
+    if (trigger) {
+      event.preventDefault();
+      openModal();
+
+      if (body) {
+        body.innerHTML = '<p class="loading">Загружается</p>';
+      }
+
+      fetch(trigger.getAttribute('data-detail-url'))
+        .then(function (response) {
+          return response.text().then(function (html) {
+            if (!response.ok) {
+              if (body) {
+                body.innerHTML = html || '<div class="error">Не удалось загрузить детализацию.</div>';
+              }
+              return;
+            }
+
+            if (body) {
+              body.innerHTML = html;
+            }
+          });
+        })
+        .catch(function (error) {
+          renderModalError(error && error.message ? error.message : 'Не удалось загрузить детализацию.');
+        });
+
+      return;
+    }
+
+    if (event.target.closest('[data-workplace-point-day-modal-close]')) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !modal.hidden) {
+      closeModal();
+    }
+  });
+})();
+</script>`;
+}
+
 function formatNumber(value, digits = 0) {
   const number = Number(value) || 0;
 
@@ -2131,6 +2375,20 @@ function formatNumber(value, digits = 0) {
   })
     .format(number)
     .replace(/\u00a0/g, ' ');
+}
+
+function formatNullableNumber(value, digits = 0) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return '-';
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return '-';
+  }
+
+  return formatNumber(number, digits).replace(',', '.');
 }
 
 function formatPercent(value) {
@@ -3133,6 +3391,28 @@ function workplacePointSectionUrl(filters, section) {
   return `/dashboards/workplace-analysis/point/section?section=${encodeURIComponent(section)}${suffix}`;
 }
 
+function workplacePointDayDetailsUrl(filters, date) {
+  const params = new URLSearchParams();
+
+  addDashboardQueryParam(params, 'workplaceId', filters.workplaceId);
+  addDashboardQueryParam(params, 'from', filters.from);
+  addDashboardQueryParam(params, 'to', filters.to);
+  addDashboardQueryParam(params, 'date', date);
+  addDashboardQueryParam(params, 'profession', filters.profession);
+  addDashboardQueryParam(params, 'orderType', filters.orderType);
+  addDashboardQueryParam(params, 'jobStatus', filters.jobStatus);
+
+  if (filters.includeDeletedOrders) {
+    params.set('includeDeletedOrders', '1');
+  }
+
+  if (filters.includeHiddenOrders) {
+    params.set('includeHiddenOrders', '1');
+  }
+
+  return `/dashboards/workplace-analysis/point/details?${params.toString()}`;
+}
+
 function renderHiddenInput(name, value) {
   return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
 }
@@ -3513,6 +3793,54 @@ function renderWorkerCancellationsDetails({ details }) {
       <th>Кем отменена</th>
     </tr></thead>
     <tbody>${rows}</tbody>
+</table></div>
+</div>`;
+}
+
+function renderWorkplacePointDayDetails({ details }) {
+  const rows = (details && details.rows) || [];
+  const date = details && details.date ? details.date : '';
+
+  if (rows.length === 0) {
+    return `<div class="workplace-point-day-details">
+  <h2>Детализация дня: ${escapeHtml(date)}</h2>
+  <p class="empty">Нет заданий за выбранный день.</p>
+</div>`;
+  }
+
+  const bodyRows = rows
+    .map((row) => `<tr>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(row.profession))}">${escapeHtml(detailText(row.profession))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(row.orderStartLocal))}</td>
+  <td class="number-cell">${escapeHtml(formatNullableNumber(row.plannedHours, 1))}</td>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(row.workerFullName))}">${escapeHtml(detailText(row.workerFullName))}</td>
+  <td class="nowrap-cell">${escapeHtml(detailText(row.workerPhone))}</td>
+  <td>${escapeHtml(detailText(row.confirmedStatus))}</td>
+  <td class="number-cell">${escapeHtml(formatNullableNumber(row.actualHours, 1))}</td>
+  <td class="nowrap-cell">${escapeHtml(detailText(row.actualTimeLocal))}</td>
+  <td class="number-cell">${escapeHtml(formatNumber(row.paymentAmount))}</td>
+  <td class="number-cell">${escapeHtml(formatNumber(row.cancelledShifts))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(row.lastCancelledAtLocal))}</td>
+</tr>`)
+    .join('');
+
+  return `<div class="workplace-point-day-details">
+  <h2>Детализация дня: ${escapeHtml(date)}</h2>
+  <div class="table-wrap compact-detail-table-wrap"><table class="compact-detail-table">
+    <thead><tr>
+      <th>Профессия</th>
+      <th>Старт</th>
+      <th>План</th>
+      <th>Гигер</th>
+      <th>Телефон</th>
+      <th>Confirmed</th>
+      <th>Факт, ч</th>
+      <th>Факт время</th>
+      <th>Начислено</th>
+      <th>Cancelled</th>
+      <th>Последний cancelled</th>
+    </tr></thead>
+    <tbody>${bodyRows}</tbody>
   </table></div>
 </div>`;
 }
@@ -3613,6 +3941,21 @@ function renderWorkerCancellationsModal() {
       <button type="button" class="worker-cancellation-modal-close" data-worker-cancellation-modal-close aria-label="Закрыть">&times;</button>
     </div>
     <div class="worker-cancellation-modal-body" data-worker-cancellation-modal-body>
+      <p class="loading">Загружается</p>
+    </div>
+  </div>
+</div>`;
+}
+
+function renderWorkplacePointDayModal() {
+  return `<div class="workplace-point-day-modal" data-workplace-point-day-modal hidden>
+  <div class="workplace-point-day-modal-backdrop" data-workplace-point-day-modal-close></div>
+  <div class="workplace-point-day-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="workplace-point-day-modal-title">
+    <div class="workplace-point-day-modal-head">
+      <h2 id="workplace-point-day-modal-title">Детализация дня</h2>
+      <button type="button" class="workplace-point-day-modal-close" data-workplace-point-day-modal-close aria-label="Закрыть">&times;</button>
+    </div>
+    <div class="workplace-point-day-modal-body" data-workplace-point-day-modal-body>
       <p class="loading">Загружается</p>
     </div>
   </div>
@@ -3945,23 +4288,26 @@ function calendarSlaLevel(row) {
   return 1;
 }
 
-function renderPointCalendarCell(row, currentDateKey) {
+function renderPointCalendarCell(row, currentDateKey, filters) {
   const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
   const slaLevel = calendarSlaLevel(row);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
   const isCurrentDay = currentDateKey && row.period === currentDateKey;
   const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
   const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
+  const detailUrl = workplacePointDayDetailsUrl(filters || {}, row.period);
 
   return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
-  <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
-  <div class="point-calendar-values">
-    ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ')}
-    ${renderPointCalendarValue('SLA', formatPercent(row.slaPercent))}
-    ${renderPointCalendarValue('Сл', formatNumber(row.dropoffs24h), 'Слеты')}
-    ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее')}
-    ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум')}
-  </div>
+  <button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">
+    <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
+    <div class="point-calendar-values">
+      ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ')}
+      ${renderPointCalendarValue('SLA', formatPercent(row.slaPercent))}
+      ${renderPointCalendarValue('Сл', formatNumber(row.dropoffs24h), 'Слеты')}
+      ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее')}
+      ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум')}
+    </div>
+  </button>
 </div>`;
 }
 
@@ -4097,11 +4443,11 @@ function groupPointCalendarRowsByMonth(rows) {
   return groups;
 }
 
-function renderPointCalendarMonth(group, weekdays, currentDateKey) {
+function renderPointCalendarMonth(group, weekdays, currentDateKey, filters) {
   const leadingEmptyCount = weekdayOffsetFromMonday(group.rows[0].period);
   const totalCells = leadingEmptyCount + group.rows.length;
   const trailingEmptyCount = (7 - (totalCells % 7)) % 7;
-  const cells = group.rows.map((row) => renderPointCalendarCell(row, currentDateKey)).join('');
+  const cells = group.rows.map((row) => renderPointCalendarCell(row, currentDateKey, filters)).join('');
 
   return `<div class="point-calendar-month">
     <h3 class="point-calendar-month-title">${escapeHtml(group.label)}</h3>
@@ -4126,7 +4472,7 @@ function renderPointCalendar(rows, filters, currentDateValue = new Date()) {
     .join('');
   const currentDateKey = currentDateKeyFromValue(currentDateValue);
   const months = groupPointCalendarRowsByMonth(calendarRows)
-    .map((group) => renderPointCalendarMonth(group, weekdays, currentDateKey))
+    .map((group) => renderPointCalendarMonth(group, weekdays, currentDateKey, filters))
     .join('');
 
   return `<div class="${detailPanelClass}">
@@ -4239,7 +4585,8 @@ function renderWorkplacePointDashboard({
     <button type="submit">Применить</button>
   </form>
 </section>
-${detailSections}`;
+${detailSections}
+${renderWorkplacePointDayModal()}`;
 
   return layout({
     title: 'Детализация точки',
@@ -4360,9 +4707,10 @@ function renderWorkplaceAnalysisDashboard({
       label: 'Учитывать скрытые',
       checked: filters.includeHiddenOrders
     })}
-    <div class="field">
+    <div class="field workplace-search-field">
       <label for="search">Поиск точки</label>
-      <input id="search" name="search" value="${escapeHtml(filters.search)}">
+      <input id="search" name="search" type="search" list="workplace-search-suggestions" value="${escapeHtml(filters.search)}" placeholder="ID, название или адрес" autocomplete="off" data-workplace-suggest-url="/dashboards/workplace-analysis/workplaces/suggest">
+      <datalist id="workplace-search-suggestions"></datalist>
     </div>
     <div class="field">
       <label for="sort">Сортировка</label>
@@ -5580,6 +5928,7 @@ module.exports = {
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
   renderWorkplaceAnalysisDashboardSection,
+  renderWorkplacePointDayDetails,
   renderWorkplacePointDashboard,
   renderWorkplacePointDashboardSection
 };

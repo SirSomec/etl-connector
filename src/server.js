@@ -13,6 +13,10 @@ const {
   dashboardSectionCachePathFromEnv
 } = require('./dashboardSectionCache');
 const {
+  createWorkplaceDirectoryCache,
+  workplaceDirectoryCachePathFromEnv
+} = require('./workplaceDirectoryCache');
+const {
   CITY_ANALYSIS_SECTIONS,
   cityAnalysisCachePathFromEnv,
   createCityAnalysisCache,
@@ -37,7 +41,8 @@ const {
 const {
   WORKPLACE_POINT_SECTIONS,
   loadWorkplacePointDashboardSection,
-  loadWorkplacePointDashboardShell
+  loadWorkplacePointDashboardShell,
+  loadWorkplacePointDayDetails
 } = require('./workplacePointDashboard');
 const {
   WORKER_CANCELLATIONS_SECTIONS,
@@ -65,6 +70,7 @@ const {
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
   renderWorkplaceAnalysisDashboardSection,
+  renderWorkplacePointDayDetails,
   renderWorkplacePointDashboard,
   renderWorkplacePointDashboardSection
 } = require('./render');
@@ -145,6 +151,7 @@ function createApp({
   activeGigersCache = null,
   cityAnalysisCache = createCityAnalysisCache(),
   dashboardSectionCache = createDashboardSectionCache(),
+  workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null }),
   userStore = null,
   sessionManager = null
 }) {
@@ -751,6 +758,24 @@ function createApp({
   );
 
   app.get(
+    '/dashboards/workplace-analysis/workplaces/suggest',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const suggestions = await workplaceDirectoryCache.suggest(client, req.query.q, 20);
+
+        res.status(200).json({ suggestions });
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res.status(statusCode).json({
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.get(
     '/dashboards/workplace-analysis/point',
     requireAuth('workplace-analysis'),
     asyncRoute(async (req, res) => {
@@ -796,6 +821,28 @@ function createApp({
           .status(200)
           .type('html')
           .send(renderWorkplacePointDashboardSection({ dashboard, section }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis/point/details',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadWorkplacePointDayDetails(client, req.query, new Date());
+
+        res
+          .status(200)
+          .type('html')
+          .send(renderWorkplacePointDayDetails({ details }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 
@@ -928,12 +975,27 @@ function start(options = {}) {
   const dashboardSectionCache = createDashboardSectionCache({
     filePath: dashboardSectionCachePathFromEnv(env)
   });
-  const app = createAppFn({ config, client, activeGigersCache, cityAnalysisCache, dashboardSectionCache });
+  const workplaceDirectoryCache = createWorkplaceDirectoryCache({
+    filePath: workplaceDirectoryCachePathFromEnv(env)
+  });
+  const app = createAppFn({
+    config,
+    client,
+    activeGigersCache,
+    cityAnalysisCache,
+    dashboardSectionCache,
+    workplaceDirectoryCache
+  });
   const server = app.listen(config.port, () => {
     const address = server.address();
     const port = address && typeof address === 'object' ? address.port : config.port;
 
     logger.log(`ETL Analytics listening on port ${port}`);
+  });
+  const workplaceDirectoryRefresh = workplaceDirectoryCache.scheduleRefresh(client);
+
+  server.on('close', () => {
+    workplaceDirectoryRefresh.stop();
   });
 
   return server;

@@ -15,6 +15,7 @@ const {
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
+  renderWorkplacePointDayDetails,
   renderWorkplacePointDashboard
 } = require('../src/render');
 
@@ -1035,6 +1036,8 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(html, /class="point-calendar-grid"/);
   assert.match(html, /class="point-calendar-cell"/);
   assert.match(html, /\.point-calendar-cell\.is-current-day/);
+  assert.match(html, /data-workplace-point-day-modal/);
+  assert.match(html, /data-workplace-point-day-modal-body/);
   assert.match(html, /11 \/ 4/);
   assert.match(html, /45 \/ 18/);
   assert.match(html, /2026-06-02/);
@@ -1058,6 +1061,8 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(calendarPanelHtml, /<h3 class="point-calendar-month-title">Июнь 2026<\/h3>/);
   assert.match(calendarPanelHtml, /<h3 class="point-calendar-month-title">Июль 2026<\/h3>/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-06-01" data-sla-level="4"/);
+  assert.match(calendarPanelHtml, /data-workplace-point-day-detail-trigger/);
+  assert.match(calendarPanelHtml, /data-detail-url="\/dashboards\/workplace-analysis\/point\/details\?[^"]*workplaceId=wp1[^"]*date=2026-06-01/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-date">1<\/div>/);
   assert.match(calendarPanelHtml, /<span title="Заказ">З<\/span>\s*<strong>7<\/strong>/);
   assert.match(calendarPanelHtml, /<span title="SLA">SLA<\/span>\s*<strong>71\.4%<\/strong>/);
@@ -1076,6 +1081,46 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-07-02" title=/);
   assert.doesNotMatch(calendarPanelHtml, /data-date="2026-07-02" data-sla-level=/);
   assert.equal(countOccurrences(calendarPanelHtml, 'class="point-calendar-date"'), 32);
+});
+
+test('renderWorkplacePointDayDetails renders escaped compact table fragment', () => {
+  const html = renderWorkplacePointDayDetails({
+    details: {
+      date: '2026-06-02',
+      rows: [
+        {
+          orderId: 'order-1',
+          jobId: 'job-1',
+          profession: '<bad>',
+          orderStartLocal: '2026-06-02 09:00:00',
+          plannedHours: 8,
+          workerFullName: 'Иванов <Иван>',
+          workerPhone: '+79990000000',
+          confirmedStatus: 'confirmed',
+          actualHours: 7.5,
+          actualTimeLocal: '2026-06-02 09:10 - 2026-06-02 16:40',
+          paymentAmount: 4500,
+          cancelledShifts: 0,
+          lastCancelledAtLocal: ''
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /Детализация дня: 2026-06-02/);
+  assert.match(html, /<th>Профессия<\/th>/);
+  assert.match(html, /<th>Старт<\/th>/);
+  assert.match(html, /<th>План<\/th>/);
+  assert.match(html, /<th>Гигер<\/th>/);
+  assert.match(html, /<th>Телефон<\/th>/);
+  assert.match(html, /&lt;bad&gt;/);
+  assert.match(html, /Иванов &lt;Иван&gt;/);
+  assert.match(html, /\+79990000000/);
+  assert.match(html, /confirmed/);
+  assert.match(html, /7\.5/);
+  assert.match(html, /4 500/);
+  assert.match(html, /class="compact-detail-table"/);
+  assert.doesNotMatch(html, /<html/);
 });
 
 test('renderWorkplaceAnalysisDashboard renders pagination links with current filters', () => {

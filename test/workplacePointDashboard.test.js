@@ -5,7 +5,10 @@ const {
   loadWorkplacePointDashboard,
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
+  loadWorkplacePointDayDetails,
+  mergeWorkplacePointDayDetails,
   mergeWorkplacePointRows,
+  normalizeWorkplacePointDayDetailsInput,
   normalizeWorkplacePointFilters
 } = require('../src/workplacePointDashboard');
 
@@ -35,6 +38,111 @@ test('normalizeWorkplacePointFilters keeps workplace id and supported filters', 
   assert.deepEqual(filters.jobStatus, ['confirmed', 'failed']);
   assert.equal(filters.includeDeletedOrders, true);
   assert.equal(filters.includeHiddenOrders, true);
+});
+
+test('normalizeWorkplacePointDayDetailsInput requires workplace id and valid date', () => {
+  const input = normalizeWorkplacePointDayDetailsInput(
+    {
+      workplaceId: ' wp1 ',
+      date: '2026-06-02',
+      profession: ['picker'],
+      orderType: ['regular'],
+      jobStatus: ['confirmed'],
+      includeHiddenOrders: '1'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(input.filters.workplaceId, 'wp1');
+  assert.equal(input.date, '2026-06-02');
+  assert.equal(input.fromDateTime, '2026-06-02 00:00:00');
+  assert.equal(input.toExclusiveDateTime, '2026-06-03 00:00:00');
+  assert.deepEqual(input.filters.profession, ['picker']);
+  assert.deepEqual(input.filters.orderType, ['regular']);
+  assert.deepEqual(input.filters.jobStatus, ['confirmed']);
+  assert.equal(input.filters.includeHiddenOrders, true);
+
+  assert.throws(
+    () => normalizeWorkplacePointDayDetailsInput({ date: '2026-06-02' }),
+    (error) => error.status === 400 && /workplaceId/.test(error.message)
+  );
+  assert.throws(
+    () => normalizeWorkplacePointDayDetailsInput({ workplaceId: 'wp1', date: 'bad' }),
+    (error) => error.status === 400 && /date/.test(error.message)
+  );
+});
+
+test('mergeWorkplacePointDayDetails maps confirmed and cancelled-only order rows', () => {
+  const detailInput = normalizeWorkplacePointDayDetailsInput(
+    { workplaceId: 'wp1', date: '2026-06-02' },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+  const details = mergeWorkplacePointDayDetails(detailInput, [
+    {
+      order_id: 'order-1',
+      job_id: 'job-1',
+      profession: 'Комплектовщик',
+      order_start_local: '2026-06-02 09:00:00',
+      planned_hours: 8,
+      worker_full_name: 'Иванов Иван',
+      worker_phone: '+79990000000',
+      confirmed_status: 'confirmed',
+      actual_hours: 7.5,
+      actual_time_local: '2026-06-02 09:10 - 2026-06-02 16:40',
+      payment_amount: 4500,
+      cancelled_shifts: 0,
+      last_cancelled_at_local: ''
+    },
+    {
+      order_id: 'order-2',
+      job_id: '',
+      profession: '',
+      order_start_local: '2026-06-02 14:00:00',
+      planned_hours: null,
+      worker_full_name: '',
+      worker_phone: '',
+      confirmed_status: '',
+      actual_hours: null,
+      actual_time_local: '',
+      payment_amount: null,
+      cancelled_shifts: 2,
+      last_cancelled_at_local: '2026-06-02 12:30:00'
+    }
+  ]);
+
+  assert.equal(details.workplaceId, 'wp1');
+  assert.equal(details.date, '2026-06-02');
+  assert.equal(details.rows.length, 2);
+  assert.deepEqual(details.rows[0], {
+    orderId: 'order-1',
+    jobId: 'job-1',
+    profession: 'Комплектовщик',
+    orderStartLocal: '2026-06-02 09:00:00',
+    plannedHours: 8,
+    workerFullName: 'Иванов Иван',
+    workerPhone: '+79990000000',
+    confirmedStatus: 'confirmed',
+    actualHours: 7.5,
+    actualTimeLocal: '2026-06-02 09:10 - 2026-06-02 16:40',
+    paymentAmount: 4500,
+    cancelledShifts: 0,
+    lastCancelledAtLocal: ''
+  });
+  assert.deepEqual(details.rows[1], {
+    orderId: 'order-2',
+    jobId: '',
+    profession: 'Без специальности',
+    orderStartLocal: '2026-06-02 14:00:00',
+    plannedHours: null,
+    workerFullName: '',
+    workerPhone: '',
+    confirmedStatus: '',
+    actualHours: null,
+    actualTimeLocal: '',
+    paymentAmount: 0,
+    cancelledShifts: 2,
+    lastCancelledAtLocal: '2026-06-02 12:30:00'
+  });
 });
 
 test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius rows', () => {
@@ -258,6 +366,63 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
     calls.find((call) => call.operation === 'workplace point summary').query.includes('dropoffs_24h'),
     true
   );
+});
+
+test('loadWorkplacePointDayDetails queries one selected day with safe parameters', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      return [
+        {
+          order_id: 'order-1',
+          job_id: 'job-1',
+          profession: 'Комплектовщик',
+          order_start_local: '2026-06-02 09:00:00',
+          planned_hours: 8,
+          worker_full_name: 'Иванов Иван',
+          worker_phone: '+79990000000',
+          confirmed_status: 'confirmed',
+          actual_hours: 7.5,
+          actual_time_local: '2026-06-02 09:10 - 2026-06-02 16:40',
+          payment_amount: 4500,
+          cancelled_shifts: 0,
+          last_cancelled_at_local: ''
+        }
+      ];
+    }
+  };
+
+  const details = await loadWorkplacePointDayDetails(
+    client,
+    {
+      workplaceId: 'wp1; DROP TABLE mg_orders',
+      date: '2026-06-02',
+      profession: ['Комплектовщик'],
+      orderType: ['regular'],
+      jobStatus: ['confirmed']
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.rows.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].operation, 'workplace point day details');
+  assert.equal(calls[0].params.param_workplace_id, 'wp1; DROP TABLE mg_orders');
+  assert.equal(calls[0].params.param_from, '2026-06-02 00:00:00');
+  assert.equal(calls[0].params.param_to, '2026-06-03 00:00:00');
+  assert.equal(calls[0].params.param_professions, "['Комплектовщик']");
+  assert.equal(calls[0].params.param_order_types, "['regular']");
+  assert.equal(calls[0].params.param_job_statuses, "['confirmed']");
+  assert.equal(calls[0].query.includes('DROP TABLE'), false);
+  assert.equal(calls[0].query.includes('FROM mg_orders AS o'), true);
+  assert.equal(calls[0].query.includes('LEFT JOIN mg_jobs AS j'), true);
+  assert.equal(calls[0].query.includes('mg_job_history'), true);
+  assert.equal(calls[0].query.includes('mg_payments'), true);
+  assert.equal(calls[0].query.includes("j.status = 'confirmed'"), true);
+  assert.equal(calls[0].query.includes("j.status = 'cancelled'"), true);
+  assert.equal(calls[0].query.includes("payment_status, '') IN ('done', 'bank_done')"), true);
 });
 
 test('loadWorkplacePointDashboardShell loads metadata and filters only', async () => {

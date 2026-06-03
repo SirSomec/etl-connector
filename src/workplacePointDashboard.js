@@ -107,6 +107,10 @@ function nullableNumberValue(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function textValue(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function percent(numerator, denominator) {
   const bottom = numberValue(denominator);
 
@@ -299,6 +303,52 @@ function mergeWorkplacePointRows(filters, datasets) {
     },
     dailyRows,
     professionRows
+  };
+}
+
+function normalizeWorkplacePointDayDetailsInput(input = {}, now = new Date()) {
+  const filters = normalizeWorkplacePointFilters(input, now);
+  const requestedDate = parseDateOnly(input.date);
+
+  if (filters.workplaceId === '') {
+    throw httpError(400, 'Missing workplaceId');
+  }
+
+  if (!requestedDate) {
+    throw httpError(400, 'Missing or invalid date');
+  }
+
+  const date = formatDateUTC(requestedDate);
+  const toExclusive = formatDateUTC(addDaysUTC(requestedDate, 1));
+
+  return {
+    filters,
+    date,
+    fromDateTime: toDateTimeParam(date),
+    toExclusiveDateTime: toDateTimeParam(toExclusive)
+  };
+}
+
+function mergeWorkplacePointDayDetails(detailInput, detailRows = []) {
+  return {
+    filters: detailInput.filters,
+    workplaceId: detailInput.filters.workplaceId,
+    date: detailInput.date,
+    rows: detailRows.map((row) => ({
+      orderId: textValue(row.order_id),
+      jobId: textValue(row.job_id),
+      profession: textValue(row.profession) || 'Без специальности',
+      orderStartLocal: textValue(row.order_start_local),
+      plannedHours: nullableNumberValue(row.planned_hours),
+      workerFullName: textValue(row.worker_full_name),
+      workerPhone: textValue(row.worker_phone),
+      confirmedStatus: textValue(row.confirmed_status),
+      actualHours: nullableNumberValue(row.actual_hours),
+      actualTimeLocal: textValue(row.actual_time_local),
+      paymentAmount: numberValue(row.payment_amount),
+      cancelledShifts: numberValue(row.cancelled_shifts),
+      lastCancelledAtLocal: textValue(row.last_cancelled_at_local)
+    }))
   };
 }
 
@@ -637,6 +687,151 @@ function radiusWorkersQuery() {
   FORMAT JSONEachRow`;
 }
 
+function plannedHoursExpression(alias = 'fo') {
+  return `if(
+      ifNull(${alias}.hours, 0) > 0,
+      toNullable(toFloat64(${alias}.hours)),
+      if(
+        ${alias}.order_finish > ${alias}.order_start,
+        toNullable(dateDiff('minute', ${alias}.order_start, ${alias}.order_finish) / 60.0),
+        CAST(NULL, 'Nullable(Float64)')
+      )
+    )`;
+}
+
+function dayDetailsFilteredOrdersCte(whereSql) {
+  return `filtered_orders AS (
+    SELECT
+      o._id AS order_id,
+      o.start AS order_start,
+      o.finish AS order_finish,
+      o.hours AS hours,
+      if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession
+    FROM mg_orders AS o
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    WHERE ${whereSql}
+  )`;
+}
+
+function dayDetailsQuery(whereSql) {
+  const plannedHoursSql = plannedHoursExpression('fo');
+
+  return `WITH ${dayDetailsFilteredOrdersCte(whereSql)},
+  confirmed_jobs AS (
+    SELECT
+      fo.order_id AS order_id,
+      j._id AS job_id,
+      ifNull(j.worker, '') AS worker_id,
+      j.start_fact AS start_fact,
+      j.finish_fact AS finish_fact,
+      dateDiff('minute', j.start_fact, j.finish_fact) / 60.0 AS actual_hours
+    FROM filtered_orders AS fo
+    LEFT JOIN mg_jobs AS j ON j.source = fo.order_id
+      AND ifNull(j.deleted, 0) = 0
+    WHERE j.status = 'confirmed'
+      AND j.start_fact IS NOT NULL
+      AND j.finish_fact IS NOT NULL
+      AND j.finish_fact > j.start_fact
+      AND dateDiff('second', j.start_fact, j.finish_fact) != 0
+  ),
+  job_rollup AS (
+    SELECT
+      fo.order_id AS order_id,
+      countIf(j.status = 'cancelled') AS cancelled_shifts,
+      countIf(
+        j.status = 'confirmed'
+        AND j.start_fact IS NOT NULL
+        AND j.finish_fact IS NOT NULL
+        AND j.finish_fact > j.start_fact
+        AND dateDiff('second', j.start_fact, j.finish_fact) != 0
+      ) AS confirmed_fact_shifts
+    FROM filtered_orders AS fo
+    LEFT JOIN mg_jobs AS j ON j.source = fo.order_id
+      AND ifNull(j.deleted, 0) = 0
+    GROUP BY fo.order_id
+  ),
+  last_cancelled AS (
+    SELECT
+      fo.order_id AS order_id,
+      max(coalesce(h.createdAt, h.updatedAt)) AS last_cancelled_at
+    FROM filtered_orders AS fo
+    INNER JOIN mg_jobs AS j ON j.source = fo.order_id
+      AND ifNull(j.deleted, 0) = 0
+    INNER JOIN mg_job_history AS h ON h.job = j._id
+    WHERE ifNull(h.status, '') = 'cancelled'
+    GROUP BY fo.order_id
+  ),
+  payment_rows AS (
+    SELECT
+      if(ifNull(job, '') != '', job, ifNull(entityId, '')) AS job_id,
+      ifNull(amount, 0) AS amount,
+      ifNull(payment_status, '') AS payment_status
+    FROM mg_payments
+  ),
+  payments AS (
+    SELECT
+      pr.job_id AS job_id,
+      sumIf(pr.amount, ifNull(pr.payment_status, '') IN ('done', 'bank_done')) AS payment_amount
+    FROM payment_rows AS pr
+    INNER JOIN confirmed_jobs AS cj ON pr.job_id = cj.job_id
+    WHERE ifNull(pr.job_id, '') != ''
+    GROUP BY pr.job_id
+  )
+  SELECT
+    fo.order_id AS order_id,
+    cj.job_id AS job_id,
+    fo.profession AS profession,
+    formatDateTime(toTimeZone(fo.order_start, 'Europe/Moscow'), '%F %T') AS order_start_local,
+    ${plannedHoursSql} AS planned_hours,
+    coalesce(
+      nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
+      nullIf(trim(ifNull(w.full_name, '')), ''),
+      ''
+    ) AS worker_full_name,
+    ifNull(u.phone, '') AS worker_phone,
+    'confirmed' AS confirmed_status,
+    cj.actual_hours AS actual_hours,
+    concat(
+      formatDateTime(toTimeZone(cj.start_fact, 'Europe/Moscow'), '%F %H:%M'),
+      ' - ',
+      formatDateTime(toTimeZone(cj.finish_fact, 'Europe/Moscow'), '%F %H:%M')
+    ) AS actual_time_local,
+    ifNull(pay.payment_amount, 0) AS payment_amount,
+    ifNull(jr.cancelled_shifts, 0) AS cancelled_shifts,
+    '' AS last_cancelled_at_local
+  FROM filtered_orders AS fo
+  INNER JOIN confirmed_jobs AS cj ON fo.order_id = cj.order_id
+  LEFT JOIN mg_workers AS w ON cj.worker_id = w._id
+  LEFT JOIN mg_users AS u ON w.user = u._id
+  LEFT JOIN payments AS pay ON cj.job_id = pay.job_id
+  LEFT JOIN job_rollup AS jr ON fo.order_id = jr.order_id
+  UNION ALL
+  SELECT
+    fo.order_id AS order_id,
+    '' AS job_id,
+    fo.profession AS profession,
+    formatDateTime(toTimeZone(fo.order_start, 'Europe/Moscow'), '%F %T') AS order_start_local,
+    ${plannedHoursSql} AS planned_hours,
+    '' AS worker_full_name,
+    '' AS worker_phone,
+    '' AS confirmed_status,
+    CAST(NULL, 'Nullable(Float64)') AS actual_hours,
+    '' AS actual_time_local,
+    0 AS payment_amount,
+    ifNull(jr.cancelled_shifts, 0) AS cancelled_shifts,
+    if(
+      ifNull(jr.cancelled_shifts, 0) > 0,
+      ifNull(formatDateTime(toTimeZone(lc.last_cancelled_at, 'Europe/Moscow'), '%F %T'), ''),
+      ''
+    ) AS last_cancelled_at_local
+  FROM filtered_orders AS fo
+  LEFT JOIN job_rollup AS jr ON fo.order_id = jr.order_id
+  LEFT JOIN last_cancelled AS lc ON fo.order_id = lc.order_id
+  WHERE ifNull(jr.confirmed_fact_shifts, 0) = 0
+  ORDER BY order_start_local ASC, profession ASC, order_id ASC, job_id ASC
+  FORMAT JSONEachRow`;
+}
+
 function paramsAndWhere(filters) {
   const params = baseParams(filters);
   const whereSql = orderWhereForFilters(filters, params);
@@ -721,6 +916,23 @@ async function loadWorkplacePointSectionRows(client, filters, section) {
   );
 
   return { radiusRows };
+}
+
+async function loadWorkplacePointDayDetails(client, input = {}, now = new Date()) {
+  const detailInput = normalizeWorkplacePointDayDetailsInput(input, now);
+  const params = baseParams(detailInput.filters);
+
+  params.param_from = detailInput.fromDateTime;
+  params.param_to = detailInput.toExclusiveDateTime;
+
+  const whereSql = orderWhereForFilters(detailInput.filters, params);
+  const rows = await client.queryJSONEachRow(
+    dayDetailsQuery(whereSql),
+    params,
+    'workplace point day details'
+  );
+
+  return mergeWorkplacePointDayDetails(detailInput, rows);
 }
 
 function mergeWorkplacePointSection(filters, sectionRows, shellRows = {}) {
@@ -815,6 +1027,9 @@ module.exports = {
   loadWorkplacePointDashboard,
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
+  loadWorkplacePointDayDetails,
+  mergeWorkplacePointDayDetails,
   mergeWorkplacePointRows,
+  normalizeWorkplacePointDayDetailsInput,
   normalizeWorkplacePointFilters
 };

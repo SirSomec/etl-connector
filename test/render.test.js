@@ -605,12 +605,12 @@ test('renderSalesByProjectDashboard shows SQL inspector only with permission', (
 
   assert.doesNotMatch(withoutPermission, /data-sql-inspector-open/);
   assert.doesNotMatch(withoutPermission, /data-sql-inspector-modal/);
-  assert.doesNotMatch(withoutPermission, /filtered_orders/);
+  assert.doesNotMatch(withoutPermission, /shift_facts/);
   assert.match(withPermission, /data-sql-inspector-open/);
   assert.match(withPermission, /data-sql-inspector-modal/);
   assert.match(withPermission, /Показать SQL метрики: Продажи по проектам/);
   assert.match(withPermission, /<span class="sql-keyword">SELECT<\/span>/);
-  assert.match(withPermission, /filtered_orders/);
+  assert.match(withPermission, /shift_facts/);
 });
 
 test('renderSalesByProjectDashboard renders SQL inspectors for each KPI and data table value', () => {

@@ -375,9 +375,9 @@ test('dashboard section fragments respect sql-inspector permission', async () =>
     assert.equal(plain.response.status, 200);
     assert.equal(sql.response.status, 200);
     assert.doesNotMatch(plain.text, /data-sql-inspector-open/);
-    assert.doesNotMatch(plain.text, /filtered_orders/);
+    assert.doesNotMatch(plain.text, /shift_facts/);
     assert.match(sql.text, /data-sql-inspector-open/);
-    assert.match(sql.text, /filtered_orders/);
+    assert.match(sql.text, /shift_facts/);
   });
 });
 

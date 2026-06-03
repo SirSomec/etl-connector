@@ -5063,7 +5063,7 @@ function renderWorkplacePointDashboardSection({ dashboard, section, currentUser 
 
   if (section === 'radius') {
     return `<section class="section">
-  ${renderMetricPanelHead('База вокруг точки', 'workplace-point.summary', currentUser)}
+  ${renderMetricPanelHead('База вокруг точки', 'workplace-point.radius', currentUser)}
   ${renderWorkplacePointRadiusKpis(dashboard.summary, currentUser)}
 </section>`;
   }

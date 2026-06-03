@@ -3833,7 +3833,7 @@ function renderWorkplacePointDayDetails({ details }) {
       <th>План</th>
       <th>Гигер</th>
       <th>Телефон</th>
-      <th>Confirmed</th>
+      <th>Статус</th>
       <th>Факт, ч</th>
       <th>Факт время</th>
       <th>Начислено</th>

@@ -4,6 +4,7 @@ const FILTER_OPTION_KEYS = ['profession', 'orderType', 'jobStatus'];
 const RADIUS_KM = [5, 10, 15, 20];
 const WORKPLACE_POINT_SECTION_NAMES = ['summary', 'charts', 'radius'];
 const WORKPLACE_POINT_SECTIONS = new Set(WORKPLACE_POINT_SECTION_NAMES);
+const DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL = "('confirmed', 'completed')";
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -721,6 +722,7 @@ function dayDetailsQuery(whereSql) {
     SELECT
       fo.order_id AS order_id,
       j._id AS job_id,
+      j.status AS status,
       ifNull(j.worker, '') AS worker_id,
       j.start_fact AS start_fact,
       j.finish_fact AS finish_fact,
@@ -728,7 +730,7 @@ function dayDetailsQuery(whereSql) {
     FROM filtered_orders AS fo
     LEFT JOIN mg_jobs AS j ON j.source = fo.order_id
       AND ifNull(j.deleted, 0) = 0
-    WHERE j.status = 'confirmed'
+    WHERE ifNull(j.status, '') IN ${DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL}
       AND j.start_fact IS NOT NULL
       AND j.finish_fact IS NOT NULL
       AND j.finish_fact > j.start_fact
@@ -739,7 +741,7 @@ function dayDetailsQuery(whereSql) {
       fo.order_id AS order_id,
       countIf(j.status = 'cancelled') AS cancelled_shifts,
       countIf(
-        j.status = 'confirmed'
+        ifNull(j.status, '') IN ${DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL}
         AND j.start_fact IS NOT NULL
         AND j.finish_fact IS NOT NULL
         AND j.finish_fact > j.start_fact
@@ -789,7 +791,7 @@ function dayDetailsQuery(whereSql) {
       ''
     ) AS worker_full_name,
     ifNull(u.phone, '') AS worker_phone,
-    'confirmed' AS confirmed_status,
+    cj.status AS confirmed_status,
     cj.actual_hours AS actual_hours,
     concat(
       formatDateTime(toTimeZone(cj.start_fact, 'Europe/Moscow'), '%F %H:%M'),

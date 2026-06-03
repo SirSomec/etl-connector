@@ -420,9 +420,57 @@ test('loadWorkplacePointDayDetails queries one selected day with safe parameters
   assert.equal(calls[0].query.includes('LEFT JOIN mg_jobs AS j'), true);
   assert.equal(calls[0].query.includes('mg_job_history'), true);
   assert.equal(calls[0].query.includes('mg_payments'), true);
-  assert.equal(calls[0].query.includes("j.status = 'confirmed'"), true);
+  assert.equal(calls[0].query.includes("ifNull(j.status, '') IN ('confirmed', 'completed')"), true);
   assert.equal(calls[0].query.includes("j.status = 'cancelled'"), true);
   assert.equal(calls[0].query.includes("payment_status, '') IN ('done', 'bank_done')"), true);
+});
+
+test('loadWorkplacePointDayDetails treats completed factual shifts as detail rows', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      return [
+        {
+          order_id: 'order-1',
+          job_id: 'job-1',
+          profession: 'picker',
+          order_start_local: '2026-06-02 09:00:00',
+          planned_hours: 8,
+          worker_full_name: 'Worker Name',
+          worker_phone: '+79990000000',
+          confirmed_status: 'completed',
+          actual_hours: 7.5,
+          actual_time_local: '2026-06-02 09:10 - 2026-06-02 16:40',
+          payment_amount: 4500,
+          cancelled_shifts: 0,
+          last_cancelled_at_local: ''
+        }
+      ];
+    }
+  };
+
+  const details = await loadWorkplacePointDayDetails(
+    client,
+    {
+      workplaceId: 'wp1',
+      date: '2026-06-02',
+      jobStatus: ['completed']
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.rows[0].confirmedStatus, 'completed');
+  assert.equal(details.rows[0].workerFullName, 'Worker Name');
+  assert.equal(details.rows[0].workerPhone, '+79990000000');
+  assert.equal(details.rows[0].actualHours, 7.5);
+  assert.equal(details.rows[0].paymentAmount, 4500);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].operation, 'workplace point day details');
+  assert.equal(calls[0].params.param_job_statuses, "['completed']");
+  assert.equal(calls[0].query.includes("ifNull(j.status, '') IN ('confirmed', 'completed')"), true);
+  assert.equal(calls[0].query.includes('j.status AS confirmed_status'), true);
 });
 
 test('loadWorkplacePointDashboardShell loads metadata and filters only', async () => {

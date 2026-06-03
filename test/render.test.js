@@ -1113,6 +1113,7 @@ test('renderWorkplacePointDayDetails renders escaped compact table fragment', ()
   assert.match(html, /<th>План<\/th>/);
   assert.match(html, /<th>Гигер<\/th>/);
   assert.match(html, /<th>Телефон<\/th>/);
+  assert.match(html, /<th>Статус<\/th>/);
   assert.match(html, /&lt;bad&gt;/);
   assert.match(html, /Иванов &lt;Иван&gt;/);
   assert.match(html, /\+79990000000/);

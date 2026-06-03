@@ -1,6 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const { writeFileAtomically } = require('./atomicFile');
+
 const ACTIVE_GIGERS_CACHE_VERSION = 1;
 const ACTIVE_GIGERS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_ACTIVE_GIGERS_CACHE_PATH = path.join(
@@ -39,11 +41,7 @@ async function readCacheFile(filePath) {
 }
 
 async function writeCacheFile(filePath, data) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-
-  await fs.writeFile(tempPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  await fs.rename(tempPath, filePath);
+  await writeFileAtomically(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
 
 function createWorkplaceActiveGigersCache(options = {}) {

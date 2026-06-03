@@ -1,6 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const { writeFileAtomically } = require('./atomicFile');
+
 const DASHBOARD_SECTION_CACHE_VERSION = 1;
 const DASHBOARD_SECTION_CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 const DEFAULT_DASHBOARD_SECTION_CACHE_PATH = path.join(
@@ -51,11 +53,7 @@ async function writeCacheFile(filePath, entries) {
     };
   }
 
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-
-  await fs.writeFile(tempPath, `${JSON.stringify(data)}\n`, 'utf8');
-  await fs.rename(tempPath, filePath);
+  await writeFileAtomically(filePath, `${JSON.stringify(data)}\n`, 'utf8');
 }
 
 function createDashboardSectionCache({

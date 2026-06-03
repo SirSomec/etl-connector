@@ -3,6 +3,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
 
+const { writeFileAtomically } = require('./atomicFile');
+
 const pbkdf2 = promisify(crypto.pbkdf2);
 
 const USER_STORE_VERSION = 1;
@@ -131,11 +133,7 @@ async function readStoreFile(filePath) {
 }
 
 async function writeStoreFile(filePath, data) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-
-  await fs.writeFile(tempPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  await fs.rename(tempPath, filePath);
+  await writeFileAtomically(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
 
 function assertPassword(password) {

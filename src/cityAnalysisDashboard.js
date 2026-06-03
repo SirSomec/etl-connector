@@ -1,6 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const { writeFileAtomically } = require('./atomicFile');
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const FILTER_OPTION_KEYS = ['client', 'profession', 'orderType', 'jobStatus', 'contractor'];
@@ -374,11 +376,7 @@ async function writeCityAnalysisCacheFile(filePath, entries) {
     };
   }
 
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-
-  await fs.writeFile(tempPath, `${JSON.stringify(data)}\n`, 'utf8');
-  await fs.rename(tempPath, filePath);
+  await writeFileAtomically(filePath, `${JSON.stringify(data)}\n`, 'utf8');
 }
 
 function createCityAnalysisCache({

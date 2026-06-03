@@ -4422,6 +4422,11 @@ function renderCityKpiCards(summary) {
       detail: `ready ${formatNumber(summary.readyStatusLocatedUsers)} · booked ${formatNumber(summary.bookedStatusLocatedUsers)} · worked ${formatNumber(summary.workedStatusLocatedUsers)}`
     },
     { label: 'Входили в приложение', value: formatNumber(summary.appActiveUsers) },
+    {
+      label: 'Активная за 30 дней',
+      value: formatNumber(summary.app30dActiveUsers),
+      detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`
+    },
     { label: 'Откликались', value: formatNumber(summary.bookedUsers) },
     { label: 'Завершали', value: formatNumber(summary.completedUsers) },
     { label: '30д активные / заявка', value: formatNumber(summary.avgDaily30dActiveUsersPerRequest, 1) }
@@ -4551,10 +4556,17 @@ function renderCityAnalysisDashboardSection({ dashboard, section }) {
   }
 
   if (section === 'summary-app') {
-    return renderCityKpiCard({
-      label: 'Входили в приложение',
-      value: formatNumber(summary.appActiveUsers)
-    });
+    return [
+      renderCityKpiCard({
+        label: 'Входили в приложение',
+        value: formatNumber(summary.appActiveUsers)
+      }),
+      renderCityKpiCard({
+        label: 'Активная за 30 дней',
+        value: formatNumber(summary.app30dActiveUsers),
+        detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`
+      })
+    ].join('');
   }
 
   if (section === 'summary-responses') {

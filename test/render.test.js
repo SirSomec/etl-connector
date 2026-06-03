@@ -1325,6 +1325,10 @@ test('renderCityAnalysisDashboard renders filters, active navigation, KPI cards,
         bookedStatusLocatedUsers: 310,
         workedStatusLocatedUsers: 170,
         appActiveUsers: 400,
+        app30dActiveUsers: 560,
+        app30dReadyStatusUsers: 210,
+        app30dBookedStatusUsers: 190,
+        app30dWorkedStatusUsers: 160,
         bookedUsers: 130,
         completedUsers: 75,
         avgDaily30dActiveUsersPerRequest: 11.25
@@ -1377,6 +1381,8 @@ test('renderCityAnalysisDashboard renders filters, active navigation, KPI cards,
   assert.match(html, /Активная база/);
   assert.match(html, /ready 420 · booked 310 · worked 170/);
   assert.match(html, /Входили в приложение/);
+  assert.match(html, /Активная за 30 дней/);
+  assert.match(html, /ready 210 · booked 190 · worked 160/);
   assert.match(html, /Откликались/);
   assert.match(html, /Завершали/);
   assert.match(html, /30д активные \/ заявка/);
@@ -1477,6 +1483,10 @@ test('renderCityAnalysisDashboardSection renders requested fragment without full
       bookedStatusLocatedUsers: 310,
       workedStatusLocatedUsers: 170,
       appActiveUsers: 400,
+      app30dActiveUsers: 560,
+      app30dReadyStatusUsers: 210,
+      app30dBookedStatusUsers: 190,
+      app30dWorkedStatusUsers: 160,
       bookedUsers: 130,
       completedUsers: 75,
       avgDaily30dActiveUsersPerRequest: 11.25
@@ -1490,12 +1500,18 @@ test('renderCityAnalysisDashboardSection renders requested fragment without full
   };
 
   const summaryHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'summary-demand' });
+  const appHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'summary-app' });
   const compositionHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'composition' });
 
   assert.match(summaryHtml, /Заказ/);
   assert.match(summaryHtml, /Не удаленные заявки/);
   assert.match(summaryHtml, /120/);
   assert.doesNotMatch(summaryHtml, /<html/);
+  assert.match(appHtml, /Входили в приложение/);
+  assert.match(appHtml, /Активная за 30 дней/);
+  assert.match(appHtml, /560/);
+  assert.match(appHtml, /ready 210 · booked 190 · worked 160/);
+  assert.doesNotMatch(appHtml, /<html/);
   assert.match(compositionHtml, /Состав заказа/);
   assert.match(compositionHtml, /Brand A/);
 });

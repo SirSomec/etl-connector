@@ -6,7 +6,7 @@ const { writeFileAtomically } = require('./atomicFile');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const FILTER_OPTION_KEYS = ['client', 'profession', 'orderType', 'jobStatus', 'contractor'];
-const CITY_ANALYSIS_CACHE_VERSION = 1;
+const CITY_ANALYSIS_CACHE_VERSION = 2;
 const CITY_ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CITY_ANALYSIS_CACHE_PATH = path.join(process.cwd(), 'data', 'city-analysis-cache.json');
 const CITY_ANALYSIS_SECTION_NAMES = [
@@ -313,6 +313,10 @@ function mergeCityAnalysisRows(filters, datasets) {
       bookedStatusLocatedUsers: numberValue(summaryRow.booked_status_located_users),
       workedStatusLocatedUsers: numberValue(summaryRow.worked_status_located_users),
       appActiveUsers: numberValue(summaryRow.app_active_users),
+      app30dActiveUsers: numberValue(summaryRow.app_30d_active_users),
+      app30dReadyStatusUsers: numberValue(summaryRow.app_30d_ready_status_users),
+      app30dBookedStatusUsers: numberValue(summaryRow.app_30d_booked_status_users),
+      app30dWorkedStatusUsers: numberValue(summaryRow.app_30d_worked_status_users),
       bookedUsers: numberValue(summaryRow.booked_users),
       completedUsers: numberValue(summaryRow.completed_users),
       avgDaily30dActiveUsersPerRequest: numberValue(summaryRow.avg_daily_30d_active_users_per_request)
@@ -794,6 +798,21 @@ function appActiveUsersCte() {
   )`;
 }
 
+function app30dActiveUsersCte() {
+  return `app_30d_active_users AS (
+    SELECT DISTINCT
+      located.user_id AS user_id,
+      located.is_ready_status AS is_ready_status,
+      located.is_booked_status AS is_booked_status,
+      located.is_worked_status AS is_worked_status
+    FROM appmetrica_sessions AS s
+    INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_30d_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_30d_to:DateTime}
+  )`;
+}
+
 function bookedUsersCte() {
   return `booked_users AS (
     SELECT DISTINCT worker.user AS user_id
@@ -872,6 +891,7 @@ function summaryQuery(whereSql, active30dWhereSql) {
   ${candidateWorkersCte()},
   ${locatedUsersCte()},
   ${appActiveUsersCte()},
+  ${app30dActiveUsersCte()},
   ${bookedUsersCte()},
   ${completedUsersCte()},
   ${daily30dRatioCte(active30dWhereSql)}
@@ -884,6 +904,10 @@ function summaryQuery(whereSql, active30dWhereSql) {
     (SELECT uniqExactIf(located.user_id, located.is_booked_status) FROM located_users AS located) AS booked_status_located_users,
     (SELECT uniqExactIf(located.user_id, located.is_worked_status) FROM located_users AS located) AS worked_status_located_users,
     (SELECT uniqExact(user_id) FROM app_active_users) AS app_active_users,
+    (SELECT uniqExact(user_id) FROM app_30d_active_users) AS app_30d_active_users,
+    (SELECT uniqExactIf(user_id, is_ready_status) FROM app_30d_active_users) AS app_30d_ready_status_users,
+    (SELECT uniqExactIf(user_id, is_booked_status) FROM app_30d_active_users) AS app_30d_booked_status_users,
+    (SELECT uniqExactIf(user_id, is_worked_status) FROM app_30d_active_users) AS app_30d_worked_status_users,
     (SELECT uniqExact(user_id) FROM booked_users) AS booked_users,
     (SELECT uniqExact(user_id) FROM completed_users) AS completed_users,
     ifNull((SELECT avg_ratio FROM daily_30d_ratio), 0) AS avg_daily_30d_active_users_per_request
@@ -921,10 +945,14 @@ function summaryAppQuery(whereSql) {
   ${cityBoundsCte()},
   ${candidateWorkersCte()},
   ${locatedUsersCte()},
-  ${appActiveUsersCte()}
+  ${appActiveUsersCte()},
+  ${app30dActiveUsersCte()}
   SELECT
-    uniqExact(user_id) AS app_active_users
-  FROM app_active_users
+    (SELECT uniqExact(user_id) FROM app_active_users) AS app_active_users,
+    (SELECT uniqExact(user_id) FROM app_30d_active_users) AS app_30d_active_users,
+    (SELECT uniqExactIf(user_id, is_ready_status) FROM app_30d_active_users) AS app_30d_ready_status_users,
+    (SELECT uniqExactIf(user_id, is_booked_status) FROM app_30d_active_users) AS app_30d_booked_status_users,
+    (SELECT uniqExactIf(user_id, is_worked_status) FROM app_30d_active_users) AS app_30d_worked_status_users
   FORMAT JSONEachRow`;
 }
 

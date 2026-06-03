@@ -98,6 +98,10 @@ test('mergeCityAnalysisRows maps summary, composition, dynamics, and empty city 
       booked_status_located_users: 9,
       worked_status_located_users: 10,
       app_active_users: 18,
+      app_30d_active_users: 42,
+      app_30d_ready_status_users: 12,
+      app_30d_booked_status_users: 14,
+      app_30d_worked_status_users: 16,
       booked_users: 11,
       completed_users: 7,
       avg_daily_30d_active_users_per_request: 2.5
@@ -138,6 +142,10 @@ test('mergeCityAnalysisRows maps summary, composition, dynamics, and empty city 
   assert.equal(dashboard.summary.bookedStatusLocatedUsers, 9);
   assert.equal(dashboard.summary.workedStatusLocatedUsers, 10);
   assert.equal(dashboard.summary.appActiveUsers, 18);
+  assert.equal(dashboard.summary.app30dActiveUsers, 42);
+  assert.equal(dashboard.summary.app30dReadyStatusUsers, 12);
+  assert.equal(dashboard.summary.app30dBookedStatusUsers, 14);
+  assert.equal(dashboard.summary.app30dWorkedStatusUsers, 16);
   assert.equal(dashboard.summary.bookedUsers, 11);
   assert.equal(dashboard.summary.completedUsers, 7);
   assert.equal(dashboard.summary.avgDaily30dActiveUsersPerRequest, 2.5);
@@ -182,6 +190,10 @@ test('mergeCityAnalysisRows returns zero model when city is not selected', () =>
       booked_status_located_users: 9,
       worked_status_located_users: 10,
       app_active_users: 18,
+      app_30d_active_users: 42,
+      app_30d_ready_status_users: 12,
+      app_30d_booked_status_users: 14,
+      app_30d_worked_status_users: 16,
       booked_users: 11,
       completed_users: 7,
       avg_daily_30d_active_users_per_request: 2.5
@@ -212,6 +224,10 @@ test('mergeCityAnalysisRows returns zero model when city is not selected', () =>
     bookedStatusLocatedUsers: 0,
     workedStatusLocatedUsers: 0,
     appActiveUsers: 0,
+    app30dActiveUsers: 0,
+    app30dReadyStatusUsers: 0,
+    app30dBookedStatusUsers: 0,
+    app30dWorkedStatusUsers: 0,
     bookedUsers: 0,
     completedUsers: 0,
     avgDaily30dActiveUsersPerRequest: 0
@@ -466,7 +482,13 @@ test('city geo base sections locate users from filtered demand workplaces', asyn
       }
 
       if (operation === 'city analysis summary app') {
-        return [{ app_active_users: 25 }];
+        return [{
+          app_active_users: 25,
+          app_30d_active_users: 65,
+          app_30d_ready_status_users: 20,
+          app_30d_booked_status_users: 25,
+          app_30d_worked_status_users: 20
+        }];
       }
 
       if (operation === 'city analysis summary ratio') {
@@ -524,6 +546,12 @@ test('city geo base sections locate users from filtered demand workplaces', asyn
   assert.equal(summaryRatioCall.query.includes('active_30d_orders AS ('), true);
   assert.equal(summaryRatioCall.query.includes('w.location__coordinates AS workplace_coordinates'), true);
   assert.match(summaryRatioCall.query, /raw_city_workplaces AS \([\s\S]*FROM active_30d_orders/s);
+  assert.equal(summaryAppCall.query.includes('app_30d_active_users AS ('), true);
+  assert.equal(summaryAppCall.query.includes('{active_30d_from:DateTime}'), true);
+  assert.equal(summaryAppCall.query.includes('{active_30d_to:DateTime}'), true);
+  assert.equal(summaryAppCall.query.includes('app_30d_ready_status_users'), true);
+  assert.equal(summaryAppCall.query.includes('app_30d_booked_status_users'), true);
+  assert.equal(summaryAppCall.query.includes('app_30d_worked_status_users'), true);
 });
 
 test('loadCityAnalysisDashboard queries city datasets with safe parameters', async () => {
@@ -561,6 +589,10 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
           booked_status_located_users: 2,
           worked_status_located_users: 3,
           app_active_users: 6,
+          app_30d_active_users: 16,
+          app_30d_ready_status_users: 5,
+          app_30d_booked_status_users: 6,
+          app_30d_worked_status_users: 7,
           booked_users: 4,
           completed_users: 3,
           avg_daily_30d_active_users_per_request: 1.4
@@ -618,6 +650,10 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   assert.equal(dashboard.summary.readyStatusLocatedUsers, 3);
   assert.equal(dashboard.summary.bookedStatusLocatedUsers, 2);
   assert.equal(dashboard.summary.workedStatusLocatedUsers, 3);
+  assert.equal(dashboard.summary.app30dActiveUsers, 16);
+  assert.equal(dashboard.summary.app30dReadyStatusUsers, 5);
+  assert.equal(dashboard.summary.app30dBookedStatusUsers, 6);
+  assert.equal(dashboard.summary.app30dWorkedStatusUsers, 7);
   assert.equal(dashboard.summary.bookedUsers, 4);
   assert.equal(dashboard.composition.brands[0].label, 'Brand A');
   assert.deepEqual(calls.map((call) => call.operation), [
@@ -703,6 +739,10 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   assert.equal(summaryCall.query.includes('AS ready_status_located_users'), true);
   assert.equal(summaryCall.query.includes('AS booked_status_located_users'), true);
   assert.equal(summaryCall.query.includes('AS worked_status_located_users'), true);
+  assert.equal(summaryCall.query.includes('app_30d_active_users AS ('), true);
+  assert.equal(summaryCall.query.includes('app_30d_ready_status_users'), true);
+  assert.equal(summaryCall.query.includes('app_30d_booked_status_users'), true);
+  assert.equal(summaryCall.query.includes('app_30d_worked_status_users'), true);
   assert.equal(summaryCall.query.includes('located.is_ready_status'), true);
   assert.equal(summaryCall.query.includes('located.is_booked_status'), true);
   assert.equal(summaryCall.query.includes('located.is_worked_status'), true);

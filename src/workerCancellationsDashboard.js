@@ -41,6 +41,13 @@ const SORT_COLUMNS = {
   postStartCancellations: 'post_start_cancellations',
   failedShifts: 'failed_shifts'
 };
+const WORKER_CANCELLATION_NUMERIC_FILTERS = [
+  { key: 'confirmedShifts', column: 'confirmed_shifts', param: 'confirmed_shifts' },
+  { key: 'workerCancellations', column: 'worker_cancellations', param: 'worker_cancellations' },
+  { key: 'workerCancellations24h', column: 'worker_cancellations_24h', param: 'worker_cancellations_24h' },
+  { key: 'postStartCancellations', column: 'post_start_cancellations', param: 'post_start_cancellations' },
+  { key: 'failedShifts', column: 'failed_shifts', param: 'failed_shifts' }
+];
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -123,6 +130,43 @@ function normalizeDirection(value) {
   return ALLOWED_DIRECTIONS.has(direction) ? direction : DEFAULT_DIRECTION;
 }
 
+function normalizeNonNegativeNumber(value) {
+  const text = cleanText(value);
+
+  if (text === '') {
+    return undefined;
+  }
+
+  const number = Number(text.replace(',', '.'));
+
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function appendWorkerCancellationOptionalFilters(filters, input) {
+  const search = cleanText(input.search);
+
+  if (search !== '') {
+    filters.search = search;
+  }
+
+  for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
+    const fromKey = `${metric.key}From`;
+    const toKey = `${metric.key}To`;
+    const from = normalizeNonNegativeNumber(input[fromKey]);
+    const to = normalizeNonNegativeNumber(input[toKey]);
+
+    if (typeof from !== 'undefined') {
+      filters[fromKey] = from;
+    }
+
+    if (typeof to !== 'undefined') {
+      filters[toKey] = to;
+    }
+  }
+
+  return filters;
+}
+
 function normalizeWorkerCancellationFilters(input = {}, now = new Date()) {
   const today = parseDateOnly(formatDateUTC(now));
   const defaultFromDate = firstDayOfMonthUTC(today);
@@ -142,7 +186,7 @@ function normalizeWorkerCancellationFilters(input = {}, now = new Date()) {
   const page = normalizePage(input.page);
   const pageSize = normalizePageSize(input.pageSize);
 
-  return {
+  return appendWorkerCancellationOptionalFilters({
     from,
     to,
     fromDateTime: toDateTimeParam(from),
@@ -152,7 +196,7 @@ function normalizeWorkerCancellationFilters(input = {}, now = new Date()) {
     offset: (page - 1) * pageSize,
     sort: normalizeSort(input.sort),
     direction: normalizeDirection(input.direction)
-  };
+  }, input);
 }
 
 function numberValue(value) {
@@ -284,27 +328,65 @@ async function readThroughCache(cache, key, loader) {
 }
 
 function cacheKeyForWorkerCancellationsSection(section, filters) {
+  const keyFilters = {
+    from: filters.from,
+    to: filters.to,
+    page: filters.page,
+    pageSize: filters.pageSize,
+    sort: filters.sort,
+    direction: filters.direction
+  };
+
+  if (filters.search) {
+    keyFilters.search = filters.search;
+  }
+
+  for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
+    const fromKey = `${metric.key}From`;
+    const toKey = `${metric.key}To`;
+
+    if (typeof filters[fromKey] !== 'undefined') {
+      keyFilters[fromKey] = filters[fromKey];
+    }
+
+    if (typeof filters[toKey] !== 'undefined') {
+      keyFilters[toKey] = filters[toKey];
+    }
+  }
+
   return JSON.stringify({
     board: 'worker-cancellations',
     section,
-    filters: {
-      from: filters.from,
-      to: filters.to,
-      page: filters.page,
-      pageSize: filters.pageSize,
-      sort: filters.sort,
-      direction: filters.direction
-    }
+    filters: keyFilters
   });
 }
 
 function paramsForFilters(filters) {
-  return {
+  const params = {
     param_from: filters.fromDateTime,
     param_to: filters.toExclusiveDateTime,
     param_limit: filters.pageSize,
     param_offset: filters.offset
   };
+
+  if (filters.search) {
+    params.param_search = filters.search;
+  }
+
+  for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
+    const fromKey = `${metric.key}From`;
+    const toKey = `${metric.key}To`;
+
+    if (typeof filters[fromKey] !== 'undefined') {
+      params[`param_${metric.param}_from`] = filters[fromKey];
+    }
+
+    if (typeof filters[toKey] !== 'undefined') {
+      params[`param_${metric.param}_to`] = filters[toKey];
+    }
+  }
+
+  return params;
 }
 
 function paramsForDetails(detailInput) {
@@ -316,7 +398,28 @@ function paramsForDetails(detailInput) {
   };
 }
 
-function workerCancellationMetricsSelect() {
+function hasWorkerCancellationMetricFilters(filters) {
+  if (filters.search) {
+    return true;
+  }
+
+  return WORKER_CANCELLATION_NUMERIC_FILTERS.some((metric) => {
+    const fromKey = `${metric.key}From`;
+    const toKey = `${metric.key}To`;
+
+    return typeof filters[fromKey] !== 'undefined' || typeof filters[toKey] !== 'undefined';
+  });
+}
+
+function workerFullNameExpression() {
+  return `coalesce(
+      nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
+      nullIf(trim(ifNull(w.full_name, '')), ''),
+      wm.worker_id
+    )`;
+}
+
+function workerCancellationMetricsCtes() {
   return `WITH shift_facts AS (
     SELECT
       j._id AS job,
@@ -374,14 +477,50 @@ function workerCancellationMetricsSelect() {
     FROM shift_facts AS sf
     LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job
     GROUP BY sf.worker_id
-  )
+  )`;
+}
+
+function workerMetricsJoinsSql() {
+  return `FROM worker_metrics AS wm
+  LEFT JOIN mg_workers AS w ON wm.worker_id = w._id
+  LEFT JOIN mg_users AS u ON w.user = u._id`;
+}
+
+function workerMetricsWhereSql(filters) {
+  const conditions = [];
+
+  if (filters.search) {
+    conditions.push(`(
+      positionCaseInsensitive(wm.worker_id, {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.user, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(u.phone, ''), {search:String}) > 0
+      OR positionCaseInsensitive(${workerFullNameExpression()}, {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.full_address__city, ''), {search:String}) > 0
+    )`);
+  }
+
+  for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
+    const fromKey = `${metric.key}From`;
+    const toKey = `${metric.key}To`;
+
+    if (typeof filters[fromKey] !== 'undefined') {
+      conditions.push(`wm.${metric.column} >= {${metric.param}_from:Float64}`);
+    }
+
+    if (typeof filters[toKey] !== 'undefined') {
+      conditions.push(`wm.${metric.column} <= {${metric.param}_to:Float64}`);
+    }
+  }
+
+  return conditions.length === 0 ? '' : `\n  WHERE ${conditions.join('\n    AND ')}`;
+}
+
+function workerCancellationMetricsSelect(filters = {}) {
+  return `${workerCancellationMetricsCtes()}
   SELECT
     wm.worker_id AS worker_id,
-    coalesce(
-      nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
-      nullIf(trim(ifNull(w.full_name, '')), ''),
-      wm.worker_id
-    ) AS full_name,
+    ifNull(w.user, '') AS user_id,
+    ${workerFullNameExpression()} AS full_name,
     ifNull(u.phone, '') AS phone,
     ifNull(w.full_address__city, '') AS city,
     wm.confirmed_shifts AS confirmed_shifts,
@@ -389,12 +528,17 @@ function workerCancellationMetricsSelect() {
     wm.worker_cancellations_24h AS worker_cancellations_24h,
     wm.post_start_cancellations AS post_start_cancellations,
     wm.failed_shifts AS failed_shifts
-  FROM worker_metrics AS wm
-  LEFT JOIN mg_workers AS w ON wm.worker_id = w._id
-  LEFT JOIN mg_users AS u ON w.user = u._id`;
+  ${workerMetricsJoinsSql()}${workerMetricsWhereSql(filters)}`;
 }
 
-function totalWorkersQuery() {
+function totalWorkersQuery(filters = {}) {
+  if (hasWorkerCancellationMetricFilters(filters)) {
+    return `${workerCancellationMetricsCtes()}
+  SELECT count() AS total_workers
+  ${workerMetricsJoinsSql()}${workerMetricsWhereSql(filters)}
+  FORMAT JSONEachRow`;
+  }
+
   return `WITH shift_facts AS (
     SELECT
       j.worker AS worker_id
@@ -419,7 +563,7 @@ function orderByForFilters(filters) {
 }
 
 function workersQuery(filters) {
-  return `${workerCancellationMetricsSelect()}
+  return `${workerCancellationMetricsSelect(filters)}
   ORDER BY ${orderByForFilters(filters)}
   LIMIT {limit:UInt64} OFFSET {offset:UInt64}
   FORMAT JSONEachRow`;
@@ -519,7 +663,7 @@ async function loadWorkerCancellationRows(client, filters) {
   const params = paramsForFilters(filters);
   const [totalRows, workerRows] = await Promise.all([
     client.queryJSONEachRow(
-      totalWorkersQuery(),
+      totalWorkersQuery(filters),
       params,
       'worker cancellations total workers'
     ),

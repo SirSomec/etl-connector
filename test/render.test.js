@@ -136,6 +136,38 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
   assert.match(html, /document\.querySelectorAll\('\[data-dashboard-fragment-url\]/);
 });
 
+test('renderWorkerCancellationsDashboard renders search and numeric range filters', () => {
+  const html = renderWorkerCancellationsDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        pageSize: 50,
+        sort: 'workerCancellations',
+        direction: 'desc',
+        search: 'user-1 <bad>',
+        confirmedShiftsFrom: 5,
+        confirmedShiftsTo: 10,
+        workerCancellationsTo: 4,
+        failedShiftsFrom: 1
+      }
+    }
+  });
+
+  assert.match(html, /<input id="search" name="search" type="search" value="user-1 &lt;bad&gt;"/);
+  assert.match(html, /<input class="metric-range-input" id="confirmedShiftsFrom" name="confirmedShiftsFrom" type="number" min="0" step="1" value="5">/);
+  assert.match(html, /<input class="metric-range-input" id="confirmedShiftsTo" name="confirmedShiftsTo" type="number" min="0" step="1" value="10">/);
+  assert.match(html, /<input class="metric-range-input" id="workerCancellationsTo" name="workerCancellationsTo" type="number" min="0" step="1" value="4">/);
+  assert.match(html, /<input class="metric-range-input" id="failedShiftsFrom" name="failedShiftsFrom" type="number" min="0" step="1" value="1">/);
+  assert.match(
+    html,
+    /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers&amp;from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc&amp;search=user-1\+%3Cbad%3E&amp;confirmedShiftsFrom=5&amp;confirmedShiftsTo=10&amp;workerCancellationsTo=4&amp;failedShiftsFrom=1"/
+  );
+});
+
 test('renderWorkerCancellationsDashboardSection renders sortable escaped table and full phone', () => {
   const html = renderWorkerCancellationsDashboardSection({
     section: 'workers',
@@ -203,6 +235,60 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
   assert.match(html, /Страница 1 из 3 · исполнителей: 125/);
   assert.match(html, /page=2/);
   assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerCancellationsDashboardSection preserves search and numeric filters in table links', () => {
+  const html = renderWorkerCancellationsDashboardSection({
+    section: 'workers',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        pageSize: 50,
+        sort: 'workerCancellations',
+        direction: 'desc',
+        search: 'user-1',
+        confirmedShiftsFrom: 5,
+        workerCancellationsTo: 4,
+        failedShiftsFrom: 1
+      },
+      rows: [
+        {
+          workerId: 'worker-1',
+          fullName: 'Ivan Petrov',
+          phone: '+79990000000',
+          city: 'Moscow',
+          confirmedShifts: 10,
+          workerCancellations: 3,
+          workerCancellations24h: 2,
+          postStartCancellations: 1,
+          failedShifts: 4
+        }
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 50,
+        totalWorkers: 125,
+        totalPages: 3,
+        hasPrevious: false,
+        hasNext: true
+      }
+    }
+  });
+
+  assert.match(
+    html,
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=fullName&amp;direction=asc&amp;search=user-1&amp;confirmedShiftsFrom=5&amp;workerCancellationsTo=4&amp;failedShiftsFrom=1"/
+  );
+  assert.match(
+    html,
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;page=2&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc&amp;search=user-1&amp;confirmedShiftsFrom=5&amp;workerCancellationsTo=4&amp;failedShiftsFrom=1"/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=workerCancellations"/
+  );
 });
 
 test('renderWorkerCancellationsDashboardSection renders empty state', () => {

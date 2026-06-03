@@ -632,6 +632,15 @@ function layout({
       width: 116px;
     }
 
+    .worker-search-field {
+      flex: 1 1 260px;
+      min-width: 260px;
+    }
+
+    .metric-range-input {
+      width: 100%;
+    }
+
     .multi-filter-option span {
       min-width: 0;
       overflow-wrap: anywhere;
@@ -1796,6 +1805,12 @@ function layout({
       .filter-bar {
         align-items: stretch;
         flex-direction: column;
+      }
+
+      .worker-search-field,
+      .metric-range-field {
+        width: 100%;
+        min-width: 0;
       }
 
       button {
@@ -3266,6 +3281,7 @@ const WORKER_CANCELLATION_COLUMNS = [
   { key: 'postStartCancellations', label: 'Отмены после старта', numeric: true },
   { key: 'failedShifts', label: 'Провалы / failed', numeric: true }
 ];
+const WORKER_CANCELLATION_NUMERIC_COLUMNS = WORKER_CANCELLATION_COLUMNS.filter((column) => column.numeric);
 
 function workerCancellationsColumn(key) {
   return WORKER_CANCELLATION_COLUMNS.find((column) => column.key === key) || WORKER_CANCELLATION_COLUMNS[0];
@@ -3289,6 +3305,12 @@ function workerCancellationsPageHref(filters, overrides = {}) {
   addDashboardQueryParam(params, 'pageSize', nextFilters.pageSize);
   addDashboardQueryParam(params, 'sort', nextFilters.sort);
   addDashboardQueryParam(params, 'direction', nextFilters.direction);
+  addDashboardQueryParam(params, 'search', nextFilters.search);
+
+  for (const column of WORKER_CANCELLATION_NUMERIC_COLUMNS) {
+    addDashboardQueryParam(params, `${column.key}From`, nextFilters[`${column.key}From`]);
+    addDashboardQueryParam(params, `${column.key}To`, nextFilters[`${column.key}To`]);
+  }
 
   const query = params.toString();
 
@@ -3541,6 +3563,30 @@ function renderWorkerCancellationsPageSizeOptions(selectedPageSize) {
     .join('');
 }
 
+function renderWorkerCancellationRangeInput({ id, label, value }) {
+  return `<div class="field metric-range-field">
+      <label for="${escapeHtml(id)}">${escapeHtml(label)}</label>
+      <input class="metric-range-input" id="${escapeHtml(id)}" name="${escapeHtml(id)}" type="number" min="0" step="1" value="${escapeHtml(rangeFilterValue(value))}">
+    </div>`;
+}
+
+function renderWorkerCancellationRangeFilters(filters) {
+  return WORKER_CANCELLATION_NUMERIC_COLUMNS
+    .flatMap((column) => [
+      renderWorkerCancellationRangeInput({
+        id: `${column.key}From`,
+        label: `${column.label} от`,
+        value: filters[`${column.key}From`]
+      }),
+      renderWorkerCancellationRangeInput({
+        id: `${column.key}To`,
+        label: `${column.label} до`,
+        value: filters[`${column.key}To`]
+      })
+    ])
+    .join('');
+}
+
 function renderWorkerCancellationsModal() {
   return `<div class="worker-cancellation-modal" data-worker-cancellation-modal hidden>
   <div class="worker-cancellation-modal-backdrop" data-worker-cancellation-modal-close></div>
@@ -3599,6 +3645,11 @@ function renderWorkerCancellationsDashboard({
       <label for="to">По</label>
       <input id="to" name="to" type="date" value="${escapeHtml(filters.to)}">
     </div>
+    <div class="field worker-search-field">
+      <label for="search">Поиск</label>
+      <input id="search" name="search" type="search" value="${escapeHtml(filters.search || '')}" placeholder="ФИО, телефон, worker/user id, город">
+    </div>
+    ${renderWorkerCancellationRangeFilters(filters)}
     <div class="field">
       <label for="pageSize">Строк</label>
       <select id="pageSize" name="pageSize">${renderWorkerCancellationsPageSizeOptions(filters.pageSize)}</select>

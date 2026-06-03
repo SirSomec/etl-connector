@@ -919,6 +919,34 @@ test('GET /dashboards/worker-cancellations/section renders cached workers fragme
   }
 });
 
+test('GET /dashboards/worker-cancellations/section passes search and numeric ranges to data query', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/worker-cancellations/section?section=workers&from=2026-05-01&to=2026-05-31&pageSize=50&sort=workerCancellations&direction=desc&search=user-1&confirmedShiftsFrom=5&workerCancellationsTo=4&failedShiftsFrom=1'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(text, /\+79990000000/);
+    assert.doesNotMatch(text, /<html/);
+  });
+
+  const workerCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('worker cancellations')
+  );
+
+  assert.equal(workerCalls.length, 2);
+
+  for (const call of workerCalls) {
+    assert.equal(call[2].param_search, 'user-1');
+    assert.equal(call[2].param_confirmed_shifts_from, 5);
+    assert.equal(call[2].param_worker_cancellations_to, 4);
+    assert.equal(call[2].param_failed_shifts_from, 1);
+  }
+});
+
 test('GET /dashboards/worker-cancellations/details renders selected metric fragment', async () => {
   const client = createFakeClient();
 

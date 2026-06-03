@@ -109,6 +109,31 @@ test('normalizeWorkerCancellationFilters rejects pages above the maximum guard',
   assert.equal(filters.offset, 0);
 });
 
+test('normalizeWorkerCancellationFilters keeps search and valid numeric ranges only', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      search: ' user-123 ',
+      confirmedShiftsFrom: '2',
+      confirmedShiftsTo: '10',
+      workerCancellationsFrom: 'bad',
+      workerCancellationsTo: '5',
+      failedShiftsFrom: '-1',
+      failedShiftsTo: '0'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.equal(filters.search, 'user-123');
+  assert.equal(filters.confirmedShiftsFrom, 2);
+  assert.equal(filters.confirmedShiftsTo, 10);
+  assert.equal(filters.workerCancellationsFrom, undefined);
+  assert.equal(filters.workerCancellationsTo, 5);
+  assert.equal(filters.failedShiftsFrom, undefined);
+  assert.equal(filters.failedShiftsTo, 0);
+});
+
 test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pagination', () => {
   const filters = normalizeWorkerCancellationFilters(
     {
@@ -393,6 +418,77 @@ test('loadWorkerCancellationsDashboardSection queries workers with safe params a
   assert.equal(workersCall.query.includes('w.full_address__city'), true);
   assert.equal(workersCall.query.includes('ORDER BY full_name ASC, worker_id ASC'), true);
   assert.equal(workersCall.query.includes('ORDER BY fullName'), false);
+  assert.equal(workersCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
+});
+
+test('loadWorkerCancellationsDashboardSection filters search and numeric ranges before pagination', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations total workers': [{ total_workers: '7' }],
+    'worker cancellations workers': [
+      {
+        worker_id: 'worker-1',
+        user_id: 'user-1',
+        full_name: 'Ivan Petrov',
+        phone: '+79990000000',
+        city: 'Moscow',
+        confirmed_shifts: '10',
+        worker_cancellations: '4',
+        worker_cancellations_24h: '3',
+        post_start_cancellations: '2',
+        failed_shifts: '1'
+      }
+    ]
+  });
+
+  const dashboard = await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      search: 'user-1',
+      confirmedShiftsFrom: '5',
+      workerCancellationsTo: '4',
+      failedShiftsFrom: '1',
+      pageSize: '50',
+      sort: 'workerCancellations',
+      direction: 'desc'
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.equal(dashboard.filters.search, 'user-1');
+  assert.equal(dashboard.filters.confirmedShiftsFrom, 5);
+  assert.equal(dashboard.filters.workerCancellationsTo, 4);
+  assert.equal(dashboard.filters.failedShiftsFrom, 1);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations total workers',
+    'worker cancellations workers'
+  ]);
+
+  for (const call of calls) {
+    assert.equal(call.params.param_search, 'user-1');
+    assert.equal(call.params.param_confirmed_shifts_from, 5);
+    assert.equal(call.params.param_worker_cancellations_to, 4);
+    assert.equal(call.params.param_failed_shifts_from, 1);
+    assert.equal(call.query.includes('positionCaseInsensitive'), true);
+    assert.equal(call.query.includes('wm.worker_id'), true);
+    assert.equal(call.query.includes('w.user'), true);
+    assert.equal(call.query.includes('u.phone'), true);
+    assert.equal(call.query.includes('w.full_address__city'), true);
+    assert.equal(call.query.includes('wm.confirmed_shifts >= {confirmed_shifts_from:Float64}'), true);
+    assert.equal(call.query.includes('wm.worker_cancellations <= {worker_cancellations_to:Float64}'), true);
+    assert.equal(call.query.includes('wm.failed_shifts >= {failed_shifts_from:Float64}'), true);
+    assert.equal(call.query.includes('DROP TABLE'), false);
+  }
+
+  const totalCall = calls[0];
+  const workersCall = calls[1];
+  assert.equal(totalCall.query.includes('SELECT count() AS total_workers'), true);
+  assert.equal(totalCall.query.includes('ORDER BY'), false);
+  assert.equal(totalCall.query.includes('LIMIT'), false);
+  assert.equal(workersCall.query.includes('ORDER BY worker_cancellations DESC, worker_id ASC'), true);
+  assert.equal(workersCall.query.indexOf('WHERE') < workersCall.query.indexOf('ORDER BY'), true);
   assert.equal(workersCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
 });
 

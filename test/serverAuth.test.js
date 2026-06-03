@@ -22,6 +22,28 @@ function createFakeClient() {
     async getPreview(tableName) {
       this.calls.push(['getPreview', tableName]);
       return [{ _id: 'order-1' }];
+    },
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+
+      if (operation === 'sales by project orders summary') {
+        return [{ ordered_shifts: 10, workplaces_with_orders: 3, avg_worker_rate_hour: 250 }];
+      }
+
+      if (operation === 'sales by project shifts summary') {
+        return [
+          {
+            worked_shifts: 8,
+            revenue_rub: 12000,
+            unique_workers: 5,
+            workplaces_with_worked_shifts: 2,
+            cancelled_shifts: 1,
+            self_booked_confirmed_shifts: 4
+          }
+        ];
+      }
+
+      return [];
     }
   };
 }
@@ -316,6 +338,46 @@ test('managed users only access granted sections', async () => {
     assert.doesNotMatch(home.text, /href="\/admin\/users"/);
     assert.equal(users.response.status, 403);
     assert.match(users.text, /Недостаточно прав/);
+  });
+});
+
+test('dashboard section fragments respect sql-inspector permission', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await userStore.createUser({
+      email: 'plain@example.test',
+      name: 'Plain Analyst',
+      role: 'analyst',
+      permissions: ['sales-by-project'],
+      password: 'AnalystPass123'
+    });
+    await userStore.createUser({
+      email: 'sql@example.test',
+      name: 'SQL Analyst',
+      role: 'analyst',
+      permissions: ['sales-by-project', 'sql-inspector'],
+      password: 'AnalystPass123'
+    });
+
+    const plainLogin = await login(baseUrl, 'plain@example.test', 'AnalystPass123');
+    const sqlLogin = await login(baseUrl, 'sql@example.test', 'AnalystPass123');
+    const sectionPath = '/dashboards/sales-by-project/section?section=summary&period=month&from=2026-04-01&to=2026-04-30';
+    const plain = await fetchText(baseUrl, sectionPath, {
+      headers: {
+        cookie: cookieFrom(plainLogin)
+      }
+    });
+    const sql = await fetchText(baseUrl, sectionPath, {
+      headers: {
+        cookie: cookieFrom(sqlLogin)
+      }
+    });
+
+    assert.equal(plain.response.status, 200);
+    assert.equal(sql.response.status, 200);
+    assert.doesNotMatch(plain.text, /data-sql-inspector-open/);
+    assert.doesNotMatch(plain.text, /filtered_orders/);
+    assert.match(sql.text, /data-sql-inspector-open/);
+    assert.match(sql.text, /filtered_orders/);
   });
 });
 

@@ -2,6 +2,10 @@ const {
   PERMISSION_DEFINITIONS,
   hasPermission
 } = require('./auth');
+const {
+  getSqlMetricInfo,
+  highlightSql
+} = require('./sqlMetricInfo');
 
 function escapeHtml(value) {
   return String(value)
@@ -77,6 +81,57 @@ function navLinksForUser(currentUser) {
 
 function renderHiddenCsrf(csrfToken) {
   return `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken || '')}">`;
+}
+
+function canViewSqlInspector(currentUser) {
+  if (currentUser === undefined) {
+    return false;
+  }
+
+  return hasPermission(currentUser, 'sql-inspector');
+}
+
+function renderSqlInspectorTrigger(metricId, currentUser) {
+  const info = getSqlMetricInfo(metricId);
+
+  if (!info || !canViewSqlInspector(currentUser)) {
+    return '';
+  }
+
+  return `<button type="button" class="sql-inspector-button" data-sql-inspector-open="${escapeHtml(info.id)}" aria-label="Показать SQL метрики: ${escapeHtml(info.title)}">i</button>`;
+}
+
+function renderSqlInspectorModal(metricId, currentUser) {
+  const info = getSqlMetricInfo(metricId);
+
+  if (!info || !canViewSqlInspector(currentUser)) {
+    return '';
+  }
+
+  return `<div class="sql-inspector-modal" data-sql-inspector-modal="${escapeHtml(info.id)}" hidden>
+  <div class="sql-inspector-backdrop" data-sql-inspector-close></div>
+  <div class="sql-inspector-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-inspector-title-${escapeHtml(info.id)}">
+    <div class="sql-inspector-head">
+      <h2 id="sql-inspector-title-${escapeHtml(info.id)}">${escapeHtml(info.title)}</h2>
+      <button type="button" class="sql-inspector-close" data-sql-inspector-close aria-label="Закрыть">×</button>
+    </div>
+    <div class="sql-inspector-body">
+      <p class="sql-inspector-description">${escapeHtml(info.description)}</p>
+      <pre class="sql-code-block"><code>${highlightSql(info.sql)}</code></pre>
+    </div>
+  </div>
+</div>`;
+}
+
+function renderSqlInspector(metricId, currentUser) {
+  return `${renderSqlInspectorTrigger(metricId, currentUser)}${renderSqlInspectorModal(metricId, currentUser)}`;
+}
+
+function renderMetricPanelHead(title, metricId, currentUser) {
+  return `<div class="metric-panel-head">
+  <h2>${escapeHtml(title)}</h2>
+  ${renderSqlInspector(metricId, currentUser)}
+</div>`;
 }
 
 function layout({
@@ -724,6 +779,133 @@ function layout({
       font-size: 12px;
       line-height: 1.25;
       overflow-wrap: anywhere;
+    }
+
+    .metric-panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .metric-panel-head h2 {
+      margin-bottom: 14px;
+    }
+
+    .sql-inspector-button {
+      width: 22px;
+      min-width: 22px;
+      min-height: 22px;
+      padding: 0;
+      border-color: var(--line);
+      border-radius: 50%;
+      background: #f0f2f4;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .sql-inspector-button:hover,
+    .sql-inspector-button:focus {
+      border-color: var(--accent);
+      background: var(--link-bg);
+      color: var(--text);
+      outline: none;
+    }
+
+    .sql-inspector-modal[hidden] {
+      display: none;
+    }
+
+    .sql-inspector-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: grid;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .sql-inspector-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 33, 43, 0.42);
+    }
+
+    .sql-inspector-dialog {
+      position: relative;
+      width: min(900px, calc(100vw - 32px));
+      max-height: calc(100vh - 48px);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      box-shadow: 0 18px 50px rgba(31, 41, 55, 0.24);
+    }
+
+    .sql-inspector-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .sql-inspector-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .sql-inspector-close {
+      width: 34px;
+      min-width: 34px;
+      padding: 0;
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .sql-inspector-body {
+      max-height: calc(100vh - 126px);
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .sql-inspector-description {
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+
+    .sql-code-block {
+      margin: 0;
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0f1720;
+      color: #d8e2ea;
+      font-family: Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .sql-keyword {
+      color: #8bd3ff;
+      font-weight: 700;
+    }
+
+    .sql-param {
+      color: #f5c16c;
+    }
+
+    .sql-string {
+      color: #9bd48b;
     }
 
     .table-list {
@@ -1941,6 +2123,7 @@ function layout({
   }
   ${content.includes('data-worker-cancellation-modal') ? renderWorkerCancellationDetailsScript() : ''}
   ${content.includes('data-workplace-point-day-modal') ? renderWorkplacePointDayDetailsScript() : ''}
+  ${content.includes('data-sql-inspector-modal') || canViewSqlInspector(currentUser) ? renderSqlInspectorScript() : ''}
 </body>
 </html>`;
 }
@@ -2161,6 +2344,53 @@ function renderDashboardProgressiveScript() {
 
         renderError(root, message);
       });
+  });
+})();
+</script>`;
+}
+
+function renderSqlInspectorScript() {
+  return `<script>
+(function () {
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(value);
+    }
+
+    return String(value).replace(/"/g, '\\\\"');
+  }
+
+  document.addEventListener('click', function (event) {
+    var open = event.target.closest('[data-sql-inspector-open]');
+
+    if (open) {
+      var id = open.getAttribute('data-sql-inspector-open');
+      var modal = document.querySelector('[data-sql-inspector-modal="' + cssEscape(id) + '"]');
+
+      if (modal) {
+        modal.hidden = false;
+      }
+
+      return;
+    }
+
+    if (event.target.closest('[data-sql-inspector-close]')) {
+      var current = event.target.closest('[data-sql-inspector-modal]');
+
+      if (current) {
+        current.hidden = true;
+      }
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+
+    document.querySelectorAll('[data-sql-inspector-modal]').forEach(function (modal) {
+      modal.hidden = true;
+    });
   });
 })();
 </script>`;
@@ -2897,31 +3127,31 @@ ${renderDashboardLoadingSection({
 })}`;
 }
 
-function renderSalesByProjectDashboardSection({ dashboard, section }) {
+function renderSalesByProjectDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'summary') {
     return `<section class="section">
-  <h2>Основные показатели</h2>
+  ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
   ${renderKpiCards(dashboard.summary)}
 </section>`;
   }
 
   if (section === 'trend') {
     return `<section class="section">
-  <h2>Динамика</h2>
+  ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}
   ${renderTrendRows(dashboard.trendRows)}
 </section>`;
   }
 
   if (section === 'brands') {
     return `<section class="section">
-  <h2>Бренды</h2>
+  ${renderMetricPanelHead('Бренды', 'sales-by-project.brands', currentUser)}
   ${renderBrandRows(dashboard.brandRows)}
 </section>`;
   }
 
   if (section === 'statuses') {
     return `<section class="section">
-  <h2>Статусы работ</h2>
+  ${renderMetricPanelHead('Статусы работ', 'sales-by-project.statuses', currentUser)}
   ${renderStatusRows(dashboard.statusRows)}
 </section>`;
   }
@@ -2944,18 +3174,19 @@ function renderSalesByProjectDashboard({
   const resultsHtml = progressive
     ? renderSalesByProjectProgressiveSections(filters)
     : `<section class="section">
+  ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
   ${renderKpiCards(dashboard.summary)}
 </section>
 <section class="section">
-  <h2>Динамика</h2>
+  ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}
   ${renderTrendRows(dashboard.trendRows)}
 </section>
 <section class="section">
-  <h2>Бренды</h2>
+  ${renderMetricPanelHead('Бренды', 'sales-by-project.brands', currentUser)}
   ${renderBrandRows(dashboard.brandRows)}
 </section>
 <section class="section">
-  <h2>Статусы работ</h2>
+  ${renderMetricPanelHead('Статусы работ', 'sales-by-project.statuses', currentUser)}
   ${renderStatusRows(dashboard.statusRows)}
 </section>`;
   const content = `<section class="section">
@@ -3559,8 +3790,9 @@ function renderPointCards(points, filters, currentDateValue) {
     .join('')}</div>`;
 }
 
-function renderWorkplaceAnalysisPointsSection(dashboard) {
+function renderWorkplaceAnalysisPointsSection(dashboard, currentUser) {
   return `<section class="section">
+  ${renderMetricPanelHead('Рабочие места', 'workplace-analysis.points', currentUser)}
   ${renderPointCards(dashboard.points || [], dashboard.filters, dashboard.currentDate)}
   ${renderWorkplacePagination({ filters: dashboard.filters, pagination: dashboard.pagination })}
 </section>`;
@@ -3962,11 +4194,12 @@ function renderWorkplacePointDayModal() {
 </div>`;
 }
 
-function renderWorkerCancellationsDashboardSection({ dashboard, section }) {
+function renderWorkerCancellationsDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'workers') {
     const rows = dashboard.rows || dashboard.workers || [];
 
     return `<section class="section">
+  ${renderMetricPanelHead('Исполнители', 'worker-cancellations.workers', currentUser)}
   ${renderWorkerCancellationsTable(rows, dashboard.filters, dashboard.pagination)}
   ${renderWorkerCancellationsPagination({ filters: dashboard.filters, pagination: dashboard.pagination })}
 </section>`;
@@ -3990,7 +4223,7 @@ function renderWorkerCancellationsDashboard({
     <p class="loading">Загружается</p>
   </section>
 </div>`
-    : renderWorkerCancellationsDashboardSection({ dashboard, section: 'workers' });
+    : renderWorkerCancellationsDashboardSection({ dashboard, section: 'workers', currentUser });
   const content = `<section class="section">
   <h1>Отмены гигерами</h1>
   <p class="technical-note">Период по плановому старту смены.</p>
@@ -4529,6 +4762,7 @@ function renderWorkplacePointDashboard({
   </section>
 </div>`
     : `<section class="section">
+  ${renderMetricPanelHead('Основные показатели', 'workplace-point.summary', currentUser)}
   ${renderWorkplacePointKpis(dashboard.summary)}
 </section>
 <section class="section">
@@ -4598,17 +4832,17 @@ ${renderWorkplacePointDayModal()}`;
   });
 }
 
-function renderWorkplacePointDashboardSection({ dashboard, section }) {
+function renderWorkplacePointDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'summary') {
     return `<section class="section">
-  <h2>Основные показатели</h2>
+  ${renderMetricPanelHead('Основные показатели', 'workplace-point.summary', currentUser)}
   ${renderWorkplacePointSummaryKpis(dashboard.summary)}
 </section>`;
   }
 
   if (section === 'radius') {
     return `<section class="section">
-  <h2>База вокруг точки</h2>
+  ${renderMetricPanelHead('База вокруг точки', 'workplace-point.summary', currentUser)}
   ${renderWorkplacePointRadiusKpis(dashboard.summary)}
 </section>`;
   }
@@ -4637,7 +4871,7 @@ function renderWorkplaceAnalysisDashboard({
     <p class="loading">Загружается</p>
   </section>
 </div>`
-    : renderWorkplaceAnalysisPointsSection(dashboard);
+    : renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
   const content = `<section class="section">
   <h1>Анализ точек</h1>
   <p class="technical-note">Стабильность = доля дней с плановым заказом по mg_orders.amount.</p>
@@ -4736,9 +4970,9 @@ ${pointsHtml}`;
   });
 }
 
-function renderWorkplaceAnalysisDashboardSection({ dashboard, section }) {
+function renderWorkplaceAnalysisDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'points') {
-    return renderWorkplaceAnalysisPointsSection(dashboard);
+    return renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
   }
 
   return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
@@ -4916,7 +5150,7 @@ function renderCityProgressiveSections(dashboard) {
 </div>`;
 }
 
-function renderCityAnalysisDashboardSection({ dashboard, section }) {
+function renderCityAnalysisDashboardSection({ dashboard, section, currentUser }) {
   const summary = dashboard.summary || {};
   const context = dashboard.context || {};
 
@@ -4979,11 +5213,11 @@ function renderCityAnalysisDashboardSection({ dashboard, section }) {
   }
 
   if (section === 'composition') {
-    return renderCityComposition(dashboard.composition);
+    return renderCityComposition(dashboard.composition, currentUser);
   }
 
   if (section === 'dynamics') {
-    return renderCityDynamics(dashboard.dynamics);
+    return renderCityDynamics(dashboard.dynamics, currentUser);
   }
 
   return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
@@ -5283,11 +5517,11 @@ function renderCityIndexDynamics(rows) {
 </article>`;
 }
 
-function renderCityComposition(composition) {
+function renderCityComposition(composition, currentUser) {
   const safeComposition = composition || {};
 
   return `<section class="section">
-  <h2>Состав заказа</h2>
+  ${renderMetricPanelHead('Состав заказа', 'city-analysis.composition', currentUser)}
   <div class="mini-panels-grid">
     ${renderMiniBarPanel({
       title: 'Бренды',
@@ -5311,7 +5545,7 @@ function renderCityComposition(composition) {
 </section>`;
 }
 
-function renderCityDynamics(dynamics) {
+function renderCityDynamics(dynamics, currentUser) {
   const rows = safeRows(dynamics).map((row) => ({
     ...row,
     label: row.period
@@ -5319,7 +5553,7 @@ function renderCityDynamics(dynamics) {
 
   if (rows.length === 0) {
     return `<section class="section">
-  <h2>Динамика</h2>
+  ${renderMetricPanelHead('Динамика', 'city-analysis.dynamics', currentUser)}
   ${renderMiniBarPanel({
     title: 'По дням',
     rows,
@@ -5330,7 +5564,7 @@ function renderCityDynamics(dynamics) {
   }
 
   return `<section class="section">
-  <h2>Динамика</h2>
+  ${renderMetricPanelHead('Динамика', 'city-analysis.dynamics', currentUser)}
   <div class="city-dynamics-tabs">
     <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-combo" name="city-dynamics-tab" checked>
     <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-multiples" name="city-dynamics-tab">
@@ -5365,7 +5599,7 @@ function renderCityDynamics(dynamics) {
 </section>`;
 }
 
-function renderCityAnalysisResultSections(dashboard) {
+function renderCityAnalysisResultSections(dashboard, currentUser) {
   const filters = dashboard.filters || {};
   const context = dashboard.context || {};
   const hasCity =
@@ -5384,7 +5618,7 @@ function renderCityAnalysisResultSections(dashboard) {
 </section>`
       : '';
 
-  return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition)}${renderCityDynamics(dashboard.dynamics)}`;
+  return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition, currentUser)}${renderCityDynamics(dashboard.dynamics, currentUser)}`;
 }
 
 function renderCityAnalysisDashboard({
@@ -5398,13 +5632,6 @@ function renderCityAnalysisDashboard({
   const context = dashboard.context || {};
   const summary = dashboard.summary || {};
   const period = context.periodLabel || `${rangeFilterValue(filters.from)} - ${rangeFilterValue(filters.to)}`;
-  const resultsHtml = progressive
-    ? renderCityProgressiveSections(dashboard)
-    : `<section class="section">
-  ${progressive ? '' : '<h2>Баланс спроса и базы</h2>'}
-  ${progressive ? '' : renderCityKpiCards(summary)}
-</section>
-${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard)}`;
   const content = `<section class="section">
   <h1>Анализ городов</h1>
   <p class="technical-note">Период: ${escapeHtml(period)} · логика базы: пользователи с последней локацией в радиусе 15 км от точек города.</p>
@@ -5476,10 +5703,10 @@ ${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisRes
     })}
     <button type="submit">Применить</button>
   </form>
-  <h2>Баланс спроса и базы</h2>
+  ${renderMetricPanelHead('Баланс спроса и базы', 'city-analysis.summary', currentUser)}
   ${progressive ? '' : renderCityKpiCards(summary)}
 </section>
-${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard)}`;
+${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard, currentUser)}`;
 
   return layout({
     title: 'Анализ городов',
@@ -5807,13 +6034,14 @@ function renderHeatmapMap(points, filters) {
 </div>`;
 }
 
-function renderHeatmapDashboardSection({ dashboard, section }) {
+function renderHeatmapDashboardSection({ dashboard, section, currentUser }) {
   if (section !== 'map') {
     return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
   }
 
   return `<section class="section">
   ${renderHeatmapLeafletAssets()}
+  ${renderMetricPanelHead('Карта баланса по точкам заказа', 'heatmap.map', currentUser)}
   ${renderHeatmapKpis(dashboard.summary)}
   ${renderHeatmapMap(dashboard.points, dashboard.filters)}
   ${renderHeatmapLeafletScript()}
@@ -5874,7 +6102,7 @@ function renderHeatmapDashboard({
     <button type="submit">Применить</button>
   </form>
 </section>
-${progressive ? renderHeatmapProgressiveSection(filters) : renderHeatmapDashboardSection({ dashboard, section: 'map' })}`;
+${progressive ? renderHeatmapProgressiveSection(filters) : renderHeatmapDashboardSection({ dashboard, section: 'map', currentUser })}`;
 
   return layout({
     title: 'Тепловая карта',

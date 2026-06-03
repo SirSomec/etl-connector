@@ -578,7 +578,7 @@ function createApp({
         res
           .status(200)
           .type('html')
-          .send(renderSalesByProjectDashboardSection({ dashboard, section }));
+          .send(renderSalesByProjectDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 
@@ -631,7 +631,7 @@ function createApp({
         res
           .status(200)
           .type('html')
-          .send(renderCityAnalysisDashboardSection({ dashboard, section }));
+          .send(renderCityAnalysisDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 
@@ -687,7 +687,7 @@ function createApp({
         res
           .status(200)
           .type('html')
-          .send(renderHeatmapDashboardSection({ dashboard, section }));
+          .send(renderHeatmapDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 
@@ -745,7 +745,7 @@ function createApp({
         res
           .status(200)
           .type('html')
-          .send(renderWorkplaceAnalysisDashboardSection({ dashboard, section }));
+          .send(renderWorkplaceAnalysisDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 
@@ -820,7 +820,7 @@ function createApp({
         res
           .status(200)
           .type('html')
-          .send(renderWorkplacePointDashboardSection({ dashboard, section }));
+          .send(renderWorkplacePointDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 
@@ -899,7 +899,7 @@ function createApp({
         res
           .status(200)
           .type('html')
-          .send(renderWorkerCancellationsDashboardSection({ dashboard, section }));
+          .send(renderWorkerCancellationsDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 

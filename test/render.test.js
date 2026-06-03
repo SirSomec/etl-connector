@@ -573,6 +573,86 @@ test('renderSalesByProjectDashboard escapes values and renders metrics', () => {
   assert.match(html, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
 });
 
+test('renderSalesByProjectDashboard shows SQL inspector only with permission', () => {
+  const dashboard = {
+    filters: {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30'
+    },
+    summary: {
+      orderedShifts: 10,
+      workedShifts: 8,
+      slaPercent: 80,
+      revenueRub: 12000
+    },
+    trendRows: [],
+    brandRows: [],
+    statusRows: []
+  };
+  const withoutPermission = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard,
+    currentUser: { role: 'analyst', permissions: ['sales-by-project'] }
+  });
+  const withPermission = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard,
+    currentUser: { role: 'analyst', permissions: ['sales-by-project', 'sql-inspector'] }
+  });
+
+  assert.doesNotMatch(withoutPermission, /data-sql-inspector-open/);
+  assert.doesNotMatch(withoutPermission, /data-sql-inspector-modal/);
+  assert.doesNotMatch(withoutPermission, /filtered_orders/);
+  assert.match(withPermission, /data-sql-inspector-open/);
+  assert.match(withPermission, /data-sql-inspector-modal/);
+  assert.match(withPermission, /Показать SQL метрики: Продажи по проектам/);
+  assert.match(withPermission, /<span class="sql-keyword">SELECT<\/span>/);
+  assert.match(withPermission, /filtered_orders/);
+});
+
+test('renderSalesByProjectDashboard includes SQL inspector script for progressive fragments', () => {
+  const html = renderSalesByProjectDashboard({
+    database: 'etl',
+    progressive: true,
+    currentUser: { role: 'analyst', permissions: ['sales-by-project', 'sql-inspector'] },
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-04-30'
+      },
+      summary: {},
+      trendRows: [],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(html, /data-dashboard-fragment-url/);
+  assert.match(html, /data-sql-inspector-open/);
+});
+
+test('renderHeatmapDashboardSection renders escaped SQL inspector for admins', () => {
+  const html = renderHeatmapDashboardSection({
+    currentUser: { role: 'admin', permissions: [] },
+    section: 'map',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31'
+      },
+      summary: {},
+      points: []
+    }
+  });
+
+  assert.match(html, /data-sql-inspector-modal/);
+  assert.match(html, /Тепловая карта/);
+  assert.match(html, /<span class="sql-param">\{from:DateTime\}<\/span>/);
+  assert.doesNotMatch(html, /<script>bad<\/script>/);
+});
+
 test('renderSalesByProjectDashboard shows empty states', () => {
   const html = renderSalesByProjectDashboard({
     database: 'etl',

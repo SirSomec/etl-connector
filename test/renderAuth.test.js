@@ -36,7 +36,7 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
         email: 'admin@example.test',
         name: 'Администратор из ENV',
         role: 'admin',
-        permissions: ['tables', 'users'],
+        permissions: ['tables', 'users', 'sql-inspector'],
         source: 'env',
         createdAt: '2026-06-02T10:00:00.000Z',
         updatedAt: '2026-06-02T10:00:00.000Z'
@@ -46,7 +46,7 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
         email: 'analyst@example.test',
         name: '<Analyst>',
         role: 'analyst',
-        permissions: ['tables', 'worker-cancellations'],
+        permissions: ['tables', 'worker-cancellations', 'sql-inspector'],
         source: 'managed',
         createdAt: '2026-06-02T10:00:00.000Z',
         updatedAt: '2026-06-02T10:00:00.000Z'
@@ -65,6 +65,8 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
   assert.match(html, /action="\/admin\/users\/user-1\/delete"/);
   assert.match(html, /Отмены гигерами/);
   assert.match(html, /name="permissions" value="worker-cancellations" checked/);
+  assert.match(html, /SQL метрик/);
+  assert.match(html, /name="permissions" value="sql-inspector" checked/);
   assert.match(html, /class="nav-link active" href="\/admin\/users"/);
   assert.doesNotMatch(html, /<Analyst>/);
 });

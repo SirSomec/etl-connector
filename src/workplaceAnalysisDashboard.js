@@ -559,11 +559,14 @@ function addOptionalWhere(filters, where, params) {
   }
   if (filters.search) {
     where.push(`(
-      positionCaseInsensitive(ifNull(w.title, ''), {search:String}) > 0
+      positionCaseInsensitive(ifNull(o.workplace, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w._id, ''), {search:String}) > 0
+      OR positionCaseInsensitive(ifNull(w.title, ''), {search:String}) > 0
       OR positionCaseInsensitive(ifNull(w.technical_name, ''), {search:String}) > 0
       OR positionCaseInsensitive(ifNull(w.address__city, ''), {search:String}) > 0
       OR positionCaseInsensitive(ifNull(w.address__region, ''), {search:String}) > 0
       OR positionCaseInsensitive(ifNull(w.address__street, ''), {search:String}) > 0
+      OR positionCaseInsensitive(concat(ifNull(w.address__region, ''), ' ', ifNull(w.address__city, ''), ' ', ifNull(w.address__street, '')), {search:String}) > 0
     )`);
     params.param_search = filters.search;
   }

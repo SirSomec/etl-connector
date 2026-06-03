@@ -343,6 +343,9 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     assert.equal(call.query.includes('IN {job_statuses:Array(String)}'), true);
     assert.equal(call.query.includes('FROM mg_jobs AS j'), true);
     assert.equal(call.query.includes('SELECT DISTINCT j.source'), true);
+    assert.equal(call.query.includes("positionCaseInsensitive(ifNull(o.workplace, ''), {search:String}) > 0"), true);
+    assert.equal(call.query.includes("positionCaseInsensitive(ifNull(w._id, ''), {search:String}) > 0"), true);
+    assert.equal(call.query.includes("concat(ifNull(w.address__region, ''), ' ', ifNull(w.address__city, ''), ' ', ifNull(w.address__street, ''))"), true);
   }
 
   for (const call of calls.slice(2)) {

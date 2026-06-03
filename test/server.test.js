@@ -128,6 +128,29 @@ function createFakeClient(overrides = {}) {
         ];
       }
 
+      if (operation === 'workplace directory refresh') {
+        return [
+          {
+            workplace_id: 'wp-lenina-10',
+            workplace_title: 'Северный хаб',
+            technical_name: 'north-hub',
+            client_title: 'Бренд',
+            region: 'Москва',
+            city: 'Москва',
+            street: 'Ленина 10'
+          },
+          {
+            workplace_id: 'wp-tverskaya',
+            workplace_title: 'Южная точка',
+            technical_name: 'south-point',
+            client_title: 'Бренд',
+            region: 'Москва',
+            city: 'Москва',
+            street: 'Тверская 1'
+          }
+        ];
+      }
+
       if (operation === 'city analysis city options') {
         return [{ city: 'Москва' }, { city: 'Казань' }];
       }
@@ -432,6 +455,8 @@ test('GET /dashboards/workplace-analysis renders dashboard with query filters', 
     assert.match(text, /Анализ точек/);
     assert.match(text, /Загружается/);
     assert.match(text, /\/dashboards\/workplace-analysis\/section\?section=points/);
+    assert.match(text, /data-workplace-suggest-url="\/dashboards\/workplace-analysis\/workplaces\/suggest"/);
+    assert.match(text, /<datalist id="workplace-search-suggestions"><\/datalist>/);
     assert.doesNotMatch(text, /<article class="point-card"/);
   });
 
@@ -448,6 +473,32 @@ test('GET /dashboards/workplace-analysis renders dashboard with query filters', 
   assert.equal(optionCalls[0][2].param_to, '2026-06-04 00:00:00');
   assert.equal(Object.prototype.hasOwnProperty.call(optionCalls[0][2], 'param_cities'), false);
   assert.equal(workplaceCalls.length, 0);
+});
+
+test('GET /dashboards/workplace-analysis/workplaces/suggest returns cached point suggestions', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const shortQuery = await fetchText(baseUrl, '/dashboards/workplace-analysis/workplaces/suggest?q=Лени');
+    assert.equal(shortQuery.response.status, 200);
+    assert.deepEqual(JSON.parse(shortQuery.text), { suggestions: [] });
+
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis/workplaces/suggest?q=Ленин'
+    );
+    const body = JSON.parse(text);
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^application\/json\b/);
+    assert.deepEqual(body.suggestions.map((item) => item.workplaceId), ['wp-lenina-10']);
+    assert.equal(body.suggestions[0].title, 'Северный хаб');
+    assert.equal(body.suggestions[0].address, 'Москва, Москва, Ленина 10');
+  });
+
+  const directoryCalls = client.calls.filter((call) => call[1] === 'workplace directory refresh');
+
+  assert.equal(directoryCalls.length, 1);
 });
 
 test('GET /dashboards/workplace-analysis/section renders at least ten point cards when data is available', async () => {

@@ -54,6 +54,7 @@ CLICKHOUSE_PASSWORD=change-me
 CLICKHOUSE_CA_PATH=/usr/local/share/ca-certificates/Yandex/RootCA.crt
 CLICKHOUSE_REQUEST_TIMEOUT_MS=120000
 DASHBOARD_SECTION_CACHE_PATH=./data/dashboard-section-cache.json
+WORKPLACE_DIRECTORY_CACHE_PATH=./data/workplace-directory-cache.json
 AUTH_ENABLED=true
 AUTH_ADMIN_EMAIL=admin@example.com
 AUTH_ADMIN_PASSWORD=change-me
@@ -66,7 +67,7 @@ PORT=3000
 
 Реальный пароль задавайте только в локальном `.env` или в окружении деплоя. Не коммитьте `.env`.
 
-Новые секции дашбордов кешируются на 10 часов. По умолчанию кеш хранится в `./data/dashboard-section-cache.json`; путь можно переопределить через `DASHBOARD_SECTION_CACHE_PATH`.
+Новые секции дашбордов кешируются на 10 часов. По умолчанию кеш хранится в `./data/dashboard-section-cache.json`; путь можно переопределить через `DASHBOARD_SECTION_CACHE_PATH`. Справочник точек для подсказок в дашборде `Анализ точек` хранится в `./data/workplace-directory-cache.json` и обновляется фоново не чаще одного раза в 7 дней; путь можно переопределить через `WORKPLACE_DIRECTORY_CACHE_PATH`.
 
 Авторизация включена по умолчанию. Администратор по умолчанию берется из `AUTH_ADMIN_EMAIL` и `AUTH_ADMIN_PASSWORD`, отображается в UI как read-only запись и не сохраняется в `data/users.json`. Управляемые учетные записи создаются через `/admin/users`, пароли хранятся только в виде PBKDF2-хешей. Для локального отключения авторизации можно задать `AUTH_ENABLED=false`.
 

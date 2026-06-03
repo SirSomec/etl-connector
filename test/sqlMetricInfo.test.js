@@ -21,6 +21,16 @@ test('sqlMetricInfoFor returns null for missing ids', () => {
   assert.equal(sqlMetricInfoFor('missing.metric'), null);
 });
 
+test('getSqlMetricInfo derives child metric metadata from parent SQL info', () => {
+  const info = getSqlMetricInfo('workplace-point.charts.calendar-sla');
+
+  assert.equal(info.id, 'workplace-point.charts.calendar-sla');
+  assert.match(info.title, /calendar sla/);
+  assert.match(info.description, /calendar sla/);
+  assert.match(info.sql, /mg_orders/);
+  assert.match(info.sql, /\{workplaceId:String\}/);
+});
+
 test('highlightSql escapes html and highlights SQL keywords and parameters', () => {
   const html = highlightSql("SELECT '<tag>' AS value WHERE start >= {from:DateTime}");
 

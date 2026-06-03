@@ -91,6 +91,23 @@ WHERE o.workplace = {workplaceId:String}
   AND o.start >= {from:DateTime}
   AND o.start < {toExclusive:DateTime}`
   },
+  'workplace-point.charts': {
+    id: 'workplace-point.charts',
+    title: 'Графики точки',
+    description: 'Показывает дневной календарь заказа, SLA, слеты и распределение заказа по профессиям для выбранной рабочей точки.',
+    sql: `SELECT
+  toDate(o.start) AS period,
+  sum(o.amount) AS ordered_shifts,
+  countIf(j.status = 'confirmed') AS completed_shifts,
+  countIf(j.status = 'cancelled') AS dropoffs_24h
+FROM mg_orders AS o
+LEFT JOIN mg_jobs AS j ON j.source = o._id
+WHERE o.workplace = {workplaceId:String}
+  AND o.start >= {from:DateTime}
+  AND o.start < {toExclusive:DateTime}
+GROUP BY period
+ORDER BY period`
+  },
   'city-analysis.summary': {
     id: 'city-analysis.summary',
     title: 'Баланс спроса и базы',
@@ -188,9 +205,34 @@ function escapeHtml(value) {
 }
 
 function getSqlMetricInfo(id) {
-  const info = SQL_METRIC_INFO[String(id || '')];
+  const infoId = String(id || '');
+  const info = SQL_METRIC_INFO[infoId];
 
-  return info ? { ...info } : null;
+  if (info) {
+    return { ...info };
+  }
+
+  const parentId = Object.keys(SQL_METRIC_INFO)
+    .filter((candidate) => infoId.startsWith(`${candidate}.`))
+    .sort((left, right) => right.length - left.length)[0];
+
+  if (!parentId) {
+    return null;
+  }
+
+  const parentInfo = SQL_METRIC_INFO[parentId];
+  const metricLabel = infoId
+    .slice(parentId.length + 1)
+    .split('.')
+    .map((part) => part.replace(/-/g, ' '))
+    .join(' / ');
+
+  return {
+    ...parentInfo,
+    id: infoId,
+    title: `${parentInfo.title}: ${metricLabel}`,
+    description: `${parentInfo.description} РљРЅРѕРїРєР° РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє РєРѕРЅРєСЂРµС‚РЅРѕРјСѓ РїРѕРєР°Р·Р°С‚РµР»СЋ: ${metricLabel}.`
+  };
 }
 
 function sqlMetricInfoFor(id) {

@@ -127,6 +127,14 @@ function renderSqlInspector(metricId, currentUser) {
   return `${renderSqlInspectorTrigger(metricId, currentUser)}${renderSqlInspectorModal(metricId, currentUser)}`;
 }
 
+function renderMetricInfoScope({ className, metricId, currentUser, content, tag = 'div', attributes = '' }) {
+  const inspector = renderSqlInspector(metricId, currentUser);
+  const scopeClass = inspector ? `${className} metric-info-scope` : className;
+  const attributeText = attributes ? ` ${attributes}` : '';
+
+  return `<${tag} class="${escapeHtml(scopeClass)}"${attributeText}>${content}${inspector}</${tag}>`;
+}
+
 function renderMetricPanelHead(title, metricId, currentUser) {
   return `<div class="metric-panel-head">
   <h2>${escapeHtml(title)}</h2>
@@ -790,6 +798,30 @@ function layout({
 
     .metric-panel-head h2 {
       margin-bottom: 14px;
+    }
+
+    .metric-info-scope {
+      position: relative;
+    }
+
+    .metric-info-scope > .sql-inspector-button {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      z-index: 2;
+    }
+
+    .metric-info-scope .kpi-value,
+    .metric-info-scope .point-metric-value,
+    .metric-info-scope .mini-chart-value,
+    .metric-info-scope .compact-value,
+    .metric-info-scope .city-metric-value,
+    .metric-info-scope .city-funnel-value {
+      padding-right: 24px;
+    }
+
+    td.metric-info-scope {
+      padding-right: 32px;
     }
 
     .sql-inspector-button {
@@ -2926,7 +2958,27 @@ function renderTable({ database, tableName, columns, rows, currentUser, csrfToke
   return layout({ title: tableName, database, content, currentUser, csrfToken });
 }
 
-function renderKpiCards(summary) {
+function renderKpiGrid(cards, currentUser) {
+  return `<div class="kpi-grid">${cards
+    .map(({ label, value, detail, metricId, fragmentUrl = '' }) => {
+      const fragmentAttribute =
+        fragmentUrl === '' ? '' : `data-dashboard-fragment-url="${escapeHtml(fragmentUrl)}"`;
+      const content = `<div class="kpi-label">${escapeHtml(label)}</div>
+  <div class="kpi-value">${escapeHtml(value)}</div>
+  ${detail ? `<div class="kpi-subvalue">${escapeHtml(detail)}</div>` : ''}`;
+
+      return renderMetricInfoScope({
+        className: 'kpi-card',
+        metricId,
+        currentUser,
+        content,
+        attributes: fragmentAttribute
+      });
+    })
+    .join('')}</div>`;
+}
+
+function renderKpiCards(summary, currentUser) {
   const cards = [
     ['Заказано смен', formatNumber(summary.orderedShifts)],
     ['Отработано смен', formatNumber(summary.workedShifts)],
@@ -2940,14 +2992,27 @@ function renderKpiCards(summary) {
     ['Средняя ставка в час', formatNumber(summary.avgWorkerRateHour)]
   ];
 
-  return `<div class="kpi-grid">${cards
-    .map(
-      ([label, value]) => `<div class="kpi-card">
-  <div class="kpi-label">${escapeHtml(label)}</div>
-  <div class="kpi-value">${escapeHtml(value)}</div>
-</div>`
-    )
-    .join('')}</div>`;
+  const metricIds = [
+    'sales-by-project.summary.ordered-shifts',
+    'sales-by-project.summary.worked-shifts',
+    'sales-by-project.summary.sla',
+    'sales-by-project.summary.revenue-rub',
+    'sales-by-project.summary.unique-workers',
+    'sales-by-project.summary.workplaces-with-orders',
+    'sales-by-project.summary.workplaces-with-worked-shifts',
+    'sales-by-project.summary.cancelled-shifts',
+    'sales-by-project.summary.self-booking-percent',
+    'sales-by-project.summary.avg-worker-rate-hour'
+  ];
+
+  return renderKpiGrid(
+    cards.map(([label, value], index) => ({
+      label,
+      value,
+      metricId: metricIds[index]
+    })),
+    currentUser
+  );
 }
 
 function periodLabel(period) {
@@ -2965,12 +3030,24 @@ function renderEmptyDashboardTable() {
   return '<p class="empty">Нет данных за выбранный период.</p>';
 }
 
-function numberCell(value, digits = 0) {
-  return `<td class="number-cell">${escapeHtml(formatNumber(value, digits))}</td>`;
+function numberCell(value, digits = 0, metricId, currentUser) {
+  return renderMetricInfoScope({
+    tag: 'td',
+    className: 'number-cell',
+    metricId,
+    currentUser,
+    content: escapeHtml(formatNumber(value, digits))
+  });
 }
 
-function percentCell(value) {
-  return `<td class="number-cell">${escapeHtml(formatPercent(value))}</td>`;
+function percentCell(value, metricId, currentUser) {
+  return renderMetricInfoScope({
+    tag: 'td',
+    className: 'number-cell',
+    metricId,
+    currentUser,
+    content: escapeHtml(formatPercent(value))
+  });
 }
 
 function clampPercent(value) {
@@ -2979,7 +3056,7 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, number));
 }
 
-function renderTrendRows(rows) {
+function renderTrendRows(rows, currentUser) {
   if (rows.length === 0) {
     return renderEmptyDashboardTable();
   }
@@ -2991,12 +3068,18 @@ function renderTrendRows(rows) {
 
       return `<tr>
   <td>${escapeHtml(row.period)}</td>
-  ${numberCell(row.orderedShifts)}
-  ${numberCell(row.workedShifts)}
-  ${percentCell(row.slaPercent)}
-  ${numberCell(row.revenueRub)}
-  ${numberCell(row.cancelledShifts)}
-  <td class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width: ${escapeHtml(formatNumber(width, 1).replace(',', '.'))}%"></div></div></td>
+  ${numberCell(row.orderedShifts, 0, 'sales-by-project.trend.ordered-shifts', currentUser)}
+  ${numberCell(row.workedShifts, 0, 'sales-by-project.trend.worked-shifts', currentUser)}
+  ${percentCell(row.slaPercent, 'sales-by-project.trend.sla', currentUser)}
+  ${numberCell(row.revenueRub, 0, 'sales-by-project.trend.revenue-rub', currentUser)}
+  ${numberCell(row.cancelledShifts, 0, 'sales-by-project.trend.cancelled-shifts', currentUser)}
+  ${renderMetricInfoScope({
+    tag: 'td',
+    className: 'bar-cell',
+    metricId: 'sales-by-project.trend.chart',
+    currentUser,
+    content: `<div class="bar-track"><div class="bar-fill" style="width: ${escapeHtml(formatNumber(width, 1).replace(',', '.'))}%"></div></div>`
+  })}
 </tr>`;
     })
     .join('');
@@ -3007,7 +3090,7 @@ function renderTrendRows(rows) {
 </table></div>`;
 }
 
-function renderBrandRows(rows) {
+function renderBrandRows(rows, currentUser) {
   if (rows.length === 0) {
     return renderEmptyDashboardTable();
   }
@@ -3016,16 +3099,16 @@ function renderBrandRows(rows) {
     .map(
       (row) => `<tr>
   <td>${escapeHtml(row.brand)}</td>
-  ${numberCell(row.orderedShifts)}
-  ${numberCell(row.workedShifts)}
-  ${percentCell(row.slaPercent)}
-  ${numberCell(row.revenueRub)}
-  ${numberCell(row.uniqueWorkers)}
-  ${numberCell(row.workplacesWithOrders)}
-  ${numberCell(row.workplacesWithWorkedShifts)}
-  ${numberCell(row.cancelledShifts)}
-  ${percentCell(row.selfBookingPercent)}
-  ${numberCell(row.avgWorkerRateHour)}
+  ${numberCell(row.orderedShifts, 0, 'sales-by-project.brands.ordered-shifts', currentUser)}
+  ${numberCell(row.workedShifts, 0, 'sales-by-project.brands.worked-shifts', currentUser)}
+  ${percentCell(row.slaPercent, 'sales-by-project.brands.sla', currentUser)}
+  ${numberCell(row.revenueRub, 0, 'sales-by-project.brands.revenue-rub', currentUser)}
+  ${numberCell(row.uniqueWorkers, 0, 'sales-by-project.brands.unique-workers', currentUser)}
+  ${numberCell(row.workplacesWithOrders, 0, 'sales-by-project.brands.workplaces-with-orders', currentUser)}
+  ${numberCell(row.workplacesWithWorkedShifts, 0, 'sales-by-project.brands.workplaces-with-worked-shifts', currentUser)}
+  ${numberCell(row.cancelledShifts, 0, 'sales-by-project.brands.cancelled-shifts', currentUser)}
+  ${percentCell(row.selfBookingPercent, 'sales-by-project.brands.self-booking-percent', currentUser)}
+  ${numberCell(row.avgWorkerRateHour, 0, 'sales-by-project.brands.avg-worker-rate-hour', currentUser)}
 </tr>`
     )
     .join('');
@@ -3036,7 +3119,7 @@ function renderBrandRows(rows) {
 </table></div>`;
 }
 
-function renderStatusRows(rows) {
+function renderStatusRows(rows, currentUser) {
   if (rows.length === 0) {
     return renderEmptyDashboardTable();
   }
@@ -3045,7 +3128,7 @@ function renderStatusRows(rows) {
     .map(
       (row) => `<tr>
   <td>${escapeHtml(row.status)}</td>
-  ${numberCell(row.shifts)}
+  ${numberCell(row.shifts, 0, 'sales-by-project.statuses.shifts', currentUser)}
 </tr>`
     )
     .join('');
@@ -3131,28 +3214,28 @@ function renderSalesByProjectDashboardSection({ dashboard, section, currentUser 
   if (section === 'summary') {
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
-  ${renderKpiCards(dashboard.summary)}
+  ${renderKpiCards(dashboard.summary, currentUser)}
 </section>`;
   }
 
   if (section === 'trend') {
     return `<section class="section">
   ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}
-  ${renderTrendRows(dashboard.trendRows)}
+  ${renderTrendRows(dashboard.trendRows, currentUser)}
 </section>`;
   }
 
   if (section === 'brands') {
     return `<section class="section">
   ${renderMetricPanelHead('Бренды', 'sales-by-project.brands', currentUser)}
-  ${renderBrandRows(dashboard.brandRows)}
+  ${renderBrandRows(dashboard.brandRows, currentUser)}
 </section>`;
   }
 
   if (section === 'statuses') {
     return `<section class="section">
   ${renderMetricPanelHead('Статусы работ', 'sales-by-project.statuses', currentUser)}
-  ${renderStatusRows(dashboard.statusRows)}
+  ${renderStatusRows(dashboard.statusRows, currentUser)}
 </section>`;
   }
 
@@ -3175,19 +3258,19 @@ function renderSalesByProjectDashboard({
     ? renderSalesByProjectProgressiveSections(filters)
     : `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
-  ${renderKpiCards(dashboard.summary)}
+  ${renderKpiCards(dashboard.summary, currentUser)}
 </section>
 <section class="section">
   ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}
-  ${renderTrendRows(dashboard.trendRows)}
+  ${renderTrendRows(dashboard.trendRows, currentUser)}
 </section>
 <section class="section">
   ${renderMetricPanelHead('Бренды', 'sales-by-project.brands', currentUser)}
-  ${renderBrandRows(dashboard.brandRows)}
+  ${renderBrandRows(dashboard.brandRows, currentUser)}
 </section>
 <section class="section">
   ${renderMetricPanelHead('Статусы работ', 'sales-by-project.statuses', currentUser)}
-  ${renderStatusRows(dashboard.statusRows)}
+  ${renderStatusRows(dashboard.statusRows, currentUser)}
 </section>`;
   const content = `<section class="section">
   <h1>Продажи по проектам</h1>
@@ -3417,7 +3500,19 @@ function renderMetricRangeFields(filters) {
   ].join('');
 }
 
-function renderPointMetric(label, value) {
+function renderPointMetric(label, value, metricId, currentUser) {
+  const content = `<div class="point-metric-label">${escapeHtml(label)}</div>
+  <div class="point-metric-value">${escapeHtml(value)}</div>`;
+
+  return renderMetricInfoScope({
+    className: 'point-metric',
+    metricId,
+    currentUser,
+    content
+  });
+}
+
+function renderPointMetricLegacy(label, value) {
   return `<div class="point-metric">
   <div class="point-metric-label">${escapeHtml(label)}</div>
   <div class="point-metric-value">${escapeHtml(value)}</div>
@@ -3461,6 +3556,15 @@ function renderHeatmap(days, currentDateValue = new Date()) {
   return `<div class="heatmap" aria-label="Календарь заказов">${leadingEmptyCells}${cells}${trailingEmptyCells}</div>`;
 }
 
+function renderMetricHeatmap(days, currentDateValue, metricId, currentUser) {
+  return renderMetricInfoScope({
+    className: 'metric-visual-output',
+    metricId,
+    currentUser,
+    content: renderHeatmap(days, currentDateValue)
+  });
+}
+
 function pinnedWorkplaceIdsFromFilters(filters) {
   return Array.isArray(filters.pinnedWorkplaceIds) ? filters.pinnedWorkplaceIds : [];
 }
@@ -3495,7 +3599,7 @@ function renderPointPinForm(point, filters) {
 </form>`;
 }
 
-function renderPointCard(point, filters, currentDateValue) {
+function renderPointCard(point, filters, currentDateValue, currentUser) {
   const cardClass = point.pinned ? 'point-card pinned' : 'point-card';
   const detailHref = escapeHtml(workplacePointPageHref(filters, point.workplaceId));
 
@@ -3517,6 +3621,33 @@ function renderPointCard(point, filters, currentDateValue) {
     </div>
     ${renderHeatmap(point.heatmapDays, currentDateValue)}
   </a>
+</article>`;
+}
+
+function renderPointCard(point, filters, currentDateValue, currentUser) {
+  const cardClass = point.pinned ? 'point-card pinned' : 'point-card';
+  const detailHref = escapeHtml(workplacePointPageHref(filters, point.workplaceId));
+  const metricsHtml = `<div class="point-metrics">
+      ${renderPointMetric('Заказано', formatNumber(point.totalOrderedShifts), 'workplace-analysis.points.ordered-shifts', currentUser)}
+      ${renderPointMetric('SLA', formatPercent(point.slaPercent), 'workplace-analysis.points.sla', currentUser)}
+      ${renderPointMetric('Стабильность', formatPercent(point.stabilityPercent), 'workplace-analysis.points.stability', currentUser)}
+      ${renderPointMetric('Гигеры 5 км', formatNumber(point.activeGigers5km), 'workplace-analysis.points.active-gigers-5km', currentUser)}
+      ${renderPointMetric('Активные дни', `${formatNumber(point.activeDays)} / ${formatNumber(point.rangeDays)}`, 'workplace-analysis.points.active-days', currentUser)}
+      ${renderPointMetric('Среднее', formatNumber(point.avgDailyOrder, 1), 'workplace-analysis.points.avg-daily-order', currentUser)}
+    </div>
+    ${renderMetricHeatmap(point.heatmapDays, currentDateValue, 'workplace-analysis.points.heatmap', currentUser)}`;
+  const bodyHtml = canViewSqlInspector(currentUser)
+    ? `<div class="point-card-link">${metricsHtml}</div>`
+    : `<a class="point-card-link" href="${detailHref}" target="_blank" rel="noopener noreferrer">${metricsHtml}</a>`;
+
+  return `<article class="${cardClass}">
+  <div class="point-card-head">
+    <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
+      <div class="point-title">${escapeHtml(point.title)}</div>
+    </a>
+    ${renderPointPinForm(point, filters)}
+  </div>
+  ${bodyHtml}
 </article>`;
 }
 
@@ -3780,20 +3911,20 @@ function renderWorkplacePagination({ filters, pagination }) {
 </nav>`;
 }
 
-function renderPointCards(points, filters, currentDateValue) {
+function renderPointCards(points, filters, currentDateValue, currentUser) {
   if (points.length === 0) {
     return '<p class="empty">Нет точек с заказами за выбранный период.</p>';
   }
 
   return `<div class="points-grid">${points
-    .map((point) => renderPointCard(point, filters, currentDateValue))
+    .map((point) => renderPointCard(point, filters, currentDateValue, currentUser))
     .join('')}</div>`;
 }
 
 function renderWorkplaceAnalysisPointsSection(dashboard, currentUser) {
   return `<section class="section">
   ${renderMetricPanelHead('Рабочие места', 'workplace-analysis.points', currentUser)}
-  ${renderPointCards(dashboard.points || [], dashboard.filters, dashboard.currentDate)}
+  ${renderPointCards(dashboard.points || [], dashboard.filters, dashboard.currentDate, currentUser)}
   ${renderWorkplacePagination({ filters: dashboard.filters, pagination: dashboard.pagination })}
 </section>`;
 }
@@ -3911,19 +4042,26 @@ function renderWorkerCancellationsOutOfRangeState({ filters, requestedPage, tota
   return `<p class="empty">Страница ${escapeHtml(requestedPage)} вне диапазона. Доступно страниц: ${escapeHtml(totalPages)}. <a href="${escapeHtml(href)}">Открыть последнюю страницу</a></p>`;
 }
 
-function renderWorkerCancellationMetricCell(row, filters, column) {
+function renderWorkerCancellationMetricCell(row, filters, column, currentUser) {
   const value = formatNumber(row[column.key]);
+  const metricId = `worker-cancellations.workers.${column.key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)}`;
 
   if (!row.workerId) {
-    return `<td class="number-cell">${escapeHtml(value)}</td>`;
+    return numberCell(row[column.key], 0, metricId, currentUser);
   }
 
   const detailUrl = workerCancellationsDetailUrl(filters, row, column.key);
 
-  return `<td class="number-cell"><button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="${escapeHtml(detailUrl)}">${escapeHtml(value)}</button></td>`;
+  return renderMetricInfoScope({
+    tag: 'td',
+    className: 'number-cell',
+    metricId,
+    currentUser,
+    content: `<button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="${escapeHtml(detailUrl)}">${escapeHtml(value)}</button>`
+  });
 }
 
-function renderWorkerCancellationsTable(rows, filters, pagination) {
+function renderWorkerCancellationsTable(rows, filters, pagination, currentUser) {
   if (rows.length === 0) {
     const bounds = workerCancellationsPaginationBounds(pagination, filters);
 
@@ -3948,7 +4086,7 @@ function renderWorkerCancellationsTable(rows, filters, pagination) {
           const value = row[column.key];
 
           if (column.numeric) {
-            return renderWorkerCancellationMetricCell(row, filters, column);
+            return renderWorkerCancellationMetricCell(row, filters, column, currentUser);
           }
 
           const classAttribute = column.key === 'phone' ? ' class="phone-cell"' : '';
@@ -4200,7 +4338,7 @@ function renderWorkerCancellationsDashboardSection({ dashboard, section, current
 
     return `<section class="section">
   ${renderMetricPanelHead('Исполнители', 'worker-cancellations.workers', currentUser)}
-  ${renderWorkerCancellationsTable(rows, dashboard.filters, dashboard.pagination)}
+  ${renderWorkerCancellationsTable(rows, dashboard.filters, dashboard.pagination, currentUser)}
   ${renderWorkerCancellationsPagination({ filters: dashboard.filters, pagination: dashboard.pagination })}
 </section>`;
   }
@@ -4341,6 +4479,43 @@ function renderWorkplacePointRadiusKpis(summary) {
     .join('')}</div>`;
 }
 
+function renderWorkplacePointKpis(summary, currentUser) {
+  return renderKpiGrid([
+    { label: 'Заказано', value: formatNumber(summary.orderedShifts), metricId: 'workplace-point.summary.ordered-shifts' },
+    { label: 'Выполнено', value: formatNumber(summary.completedShifts), metricId: 'workplace-point.summary.completed-shifts' },
+    { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'workplace-point.summary.sla' },
+    { label: 'Стабильность', value: formatPercent(summary.stabilityPercent), metricId: 'workplace-point.summary.stability' },
+    { label: 'Уникальные завершали', value: formatNumber(summary.uniqueCompletedWorkers), metricId: 'workplace-point.summary.unique-completed-workers' },
+    { label: 'Уникальные бронировали', value: formatNumber(summary.uniqueBookedWorkers), metricId: 'workplace-point.summary.unique-booked-workers' },
+    { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' },
+    { label: '5 км', value: formatRadiusWorkerValue(summary, 5), metricId: 'workplace-point.summary.radius-5km' },
+    { label: '10 км', value: formatRadiusWorkerValue(summary, 10), metricId: 'workplace-point.summary.radius-10km' },
+    { label: '15 км', value: formatRadiusWorkerValue(summary, 15), metricId: 'workplace-point.summary.radius-15km' },
+    { label: '20 км', value: formatRadiusWorkerValue(summary, 20), metricId: 'workplace-point.summary.radius-20km' }
+  ], currentUser);
+}
+
+function renderWorkplacePointSummaryKpis(summary, currentUser) {
+  return renderKpiGrid([
+    { label: 'Заказано', value: formatNumber(summary.orderedShifts), metricId: 'workplace-point.summary.ordered-shifts' },
+    { label: 'Выполнено', value: formatNumber(summary.completedShifts), metricId: 'workplace-point.summary.completed-shifts' },
+    { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'workplace-point.summary.sla' },
+    { label: 'Стабильность', value: formatPercent(summary.stabilityPercent), metricId: 'workplace-point.summary.stability' },
+    { label: 'Уникальные завершали', value: formatNumber(summary.uniqueCompletedWorkers), metricId: 'workplace-point.summary.unique-completed-workers' },
+    { label: 'Уникальные бронировали', value: formatNumber(summary.uniqueBookedWorkers), metricId: 'workplace-point.summary.unique-booked-workers' },
+    { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' }
+  ], currentUser);
+}
+
+function renderWorkplacePointRadiusKpis(summary, currentUser) {
+  return renderKpiGrid([
+    { label: '5 км', value: formatRadiusWorkerValue(summary, 5), metricId: 'workplace-point.summary.radius-5km' },
+    { label: '10 км', value: formatRadiusWorkerValue(summary, 10), metricId: 'workplace-point.summary.radius-10km' },
+    { label: '15 км', value: formatRadiusWorkerValue(summary, 15), metricId: 'workplace-point.summary.radius-15km' },
+    { label: '20 км', value: formatRadiusWorkerValue(summary, 20), metricId: 'workplace-point.summary.radius-20km' }
+  ], currentUser);
+}
+
 function miniChartWidth(value, maxValue) {
   const max = Number(maxValue) || 0;
 
@@ -4418,7 +4593,7 @@ function renderPanelClass(panelClass) {
   return `detail-panel${panelClass ? ` ${panelClass}` : ''}`;
 }
 
-function renderMiniChart({ title, rows, maxValue, valueForRow, labelForRow, textForRow, secondary = false, panelClass = '' }) {
+function renderMiniChart({ title, rows, maxValue, valueForRow, labelForRow, textForRow, secondary = false, panelClass = '', metricId, currentUser }) {
   const detailPanelClass = renderPanelClass(panelClass);
   if (rows.length === 0) {
     return `<div class="${detailPanelClass}">
@@ -4432,11 +4607,15 @@ function renderMiniChart({ title, rows, maxValue, valueForRow, labelForRow, text
     .map((row) => {
       const value = valueForRow(row);
 
-      return `<div class="mini-chart-row">
+      return renderMetricInfoScope({
+        className: 'mini-chart-row',
+        metricId,
+        currentUser,
+        content: `
   <div class="mini-chart-label">${escapeHtml(labelForRow(row))}</div>
   <div class="mini-chart-track"><div class="${fillClass}" style="width: ${miniChartWidth(value, maxValue)}%"></div></div>
-  <div class="mini-chart-value">${escapeHtml(textForRow(row))}</div>
-</div>`;
+  <div class="mini-chart-value">${escapeHtml(textForRow(row))}</div>`
+      });
     })
     .join('');
 
@@ -4478,7 +4657,19 @@ function renderPointCalendarEmptyCells(count) {
   ).join('');
 }
 
-function renderPointCalendarValue(label, value, title = label) {
+function renderPointCalendarValue(label, value, title = label, metricId, currentUser) {
+  const content = `<span title="${escapeHtml(title)}">${escapeHtml(label)}</span>
+  <strong>${escapeHtml(value)}</strong>`;
+
+  return renderMetricInfoScope({
+    className: 'point-calendar-value',
+    metricId,
+    currentUser,
+    content
+  });
+}
+
+function renderPointCalendarValueLegacy(label, value, title = label) {
   return `<div class="point-calendar-value">
   <span title="${escapeHtml(title)}">${escapeHtml(label)}</span>
   <strong>${escapeHtml(value)}</strong>
@@ -4539,6 +4730,29 @@ function renderPointCalendarCell(row, currentDateKey, filters) {
       ${renderPointCalendarValue('Сл', formatNumber(row.dropoffs24h), 'Слеты')}
       ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее')}
       ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум')}
+    </div>
+  </button>
+</div>`;
+}
+
+function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
+  const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
+  const slaLevel = calendarSlaLevel(row);
+  const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
+  const isCurrentDay = currentDateKey && row.period === currentDateKey;
+  const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
+  const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
+  const detailUrl = workplacePointDayDetailsUrl(filters || {}, row.period);
+
+  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
+  <button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">
+    <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
+    <div class="point-calendar-values">
+      ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ', 'workplace-point.charts.calendar-ordered-shifts', currentUser)}
+      ${renderPointCalendarValue('SLA', formatPercent(row.slaPercent), 'SLA', 'workplace-point.charts.calendar-sla', currentUser)}
+      ${renderPointCalendarValue('Сл', formatNumber(row.dropoffs24h), 'Слеты', 'workplace-point.charts.calendar-dropoffs-24h', currentUser)}
+      ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее', 'workplace-point.charts.calendar-order-lead-avg', currentUser)}
+      ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум', 'workplace-point.charts.calendar-order-lead-min', currentUser)}
     </div>
   </button>
 </div>`;
@@ -4676,11 +4890,11 @@ function groupPointCalendarRowsByMonth(rows) {
   return groups;
 }
 
-function renderPointCalendarMonth(group, weekdays, currentDateKey, filters) {
+function renderPointCalendarMonth(group, weekdays, currentDateKey, filters, currentUser) {
   const leadingEmptyCount = weekdayOffsetFromMonday(group.rows[0].period);
   const totalCells = leadingEmptyCount + group.rows.length;
   const trailingEmptyCount = (7 - (totalCells % 7)) % 7;
-  const cells = group.rows.map((row) => renderPointCalendarCell(row, currentDateKey, filters)).join('');
+  const cells = group.rows.map((row) => renderPointCalendarCell(row, currentDateKey, filters, currentUser)).join('');
 
   return `<div class="point-calendar-month">
     <h3 class="point-calendar-month-title">${escapeHtml(group.label)}</h3>
@@ -4689,7 +4903,7 @@ function renderPointCalendarMonth(group, weekdays, currentDateKey, filters) {
   </div>`;
 }
 
-function renderPointCalendar(rows, filters, currentDateValue = new Date()) {
+function renderPointCalendar(rows, filters, currentDateValue = new Date(), currentUser) {
   const detailPanelClass = renderPanelClass('calendar-panel');
   const calendarRows = pointCalendarRows(rows, filters);
 
@@ -4705,7 +4919,7 @@ function renderPointCalendar(rows, filters, currentDateValue = new Date()) {
     .join('');
   const currentDateKey = currentDateKeyFromValue(currentDateValue);
   const months = groupPointCalendarRowsByMonth(calendarRows)
-    .map((group) => renderPointCalendarMonth(group, weekdays, currentDateKey, filters))
+    .map((group) => renderPointCalendarMonth(group, weekdays, currentDateKey, filters, currentUser))
     .join('');
 
   return `<div class="${detailPanelClass}">
@@ -4716,11 +4930,11 @@ function renderPointCalendar(rows, filters, currentDateValue = new Date()) {
 </div>`;
 }
 
-function renderWorkplacePointCharts(dashboard) {
+function renderWorkplacePointCharts(dashboard, currentUser) {
   const maxProfessionOrders = Math.max(0, ...dashboard.professionRows.map((row) => Number(row.orderedShifts) || 0));
 
   return `<div class="detail-grid point-detail-grid">
-  ${renderPointCalendar(dashboard.dailyRows, dashboard.filters, dashboard.currentDate)}
+  ${renderPointCalendar(dashboard.dailyRows, dashboard.filters, dashboard.currentDate, currentUser)}
   ${renderMiniChart({
     title: 'Профессии точки',
     rows: dashboard.professionRows,
@@ -4728,7 +4942,9 @@ function renderWorkplacePointCharts(dashboard) {
     valueForRow: (row) => row.orderedShifts,
     labelForRow: (row) => row.profession,
     textForRow: (row) => `${formatNumber(row.orderedShifts)} · ${formatPercent(row.sharePercent)}`,
-    panelClass: 'profession-panel'
+    panelClass: 'profession-panel',
+    metricId: 'workplace-point.charts.professions',
+    currentUser
   })}
 </div>`;
 }
@@ -4763,10 +4979,10 @@ function renderWorkplacePointDashboard({
 </div>`
     : `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'workplace-point.summary', currentUser)}
-  ${renderWorkplacePointKpis(dashboard.summary)}
+  ${renderWorkplacePointKpis(dashboard.summary, currentUser)}
 </section>
 <section class="section">
-  ${renderWorkplacePointCharts(dashboard)}
+  ${renderWorkplacePointCharts(dashboard, currentUser)}
 </section>`;
   const content = `<section class="section">
   <a class="back-link" href="/dashboards/workplace-analysis">Анализ точек</a>
@@ -4836,20 +5052,20 @@ function renderWorkplacePointDashboardSection({ dashboard, section, currentUser 
   if (section === 'summary') {
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'workplace-point.summary', currentUser)}
-  ${renderWorkplacePointSummaryKpis(dashboard.summary)}
+  ${renderWorkplacePointSummaryKpis(dashboard.summary, currentUser)}
 </section>`;
   }
 
   if (section === 'radius') {
     return `<section class="section">
   ${renderMetricPanelHead('База вокруг точки', 'workplace-point.summary', currentUser)}
-  ${renderWorkplacePointRadiusKpis(dashboard.summary)}
+  ${renderWorkplacePointRadiusKpis(dashboard.summary, currentUser)}
 </section>`;
   }
 
   if (section === 'charts') {
     return `<section class="section">
-  ${renderWorkplacePointCharts(dashboard)}
+  ${renderWorkplacePointCharts(dashboard, currentUser)}
 </section>`;
   }
 
@@ -5062,6 +5278,34 @@ function renderCityKpiCards(summary) {
   ];
 
   return `<div class="kpi-grid">${cards.map((card) => renderCityKpiCard(card)).join('')}</div>`;
+}
+
+function renderCityKpiCard({ label, value, detail, fragmentUrl = '', metricId, currentUser }) {
+  return renderKpiGrid([{ label, value, detail, fragmentUrl, metricId }], currentUser).replace(/^<div class="kpi-grid">|<\/div>$/g, '');
+}
+
+function renderCityKpiCards(summary, currentUser) {
+  return renderKpiGrid([
+    { label: 'Заказ', value: formatNumber(summary.orderedShifts), metricId: 'city-analysis.summary.ordered-shifts' },
+    { label: 'Не удаленные заявки', value: formatNumber(summary.activeOrderRequests), metricId: 'city-analysis.summary.active-order-requests' },
+    { label: 'Общая база', value: formatNumber(summary.totalLocatedUsers), metricId: 'city-analysis.summary.total-located-users' },
+    {
+      label: 'Активная база',
+      value: formatNumber(summary.readyLocatedUsers),
+      detail: `ready ${formatNumber(summary.readyStatusLocatedUsers)} · booked ${formatNumber(summary.bookedStatusLocatedUsers)} · worked ${formatNumber(summary.workedStatusLocatedUsers)}`,
+      metricId: 'city-analysis.summary.ready-located-users'
+    },
+    { label: 'Входили в приложение', value: formatNumber(summary.appActiveUsers), metricId: 'city-analysis.summary.app-active-users' },
+    {
+      label: 'Активная за 30 дней',
+      value: formatNumber(summary.app30dActiveUsers),
+      detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`,
+      metricId: 'city-analysis.summary.app-30d-active-users'
+    },
+    { label: 'Откликались', value: formatNumber(summary.bookedUsers), metricId: 'city-analysis.summary.booked-users' },
+    { label: 'Завершали', value: formatNumber(summary.completedUsers), metricId: 'city-analysis.summary.completed-users' },
+    { label: '30д активные / заявка', value: formatNumber(summary.avgDaily30dActiveUsersPerRequest, 1), metricId: 'city-analysis.summary.avg-daily-30d-active-users-per-request' }
+  ], currentUser);
 }
 
 function addCityAnalysisQueryParam(params, key, value) {
@@ -5357,6 +5601,43 @@ function renderCityComboDynamics(rows) {
 </article>`;
 }
 
+function renderCityComboDynamics(rows, currentUser) {
+  const maxOrder = maxCityDynamicValue(rows, 'orderedShifts');
+  const maxUsers = Math.max(
+    maxCityDynamicValue(rows, 'appActiveUsers'),
+    maxCityDynamicValue(rows, 'bookedUsers'),
+    maxCityDynamicValue(rows, 'completedUsers')
+  );
+
+  function comboMetric(label, value, maxValue, className, metricId, digits = 0) {
+    return renderMetricInfoScope({
+      className: 'city-metric-line',
+      metricId,
+      currentUser,
+      content: `
+        <span>${escapeHtml(label)}</span>
+        <div class="city-metric-track"><div class="city-metric-fill ${escapeHtml(className)}" style="width: ${cssPercent(cityDynamicWidth(value, maxValue))}%"></div></div>
+        <span class="city-metric-value">${escapeHtml(formatNumber(value, digits))}</span>`
+    });
+  }
+
+  return `<article class="mini-panel">
+  <h3>Спрос vs исполнители</h3>
+  <div class="city-combo-chart">${rows
+    .map((row) => `<div class="city-combo-row">
+    <div class="city-combo-date">${escapeHtml(row.period)}</div>
+    <div class="city-combo-main">
+      <span hidden>${escapeHtml(cityDynamicsMeta(row))}</span>
+      ${comboMetric('Заказ', row.orderedShifts, maxOrder, 'city-series-demand', 'city-analysis.dynamics.combo-ordered-shifts')}
+      ${comboMetric('Входы', row.appActiveUsers, maxUsers, 'city-series-app', 'city-analysis.dynamics.combo-app-active-users')}
+      ${comboMetric('Отклики', row.bookedUsers, maxUsers, 'city-series-booked', 'city-analysis.dynamics.combo-booked-users')}
+      ${comboMetric('Завершения', row.completedUsers, maxUsers, 'city-series-completed', 'city-analysis.dynamics.combo-completed-users')}
+    </div>
+  </div>`)
+    .join('')}</div>
+</article>`;
+}
+
 function cityDynamicRowsForMetric(rows, key) {
   return rows.map((row) => ({
     ...row,
@@ -5417,6 +5698,53 @@ function renderCityHeatmap(rows) {
       const title = `${row.period}: ${label} ${formatNumber(value, digits)}`;
 
       return `<div class="city-heatmap-cell" data-level="${escapeHtml(cityHeatmapLevel(value, maxValue))}" title="${escapeHtml(title)}"></div>`;
+    })
+    .join('')}
+</div>`;
+        })
+        .join('')}
+    </div>
+  </div>
+</article>`;
+}
+
+function renderCityHeatmap(rows, currentUser) {
+  const metrics = [
+    ['Заказ', 'orderedShifts', 0, 'city-analysis.dynamics.heatmap-ordered-shifts'],
+    ['Входы', 'appActiveUsers', 0, 'city-analysis.dynamics.heatmap-app-active-users'],
+    ['Отклики', 'bookedUsers', 0, 'city-analysis.dynamics.heatmap-booked-users'],
+    ['Завершения', 'completedUsers', 0, 'city-analysis.dynamics.heatmap-completed-users'],
+    ['Актив/заявка', 'activeUsersPerRequest', 1, 'city-analysis.dynamics.heatmap-active-users-per-request']
+  ];
+  const gridStyle = `grid-template-columns: 128px repeat(${Math.max(rows.length, 1)}, minmax(30px, 1fr));`;
+  const header = `<div class="city-heatmap-row" style="${escapeHtml(gridStyle)}">
+  <div class="city-heatmap-label">Метрика</div>
+  ${rows.map((row) => `<div class="city-heatmap-label">${escapeHtml(row.period.slice(5))}</div>`).join('')}
+</div>`;
+
+  return `<article class="mini-panel">
+  <h3>Тепловая карта</h3>
+  <div class="city-heatmap-scroll">
+    <div class="city-heatmap-grid">
+      ${header}
+      ${metrics
+        .map(([label, key, digits, metricId]) => {
+          const maxValue = maxCityDynamicValue(rows, key);
+
+          return `<div class="city-heatmap-row" style="${escapeHtml(gridStyle)}">
+  <div class="city-heatmap-label">${escapeHtml(label)}</div>
+  ${rows
+    .map((row) => {
+      const value = Number(row[key]) || 0;
+      const title = `${row.period}: ${label} ${formatNumber(value, digits)}`;
+
+      return renderMetricInfoScope({
+        className: 'city-heatmap-cell',
+        metricId,
+        currentUser,
+        content: '',
+        attributes: `data-level="${escapeHtml(cityHeatmapLevel(value, maxValue))}" title="${escapeHtml(title)}"`
+      });
     })
     .join('')}
 </div>`;
@@ -5579,9 +5907,9 @@ function renderCityDynamics(dynamics, currentUser) {
       <label class="city-dynamics-tab" for="city-dynamics-tab-index">Индексы</label>
     </div>
     <div class="city-dynamics-panels">
-      <div class="city-dynamics-panel city-dynamics-panel-combo">${renderCityComboDynamics(rows)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-combo">${renderCityComboDynamics(rows, currentUser)}</div>
       <div class="city-dynamics-panel city-dynamics-panel-multiples">${renderCitySmallMultiples(rows)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-heatmap">${renderCityHeatmap(rows)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-heatmap">${renderCityHeatmap(rows, currentUser)}</div>
       <div class="city-dynamics-panel city-dynamics-panel-funnel">${renderCityFunnel(rows)}</div>
       <div class="city-dynamics-panel city-dynamics-panel-index">${renderCityIndexDynamics(rows)}</div>
     </div>
@@ -5704,7 +6032,7 @@ function renderCityAnalysisDashboard({
     <button type="submit">Применить</button>
   </form>
   ${renderMetricPanelHead('Баланс спроса и базы', 'city-analysis.summary', currentUser)}
-  ${progressive ? '' : renderCityKpiCards(summary)}
+  ${progressive ? '' : renderCityKpiCards(summary, currentUser)}
 </section>
 ${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard, currentUser)}`;
 
@@ -5853,6 +6181,17 @@ function renderHeatmapKpis(summary) {
   return `<div class="kpi-grid">${cards
     .map((card) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(card.label)}</div><div class="kpi-value">${escapeHtml(card.value)}</div></div>`)
     .join('')}</div>`;
+}
+
+function renderHeatmapKpis(summary, currentUser) {
+  const safeSummary = summary || {};
+
+  return renderKpiGrid([
+    { label: 'Точки с заказом', value: formatNumber(safeSummary.pointsWithOrder), metricId: 'heatmap.map.points-with-order' },
+    { label: 'Заказано смен', value: formatNumber(safeSummary.orderedShifts), metricId: 'heatmap.map.ordered-shifts' },
+    { label: 'Взвешенная база', value: formatNumber(safeSummary.weightedActiveUsers, 1), metricId: 'heatmap.map.weighted-active-users' },
+    { label: 'Взвешенная база / смена', value: formatNumber(safeSummary.avgWeightedActiveUsersPerShift, 1), metricId: 'heatmap.map.avg-weighted-active-users-per-shift' }
+  ], currentUser);
 }
 
 function validHeatmapPoint(point) {
@@ -6042,7 +6381,7 @@ function renderHeatmapDashboardSection({ dashboard, section, currentUser }) {
   return `<section class="section">
   ${renderHeatmapLeafletAssets()}
   ${renderMetricPanelHead('Карта баланса по точкам заказа', 'heatmap.map', currentUser)}
-  ${renderHeatmapKpis(dashboard.summary)}
+  ${renderHeatmapKpis(dashboard.summary, currentUser)}
   ${renderHeatmapMap(dashboard.points, dashboard.filters)}
   ${renderHeatmapLeafletScript()}
 </section>`;

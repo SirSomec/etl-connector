@@ -15,8 +15,10 @@ const {
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
+  renderWorkplaceAnalysisDashboardSection,
   renderWorkplacePointDayDetails,
-  renderWorkplacePointDashboard
+  renderWorkplacePointDashboard,
+  renderWorkplacePointDashboardSection
 } = require('../src/render');
 
 test('escapeHtml escapes HTML content and attributes', () => {
@@ -611,6 +613,65 @@ test('renderSalesByProjectDashboard shows SQL inspector only with permission', (
   assert.match(withPermission, /filtered_orders/);
 });
 
+test('renderSalesByProjectDashboard renders SQL inspectors for each KPI and data table value', () => {
+  const html = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-04-30'
+      },
+      summary: {
+        orderedShifts: 10,
+        workedShifts: 8,
+        slaPercent: 80,
+        revenueRub: 12000,
+        uniqueWorkers: 5,
+        workplacesWithOrders: 3,
+        workplacesWithWorkedShifts: 2,
+        cancelledShifts: 1,
+        selfBookingPercent: 40,
+        avgWorkerRateHour: 350
+      },
+      trendRows: [
+        {
+          period: '2026-04',
+          orderedShifts: 10,
+          workedShifts: 8,
+          slaPercent: 80,
+          revenueRub: 12000,
+          cancelledShifts: 1
+        }
+      ],
+      brandRows: [
+        {
+          brand: 'Brand A',
+          orderedShifts: 10,
+          workedShifts: 8,
+          slaPercent: 80,
+          revenueRub: 12000,
+          uniqueWorkers: 5,
+          workplacesWithOrders: 3,
+          workplacesWithWorkedShifts: 2,
+          cancelledShifts: 1,
+          selfBookingPercent: 40,
+          avgWorkerRateHour: 350
+        }
+      ],
+      statusRows: [{ status: 'confirmed', shifts: 8 }]
+    },
+    currentUser: { role: 'analyst', permissions: ['sales-by-project', 'sql-inspector'] }
+  });
+
+  assert.match(html, /class="kpi-card metric-info-scope"/);
+  assert.match(html, /data-sql-inspector-open="sales-by-project\.summary\.ordered-shifts"/);
+  assert.match(html, /data-sql-inspector-open="sales-by-project\.summary\.avg-worker-rate-hour"/);
+  assert.match(html, /data-sql-inspector-open="sales-by-project\.trend\.worked-shifts"/);
+  assert.match(html, /data-sql-inspector-open="sales-by-project\.brands\.self-booking-percent"/);
+  assert.match(html, /data-sql-inspector-open="sales-by-project\.statuses\.shifts"/);
+});
+
 test('renderSalesByProjectDashboard includes SQL inspector script for progressive fragments', () => {
   const html = renderSalesByProjectDashboard({
     database: 'etl',
@@ -651,6 +712,103 @@ test('renderHeatmapDashboardSection renders escaped SQL inspector for admins', (
   assert.match(html, /Тепловая карта/);
   assert.match(html, /<span class="sql-param">\{from:DateTime\}<\/span>/);
   assert.doesNotMatch(html, /<script>bad<\/script>/);
+});
+
+test('dashboard visual outputs render SQL inspectors on individual values', () => {
+  const currentUser = { role: 'admin', permissions: [] };
+  const workplaceHtml = renderWorkplaceAnalysisDashboardSection({
+    currentUser,
+    section: 'points',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        limit: 10
+      },
+      currentDate: '2026-05-10T00:00:00.000Z',
+      pagination: {},
+      points: [
+        {
+          workplaceId: 'wp-1',
+          title: 'Point A',
+          totalOrderedShifts: 20,
+          slaPercent: 90,
+          stabilityPercent: 70,
+          activeGigers5km: 12,
+          activeDays: 5,
+          rangeDays: 31,
+          avgDailyOrder: 2.5,
+          heatmapDays: [{ date: '2026-05-01', amount: 4, completedShifts: 3, level: 2 }]
+        }
+      ]
+    }
+  });
+  const pointHtml = renderWorkplacePointDashboardSection({
+    currentUser,
+    section: 'charts',
+    dashboard: {
+      filters: {
+        workplaceId: 'wp-1',
+        from: '2026-05-01',
+        to: '2026-05-31',
+        profession: [],
+        orderType: [],
+        jobStatus: []
+      },
+      currentDate: '2026-05-10T00:00:00.000Z',
+      dailyRows: [
+        {
+          period: '2026-05-01',
+          orderedShifts: 4,
+          completedShifts: 3,
+          slaPercent: 75,
+          dropoffs24h: 1,
+          orderLeadAvgMinutes: 120,
+          orderLeadMinMinutes: 30
+        }
+      ],
+      professionRows: [{ profession: 'Picker', orderedShifts: 4, sharePercent: 100 }]
+    }
+  });
+  const cityHtml = renderCityAnalysisDashboardSection({
+    currentUser,
+    section: 'dynamics',
+    dashboard: {
+      dynamics: [
+        {
+          period: '2026-05-01',
+          orderedShifts: 8,
+          appActiveUsers: 5,
+          bookedUsers: 3,
+          completedUsers: 2,
+          activeUsersPerRequest: 1.1
+        }
+      ]
+    }
+  });
+  const heatmapHtml = renderHeatmapDashboardSection({
+    currentUser,
+    section: 'map',
+    dashboard: {
+      filters: { from: '2026-05-01', to: '2026-05-31' },
+      summary: {
+        pointsWithOrder: 2,
+        orderedShifts: 10,
+        weightedActiveUsers: 12.5,
+        avgWeightedActiveUsersPerShift: 1.2
+      },
+      points: []
+    }
+  });
+
+  assert.match(workplaceHtml, /data-sql-inspector-open="workplace-analysis\.points\.sla"/);
+  assert.match(workplaceHtml, /data-sql-inspector-open="workplace-analysis\.points\.heatmap"/);
+  assert.match(pointHtml, /data-sql-inspector-open="workplace-point\.charts\.calendar-sla"/);
+  assert.match(pointHtml, /data-sql-inspector-open="workplace-point\.charts\.professions"/);
+  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.combo-ordered-shifts"/);
+  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.heatmap-active-users-per-request"/);
+  assert.match(heatmapHtml, /data-sql-inspector-open="heatmap\.map\.weighted-active-users"/);
 });
 
 test('renderSalesByProjectDashboard shows empty states', () => {

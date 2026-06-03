@@ -1356,8 +1356,10 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
   assert.match(html, /&quot;lat&quot;:55\.7/);
   assert.match(html, /&quot;lon&quot;:37\.6/);
   assert.match(html, /&quot;color&quot;:&quot;hsl\(24, 72%, 44%\)&quot;/);
+  assert.match(html, /&quot;detailHref&quot;:&quot;\/dashboards\/workplace-analysis\/point\?workplaceId=workplace-1&amp;from=2026-05-01&amp;to=2026-05-31&quot;/);
   assert.match(html, /tile\.openstreetmap\.org/);
   assert.match(html, /L\.circleMarker/);
+  assert.match(html, /target="_blank" rel="noopener noreferrer"/);
   assert.match(html, /Точки с заказом/);
   assert.match(html, /Взвешенная база \/ смена/);
   assert.match(html, /0,9/);

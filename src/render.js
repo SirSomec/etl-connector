@@ -4579,7 +4579,13 @@ function heatmapPointTitle(point) {
   return `${place}: заказ ${formatNumber(point.orderedShifts)}; взвешенная база ${formatNumber(point.weightedActiveUsers, 1)}; база/смена ${formatNumber(point.weightedActiveUsersPerShift, 1)}`;
 }
 
-function heatmapMapPoints(points) {
+function heatmapPointDetailHref(point, filters) {
+  const workplaceId = String(point.workplaceId || '').trim();
+
+  return workplaceId === '' ? '' : workplacePointPageHref(filters, workplaceId);
+}
+
+function heatmapMapPoints(points, filters) {
   return safeRows(points)
     .filter(validHeatmapPoint)
     .map((point) => ({
@@ -4592,7 +4598,8 @@ function heatmapMapPoints(points) {
       orderedShifts: Number(point.orderedShifts) || 0,
       weightedActiveUsers: Number(point.weightedActiveUsers) || 0,
       weightedActiveUsersPerShift: Number(point.weightedActiveUsersPerShift) || 0,
-      radiusUsers: point.radiusUsers || { near: 0, medium: 0, far: 0 }
+      radiusUsers: point.radiusUsers || { near: 0, medium: 0, far: 0 },
+      detailHref: heatmapPointDetailHref(point, filters)
     }));
 }
 
@@ -4624,11 +4631,16 @@ function renderHeatmapLeafletScript() {
   }
 
   function popupHtml(point) {
+    var detailLink = point.detailHref
+      ? '<br><a href="' + escapeClientHtml(point.detailHref) + '" target="_blank" rel="noopener noreferrer">Открыть анализ точки</a>'
+      : '';
+
     return '<strong>' + escapeClientHtml(point.title) + '</strong>' +
       (point.address ? '<br>' + escapeClientHtml(point.address) : '') +
       '<br>0-5 км: ' + formatNumber(point.radiusUsers.near) +
       '; 5-10 км: ' + formatNumber(point.radiusUsers.medium) +
-      '; 10-15 км: ' + formatNumber(point.radiusUsers.far);
+      '; 10-15 км: ' + formatNumber(point.radiusUsers.far) +
+      detailLink;
   }
 
   window.initHeatmapLeafletMaps = function initHeatmapLeafletMaps() {
@@ -4698,9 +4710,9 @@ function renderHeatmapLeafletScript() {
 </script>`;
 }
 
-function renderHeatmapMap(points) {
+function renderHeatmapMap(points, filters) {
   const rows = safeRows(points);
-  const mapPoints = heatmapMapPoints(rows);
+  const mapPoints = heatmapMapPoints(rows, filters || {});
 
   if (rows.length === 0) {
     return `<div class="country-heatmap-panel">
@@ -4731,7 +4743,7 @@ function renderHeatmapDashboardSection({ dashboard, section }) {
   return `<section class="section">
   ${renderHeatmapLeafletAssets()}
   ${renderHeatmapKpis(dashboard.summary)}
-  ${renderHeatmapMap(dashboard.points)}
+  ${renderHeatmapMap(dashboard.points, dashboard.filters)}
   ${renderHeatmapLeafletScript()}
 </section>`;
 }

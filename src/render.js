@@ -1358,6 +1358,12 @@ function layout({
     .heatmap-cell[data-level="3"] { background: #2563eb; }
     .heatmap-cell[data-level="4"] { background: #1d4ed8; }
 
+    .heatmap-cell.is-current-day {
+      outline: 2px solid #111827;
+      outline-offset: 1px;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+    }
+
     .detail-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -1451,6 +1457,11 @@ function layout({
     .point-calendar-cell[data-sla-level="5"] {
       border-color: rgba(34, 197, 94, 0.30);
       background: rgba(34, 197, 94, 0.18);
+    }
+
+    .point-calendar-cell.is-current-day {
+      border-color: #111827;
+      box-shadow: inset 0 0 0 2px rgba(17, 24, 39, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.9);
     }
 
     .point-calendar-date {
@@ -2941,17 +2952,21 @@ function renderHeatmapEmptyCells(count) {
   ).join('');
 }
 
-function renderHeatmap(days) {
+function renderHeatmap(days, currentDateValue = new Date()) {
   const leadingEmptyCount = days.length > 0 ? weekdayOffsetFromMonday(days[0].date) : 0;
   const totalCells = leadingEmptyCount + days.length;
   const trailingEmptyCount = totalCells > 0 ? (7 - (totalCells % 7)) % 7 : 0;
   const leadingEmptyCells = renderHeatmapEmptyCells(leadingEmptyCount);
   const trailingEmptyCells = renderHeatmapEmptyCells(trailingEmptyCount);
+  const currentDateKey = currentDateKeyFromValue(currentDateValue);
   const cells = days
-    .map(
-      (day) =>
-        `<span class="heatmap-cell" data-level="${escapeHtml(day.level)}" title="${escapeHtml(`${day.date}: заказано ${formatNumber(day.amount)}; выполнено ${formatNumber(day.completedShifts)}`)}"></span>`
-    )
+    .map((day) => {
+      const isCurrentDay = currentDateKey && day.date === currentDateKey;
+      const cellClass = isCurrentDay ? 'heatmap-cell is-current-day' : 'heatmap-cell';
+      const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
+
+      return `<span class="${cellClass}" data-date="${escapeHtml(day.date)}" data-level="${escapeHtml(day.level)}"${currentDayAttribute} title="${escapeHtml(`${day.date}: заказано ${formatNumber(day.amount)}; выполнено ${formatNumber(day.completedShifts)}`)}"></span>`;
+    })
     .join('');
 
   return `<div class="heatmap" aria-label="Календарь заказов">${leadingEmptyCells}${cells}${trailingEmptyCells}</div>`;
@@ -2991,7 +3006,7 @@ function renderPointPinForm(point, filters) {
 </form>`;
 }
 
-function renderPointCard(point, filters) {
+function renderPointCard(point, filters, currentDateValue) {
   const cardClass = point.pinned ? 'point-card pinned' : 'point-card';
   const detailHref = escapeHtml(workplacePointPageHref(filters, point.workplaceId));
 
@@ -3011,7 +3026,7 @@ function renderPointCard(point, filters) {
       ${renderPointMetric('Активные дни', `${formatNumber(point.activeDays)} / ${formatNumber(point.rangeDays)}`)}
       ${renderPointMetric('Среднее', formatNumber(point.avgDailyOrder, 1))}
     </div>
-    ${renderHeatmap(point.heatmapDays)}
+    ${renderHeatmap(point.heatmapDays, currentDateValue)}
   </a>
 </article>`;
 }
@@ -3254,17 +3269,19 @@ function renderWorkplacePagination({ filters, pagination }) {
 </nav>`;
 }
 
-function renderPointCards(points, filters) {
+function renderPointCards(points, filters, currentDateValue) {
   if (points.length === 0) {
     return '<p class="empty">Нет точек с заказами за выбранный период.</p>';
   }
 
-  return `<div class="points-grid">${points.map((point) => renderPointCard(point, filters)).join('')}</div>`;
+  return `<div class="points-grid">${points
+    .map((point) => renderPointCard(point, filters, currentDateValue))
+    .join('')}</div>`;
 }
 
 function renderWorkplaceAnalysisPointsSection(dashboard) {
   return `<section class="section">
-  ${renderPointCards(dashboard.points || [], dashboard.filters)}
+  ${renderPointCards(dashboard.points || [], dashboard.filters, dashboard.currentDate)}
   ${renderWorkplacePagination({ filters: dashboard.filters, pagination: dashboard.pagination })}
 </section>`;
 }
@@ -3928,12 +3945,15 @@ function calendarSlaLevel(row) {
   return 1;
 }
 
-function renderPointCalendarCell(row) {
+function renderPointCalendarCell(row, currentDateKey) {
   const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
   const slaLevel = calendarSlaLevel(row);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
+  const isCurrentDay = currentDateKey && row.period === currentDateKey;
+  const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
+  const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
 
-  return `<div class="point-calendar-cell" data-date="${escapeHtml(row.period)}"${slaLevelAttribute} title="${escapeHtml(title)}">
+  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
   <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
   <div class="point-calendar-values">
     ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ')}
@@ -3953,6 +3973,32 @@ function dateKeyFromValue(value) {
   }
 
   return date.toISOString().slice(0, 10);
+}
+
+function currentDateKeyFromValue(value = new Date()) {
+  if (typeof value === 'string') {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+
+    if (match) {
+      return match[1];
+    }
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function monthKeyFromDateKey(value) {
@@ -4051,11 +4097,11 @@ function groupPointCalendarRowsByMonth(rows) {
   return groups;
 }
 
-function renderPointCalendarMonth(group, weekdays) {
+function renderPointCalendarMonth(group, weekdays, currentDateKey) {
   const leadingEmptyCount = weekdayOffsetFromMonday(group.rows[0].period);
   const totalCells = leadingEmptyCount + group.rows.length;
   const trailingEmptyCount = (7 - (totalCells % 7)) % 7;
-  const cells = group.rows.map(renderPointCalendarCell).join('');
+  const cells = group.rows.map((row) => renderPointCalendarCell(row, currentDateKey)).join('');
 
   return `<div class="point-calendar-month">
     <h3 class="point-calendar-month-title">${escapeHtml(group.label)}</h3>
@@ -4064,7 +4110,7 @@ function renderPointCalendarMonth(group, weekdays) {
   </div>`;
 }
 
-function renderPointCalendar(rows, filters) {
+function renderPointCalendar(rows, filters, currentDateValue = new Date()) {
   const detailPanelClass = renderPanelClass('calendar-panel');
   const calendarRows = pointCalendarRows(rows, filters);
 
@@ -4078,8 +4124,9 @@ function renderPointCalendar(rows, filters) {
   const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
     .map((weekday) => `<div class="point-calendar-weekday">${escapeHtml(weekday)}</div>`)
     .join('');
+  const currentDateKey = currentDateKeyFromValue(currentDateValue);
   const months = groupPointCalendarRowsByMonth(calendarRows)
-    .map((group) => renderPointCalendarMonth(group, weekdays))
+    .map((group) => renderPointCalendarMonth(group, weekdays, currentDateKey))
     .join('');
 
   return `<div class="${detailPanelClass}">
@@ -4094,7 +4141,7 @@ function renderWorkplacePointCharts(dashboard) {
   const maxProfessionOrders = Math.max(0, ...dashboard.professionRows.map((row) => Number(row.orderedShifts) || 0));
 
   return `<div class="detail-grid point-detail-grid">
-  ${renderPointCalendar(dashboard.dailyRows, dashboard.filters)}
+  ${renderPointCalendar(dashboard.dailyRows, dashboard.filters, dashboard.currentDate)}
   ${renderMiniChart({
     title: 'Профессии точки',
     rows: dashboard.professionRows,

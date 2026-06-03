@@ -644,6 +644,7 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   const html = renderWorkplaceAnalysisDashboard({
     database: 'etl',
     dashboard: {
+      currentDate: '2026-06-02',
       filters: {
         from: '2026-06-01',
         to: '2026-06-03',
@@ -751,6 +752,10 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
   assert.match(html, /<a class="point-card-link" href="\/dashboards\/workplace-analysis\/point\?[^"]*workplaceId=wp1[^"]*from=2026-06-01[^"]*profession=driver[^"]*jobStatus=confirmed[^"]*" target="_blank" rel="noopener noreferrer">/);
   assert.match(html, /title="&lt;script&gt;date&lt;\/script&gt;: заказано 6; выполнено 3"/);
+  assert.match(html, /\.heatmap-cell\.is-current-day/);
+  assert.match(html, /<span class="heatmap-cell" data-date="2026-06-01" data-level="2" title="2026-06-01: заказано 3; выполнено 2"><\/span>/);
+  assert.match(html, /<span class="heatmap-cell is-current-day" data-date="2026-06-02" data-level="0" aria-current="date" title="2026-06-02: заказано 0; выполнено 0"><\/span>/);
+  assert.doesNotMatch(html, /<span class="heatmap-cell is-current-day" data-date="2026-06-01"/);
   assert.doesNotMatch(html, /<script>sort<\/script>/);
   assert.doesNotMatch(html, /<script>contractor<\/script>/);
   assert.doesNotMatch(html, /<script>search<\/script>/);
@@ -928,6 +933,7 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   const html = renderWorkplacePointDashboard({
     database: 'etl',
     dashboard: {
+      currentDate: '2026-06-03',
       filters: {
         workplaceId: 'wp1',
         from: '2026-06-01',
@@ -1028,6 +1034,7 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(html, /class="point-calendar-weekdays"/);
   assert.match(html, /class="point-calendar-grid"/);
   assert.match(html, /class="point-calendar-cell"/);
+  assert.match(html, /\.point-calendar-cell\.is-current-day/);
   assert.match(html, /11 \/ 4/);
   assert.match(html, /45 \/ 18/);
   assert.match(html, /2026-06-02/);
@@ -1059,6 +1066,8 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(calendarPanelHtml, /<span title="Размещение минимум">М<\/span>\s*<strong>4ч<\/strong>/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-06-02" data-sla-level="5"/);
   assert.match(calendarPanelHtml, /<span title="Слеты">Сл<\/span>\s*<strong>0<\/strong>/);
+  assert.match(calendarPanelHtml, /<div class="point-calendar-cell is-current-day" data-date="2026-06-03" aria-current="date" title=/);
+  assert.doesNotMatch(calendarPanelHtml, /data-date="2026-06-03" data-sla-level=/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-06-30"/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-date">30<\/div>/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-07-01" data-sla-level="1"/);

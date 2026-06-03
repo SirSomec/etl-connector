@@ -42,6 +42,7 @@ const {
 const {
   WORKER_CANCELLATIONS_SECTIONS,
   loadWorkerCancellationsDashboardSection,
+  loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell
 } = require('./workerCancellationsDashboard');
 const { createWorkplaceActiveGigersCache } = require('./workplaceActiveGigersCache');
@@ -59,6 +60,7 @@ const {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
@@ -851,6 +853,28 @@ function createApp({
           .status(200)
           .type('html')
           .send(renderWorkerCancellationsDashboardSection({ dashboard, section }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/worker-cancellations/details',
+    requireAuth('worker-cancellations'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadWorkerCancellationsDetails(client, req.query, new Date());
+
+        res
+          .status(200)
+          .type('html')
+          .send(renderWorkerCancellationsDetails({ details }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 

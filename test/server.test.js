@@ -261,6 +261,20 @@ function createFakeClient(overrides = {}) {
         ];
       }
 
+      if (operation === 'worker cancellations detail shifts') {
+        return [
+          {
+            shift_id: 'job-1',
+            brand: 'Brand A',
+            address: 'Moscow, Lenina, 10',
+            planned_start: '2026-05-12 09:00:00',
+            booked_at: '2026-05-10 15:30:00',
+            cancelled_at: '2026-05-11 18:00:00',
+            cancelled_by: 'worker'
+          }
+        ];
+      }
+
       return [];
     }
   };
@@ -903,6 +917,52 @@ test('GET /dashboards/worker-cancellations/section renders cached workers fragme
     assert.equal(call[2].param_from, '2026-05-01 00:00:00');
     assert.equal(call[2].param_to, '2026-06-01 00:00:00');
   }
+});
+
+test('GET /dashboards/worker-cancellations/details renders selected metric fragment', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/worker-cancellations/details?from=2026-05-01&to=2026-05-31&workerId=worker-1&metric=workerCancellations'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Детализация: Отмены worker/);
+    assert.match(text, /Brand A/);
+    assert.match(text, /Moscow, Lenina, 10/);
+    assert.match(text, /12\.05\.2026 09:00/);
+    assert.match(text, /10\.05\.2026 15:30/);
+    assert.match(text, /11\.05\.2026 18:00/);
+    assert.doesNotMatch(text, /<html/);
+  });
+
+  const detailCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && call[1] === 'worker cancellations detail shifts'
+  );
+
+  assert.equal(detailCalls.length, 1);
+  assert.equal(detailCalls[0][2].param_from, '2026-05-01 00:00:00');
+  assert.equal(detailCalls[0][2].param_to, '2026-06-01 00:00:00');
+  assert.equal(detailCalls[0][2].param_worker_id, 'worker-1');
+  assert.equal(detailCalls[0][2].param_limit, 500);
+});
+
+test('GET /dashboards/worker-cancellations/details rejects unknown metric as fragment', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/worker-cancellations/details?workerId=worker-1&metric=bad'
+    );
+
+    assert.equal(response.status, 400);
+    assert.match(text, /Unknown worker cancellation metric: bad/);
+    assert.doesNotMatch(text, /<html/);
+  });
 });
 
 test('GET /dashboards/worker-cancellations/section redacts upstream errors in fragment', async () => {

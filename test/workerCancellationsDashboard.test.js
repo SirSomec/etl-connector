@@ -2,10 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  WORKER_CANCELLATION_DETAIL_METRICS,
   WORKER_CANCELLATIONS_SECTIONS,
   loadWorkerCancellationsDashboardSection,
+  loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell,
+  mergeWorkerCancellationDetails,
   mergeWorkerCancellationRows,
+  normalizeWorkerCancellationDetailInput,
   normalizeWorkerCancellationFilters
 } = require('../src/workerCancellationsDashboard');
 
@@ -26,6 +30,16 @@ function createDashboardClient(rowsByOperation = {}) {
 
 test('WORKER_CANCELLATIONS_SECTIONS contains only workers', () => {
   assert.deepEqual(Array.from(WORKER_CANCELLATIONS_SECTIONS), ['workers']);
+});
+
+test('WORKER_CANCELLATION_DETAIL_METRICS exposes numeric metrics only', () => {
+  assert.deepEqual(Object.keys(WORKER_CANCELLATION_DETAIL_METRICS), [
+    'confirmedShifts',
+    'workerCancellations',
+    'workerCancellations24h',
+    'postStartCancellations',
+    'failedShifts'
+  ]);
 });
 
 test('normalizeWorkerCancellationFilters defaults and whitelists range, paging, sort, and direction', () => {
@@ -110,7 +124,7 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
     {
       worker_id: 'worker-1',
       full_name: '  Ivan Petrov  ',
-      phone: '+79990000000',
+      phone: '+79990000000.0',
       city: 'Moscow',
       confirmed_shifts: '10',
       worker_cancellations: '4',
@@ -121,7 +135,7 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
     {
       worker_id: 'worker-2',
       full_name: '',
-      phone: null,
+      phone: 79990000001,
       city: null,
       confirmed_shifts: 'not-a-number',
       worker_cancellations: '',
@@ -146,7 +160,7 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
     {
       workerId: 'worker-2',
       fullName: 'worker-2',
-      phone: '',
+      phone: '79990000001',
       city: '',
       confirmedShifts: 0,
       workerCancellations: 0,
@@ -163,6 +177,112 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
     hasPrevious: true,
     hasNext: true
   });
+});
+
+test('normalizeWorkerCancellationDetailInput accepts worker id and whitelisted metric', () => {
+  const detailInput = normalizeWorkerCancellationDetailInput(
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      workerId: ' worker-1 ',
+      metric: 'workerCancellations'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.equal(detailInput.workerId, 'worker-1');
+  assert.equal(detailInput.metric, 'workerCancellations');
+  assert.equal(detailInput.metricLabel, 'Отмены worker');
+  assert.equal(detailInput.filters.fromDateTime, '2026-05-01 00:00:00');
+  assert.equal(detailInput.filters.toExclusiveDateTime, '2026-06-01 00:00:00');
+});
+
+test('normalizeWorkerCancellationDetailInput rejects missing worker and unknown metric', () => {
+  assert.throws(
+    () => normalizeWorkerCancellationDetailInput(
+      {
+        workerId: '',
+        metric: 'workerCancellations'
+      },
+      new Date('2026-06-03T12:00:00.000Z')
+    ),
+    {
+      message: /Worker id is required/,
+      status: 400
+    }
+  );
+
+  assert.throws(
+    () => normalizeWorkerCancellationDetailInput(
+      {
+        workerId: 'worker-1',
+        metric: 'workerCancellations; DROP TABLE mg_jobs'
+      },
+      new Date('2026-06-03T12:00:00.000Z')
+    ),
+    {
+      message: /Unknown worker cancellation metric/,
+      status: 400
+    }
+  );
+});
+
+test('mergeWorkerCancellationDetails maps detail rows to popup model', () => {
+  const detailInput = normalizeWorkerCancellationDetailInput(
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      workerId: 'worker-1',
+      metric: 'workerCancellations'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const details = mergeWorkerCancellationDetails(detailInput, [
+    {
+      shift_id: 'job-1',
+      brand: 'Brand A',
+      address: 'Moscow, Lenina, 10',
+      planned_start: '2026-05-12 09:00:00',
+      booked_at: '2026-05-10 15:30:00',
+      cancelled_at: '2026-05-11 18:00:00',
+      cancelled_by: 'worker'
+    },
+    {
+      shift_id: 'job-2',
+      brand: null,
+      address: null,
+      planned_start: null,
+      booked_at: null,
+      cancelled_at: null,
+      cancelled_by: null
+    }
+  ]);
+
+  assert.equal(details.workerId, 'worker-1');
+  assert.equal(details.metric, 'workerCancellations');
+  assert.equal(details.metricLabel, 'Отмены worker');
+  assert.equal(details.limit, 500);
+  assert.deepEqual(details.shifts, [
+    {
+      shiftId: 'job-1',
+      brand: 'Brand A',
+      address: 'Moscow, Lenina, 10',
+      plannedStart: '2026-05-12 09:00:00',
+      bookedAt: '2026-05-10 15:30:00',
+      cancelledAt: '2026-05-11 18:00:00',
+      cancelledBy: 'worker'
+    },
+    {
+      shiftId: 'job-2',
+      brand: '',
+      address: '',
+      plannedStart: '',
+      bookedAt: '',
+      cancelledAt: '',
+      cancelledBy: ''
+    }
+  ]);
 });
 
 test('loadWorkerCancellationsDashboardShell returns empty dashboard without ClickHouse queries', async () => {
@@ -274,6 +394,61 @@ test('loadWorkerCancellationsDashboardSection queries workers with safe params a
   assert.equal(workersCall.query.includes('ORDER BY full_name ASC, worker_id ASC'), true);
   assert.equal(workersCall.query.includes('ORDER BY fullName'), false);
   assert.equal(workersCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
+});
+
+test('loadWorkerCancellationsDetails queries selected metric with shift timeline and workplace context', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations detail shifts': [
+      {
+        shift_id: 'job-1',
+        brand: 'Brand A',
+        address: 'Moscow, Lenina, 10',
+        planned_start: '2026-05-12 09:00:00',
+        booked_at: '2026-05-10 15:30:00',
+        cancelled_at: '2026-05-11 18:00:00',
+        cancelled_by: 'worker'
+      }
+    ]
+  });
+
+  const details = await loadWorkerCancellationsDetails(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      workerId: 'worker-1',
+      metric: 'workerCancellations24h'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.equal(details.shifts.length, 1);
+  assert.equal(details.metricLabel, 'Отмены worker < 24ч');
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations detail shifts'
+  ]);
+
+  const detailCall = calls[0];
+
+  assert.equal(detailCall.params.param_from, '2026-05-01 00:00:00');
+  assert.equal(detailCall.params.param_to, '2026-06-01 00:00:00');
+  assert.equal(detailCall.params.param_worker_id, 'worker-1');
+  assert.equal(detailCall.params.param_limit, 500);
+  assert.equal(detailCall.query.includes('FROM mg_jobs AS j'), true);
+  assert.equal(detailCall.query.includes('j.worker = {worker_id:String}'), true);
+  assert.equal(detailCall.query.includes('j.start >= {from:DateTime}'), true);
+  assert.equal(detailCall.query.includes('j.start < {to:DateTime}'), true);
+  assert.equal(detailCall.query.includes('ifNull(j.deleted, 0) = 0'), true);
+  assert.equal(detailCall.query.includes('LEFT JOIN mg_clients AS c'), true);
+  assert.equal(detailCall.query.includes('LEFT JOIN mg_workplaces AS wp'), true);
+  assert.equal(detailCall.query.includes("h.status = 'booked'"), true);
+  assert.equal(detailCall.query.includes("h.status = 'cancelled'"), true);
+  assert.equal(detailCall.query.includes('min(coalesce(h.createdAt, h.updatedAt)) AS booked_at'), true);
+  assert.equal(detailCall.query.includes('argMax(ifNull(h.initiator, \'\'), coalesce(h.createdAt, h.updatedAt)) AS cancelled_by'), true);
+  assert.equal(detailCall.query.includes("sf.status = 'cancelled' AND ifNull(cf.is_worker_cancelled_24h, 0) = 1"), true);
+  assert.equal(detailCall.query.includes('arrayStringConcat'), true);
+  assert.equal(detailCall.query.includes('DROP TABLE'), false);
+  assert.equal(detailCall.query.includes('LIMIT {limit:UInt64}'), true);
 });
 
 test('loadWorkerCancellationsDashboardSection rejects unknown section', async () => {

@@ -11,6 +11,7 @@ const {
   renderHome,
   renderSalesByProjectDashboard,
   renderTable,
+  renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
@@ -123,6 +124,9 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
   assert.match(html, /<input id="from" name="from" type="date" value="2026-05-01">/);
   assert.match(html, /<input id="to" name="to" type="date" value="2026-05-31">/);
   assert.match(html, /<option value="200" selected>200<\/option>/);
+  assert.match(html, /data-worker-cancellation-modal/);
+  assert.match(html, /document\.addEventListener\('click', function \(event\)/);
+  assert.match(html, /data-worker-cancellation-detail-trigger/);
   assert.match(html, /Период по плановому старту смены/);
   assert.match(
     html,
@@ -184,7 +188,15 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
     html,
     /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc"/
   );
-  assert.match(html, /\+79990000000&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /<td class="phone-cell">\+79990000000&lt;script&gt;x&lt;\/script&gt;<\/td>/);
+  assert.match(
+    html,
+    /<button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=confirmedShifts">10<\/button>/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=workerCancellations"/
+  );
   assert.match(html, /Иванов &lt;script&gt;Иван&lt;\/script&gt;/);
   assert.match(html, /Москва&lt;script&gt;bad&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>/);
@@ -256,6 +268,55 @@ test('renderWorkerCancellationsDashboardSection handles out-of-range pages witho
   assert.doesNotMatch(html, /Нет исполнителей со сменами за выбранный период/);
   assert.doesNotMatch(html, /Страница 4 из 4/);
   assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerCancellationsDetails renders escaped shift details fragment', () => {
+  const html = renderWorkerCancellationsDetails({
+    details: {
+      metricLabel: 'Отмены worker',
+      workerId: 'worker-1',
+      limit: 500,
+      shifts: [
+        {
+          shiftId: 'job-1<script>x</script>',
+          brand: 'Brand <b>A</b>',
+          address: 'Moscow <script>bad</script>',
+          plannedStart: '2026-05-12 09:00:00',
+          bookedAt: '2026-05-10 15:30:00',
+          cancelledAt: '2026-05-11 18:00:00',
+          cancelledBy: 'worker'
+        },
+        {
+          shiftId: 'job-2',
+          brand: '',
+          address: '',
+          plannedStart: '',
+          bookedAt: '',
+          cancelledAt: '',
+          cancelledBy: ''
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /Детализация: Отмены worker/);
+  assert.match(html, /Смена/);
+  assert.match(html, /Бренд/);
+  assert.match(html, /Адрес/);
+  assert.match(html, /Старт смены/);
+  assert.match(html, /Забронирована/);
+  assert.match(html, /Отменена/);
+  assert.match(html, /Кем отменена/);
+  assert.match(html, /job-1&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /Brand &lt;b&gt;A&lt;\/b&gt;/);
+  assert.match(html, /Moscow &lt;script&gt;bad&lt;\/script&gt;/);
+  assert.match(html, /12\.05\.2026 09:00/);
+  assert.match(html, /10\.05\.2026 15:30/);
+  assert.match(html, /11\.05\.2026 18:00/);
+  assert.match(html, /worker/);
+  assert.match(html, />-<\/td>/);
+  assert.doesNotMatch(html, /<html/);
+  assert.doesNotMatch(html, /<script>/);
 });
 
 test('renderTable escapes metadata and cells, formats complex values, and uses column order', () => {

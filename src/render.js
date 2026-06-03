@@ -800,6 +800,114 @@ function layout({
       white-space: nowrap;
     }
 
+    .phone-cell,
+    .nowrap-cell {
+      white-space: nowrap;
+    }
+
+    .metric-detail-trigger {
+      width: auto;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--link);
+      font: inherit;
+      font-weight: 700;
+      text-align: right;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+    }
+
+    .metric-detail-trigger:hover,
+    .metric-detail-trigger:focus {
+      background: transparent;
+      color: var(--accent);
+      outline: none;
+    }
+
+    .worker-cancellation-modal[hidden] {
+      display: none;
+    }
+
+    .worker-cancellation-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      display: grid;
+      align-items: center;
+      padding: 24px;
+    }
+
+    .worker-cancellation-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 33, 43, 0.42);
+    }
+
+    .worker-cancellation-modal-dialog {
+      position: relative;
+      width: min(1120px, 100%);
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      box-shadow: 0 18px 50px rgba(31, 41, 55, 0.24);
+    }
+
+    .worker-cancellation-modal-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .worker-cancellation-modal-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .worker-cancellation-modal-close {
+      width: 36px;
+      min-width: 36px;
+      padding: 0;
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .worker-cancellation-modal-close:hover,
+    .worker-cancellation-modal-close:focus {
+      border-color: var(--accent);
+      background: var(--link-bg);
+      color: var(--text);
+    }
+
+    .worker-cancellation-modal-body {
+      padding: 16px;
+    }
+
+    .worker-cancellation-details {
+      display: grid;
+      gap: 12px;
+    }
+
+    .worker-cancellation-details h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
     .bar-cell {
       min-width: 130px;
     }
@@ -1693,6 +1801,19 @@ function layout({
       button {
         width: 100%;
       }
+
+      .metric-detail-trigger,
+      .worker-cancellation-modal-close {
+        width: auto;
+      }
+
+      .worker-cancellation-modal {
+        padding: 10px;
+      }
+
+      .worker-cancellation-modal-dialog {
+        max-height: calc(100vh - 20px);
+      }
     }
   </style>
 </head>
@@ -1716,6 +1837,7 @@ function layout({
       ? renderDashboardProgressiveScript()
       : ''
   }
+  ${content.includes('data-worker-cancellation-modal') ? renderWorkerCancellationDetailsScript() : ''}
 </body>
 </html>`;
 }
@@ -1869,6 +1991,106 @@ function renderDashboardProgressiveScript() {
 
         renderError(root, message);
       });
+  });
+})();
+</script>`;
+}
+
+function renderWorkerCancellationDetailsScript() {
+  return `<script>
+(function () {
+  var modal = document.querySelector('[data-worker-cancellation-modal]');
+
+  if (!modal) {
+    return;
+  }
+
+  var body = modal.querySelector('[data-worker-cancellation-modal-body]');
+  var closeButton = modal.querySelector('[data-worker-cancellation-modal-close]');
+  var lastFocused = null;
+
+  function escapeClientHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function openModal() {
+    lastFocused = document.activeElement;
+    modal.hidden = false;
+
+    if (closeButton) {
+      closeButton.focus();
+    }
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+
+    if (body) {
+      body.innerHTML = '<p class="loading">Загружается</p>';
+    }
+
+    if (lastFocused && typeof lastFocused.focus === 'function') {
+      lastFocused.focus();
+    }
+  }
+
+  function renderModalError(message) {
+    if (body) {
+      body.innerHTML = '<div class="error">' + escapeClientHtml(message) + '</div>';
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!event.target || typeof event.target.closest !== 'function') {
+      return;
+    }
+
+    var trigger = event.target.closest('[data-worker-cancellation-detail-trigger]');
+
+    if (trigger) {
+      event.preventDefault();
+      openModal();
+
+      if (body) {
+        body.innerHTML = '<p class="loading">Загружается</p>';
+      }
+
+      fetch(trigger.getAttribute('data-detail-url'))
+        .then(function (response) {
+          return response.text().then(function (html) {
+            if (!response.ok) {
+              if (body) {
+                body.innerHTML = html || '<div class="error">Не удалось загрузить детализацию.</div>';
+              }
+              return;
+            }
+
+            if (body) {
+              body.innerHTML = html;
+            }
+          });
+        })
+        .catch(function (error) {
+          renderModalError(error && error.message ? error.message : 'Не удалось загрузить детализацию.');
+        });
+
+      return;
+    }
+
+    if (event.target.closest('[data-worker-cancellation-modal-close]')) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !modal.hidden) {
+      closeModal();
+    }
   });
 })();
 </script>`;
@@ -3081,6 +3303,17 @@ function workerCancellationsSectionUrl(filters, section) {
   return `/dashboards/worker-cancellations/section?section=${encodeURIComponent(section)}${suffix}`;
 }
 
+function workerCancellationsDetailUrl(filters, row, metric) {
+  const params = new URLSearchParams();
+
+  addDashboardQueryParam(params, 'from', filters.from);
+  addDashboardQueryParam(params, 'to', filters.to);
+  addDashboardQueryParam(params, 'workerId', row.workerId);
+  addDashboardQueryParam(params, 'metric', metric);
+
+  return `/dashboards/worker-cancellations/details?${params.toString()}`;
+}
+
 function workerCancellationsSortDirection(filters, column) {
   const currentSort = String(filters.sort || '');
   const currentDirection = String(filters.direction || 'desc') === 'asc' ? 'asc' : 'desc';
@@ -3127,6 +3360,18 @@ function renderWorkerCancellationsOutOfRangeState({ filters, requestedPage, tota
   return `<p class="empty">Страница ${escapeHtml(requestedPage)} вне диапазона. Доступно страниц: ${escapeHtml(totalPages)}. <a href="${escapeHtml(href)}">Открыть последнюю страницу</a></p>`;
 }
 
+function renderWorkerCancellationMetricCell(row, filters, column) {
+  const value = formatNumber(row[column.key]);
+
+  if (!row.workerId) {
+    return `<td class="number-cell">${escapeHtml(value)}</td>`;
+  }
+
+  const detailUrl = workerCancellationsDetailUrl(filters, row, column.key);
+
+  return `<td class="number-cell"><button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="${escapeHtml(detailUrl)}">${escapeHtml(value)}</button></td>`;
+}
+
 function renderWorkerCancellationsTable(rows, filters, pagination) {
   if (rows.length === 0) {
     const bounds = workerCancellationsPaginationBounds(pagination, filters);
@@ -3152,10 +3397,12 @@ function renderWorkerCancellationsTable(rows, filters, pagination) {
           const value = row[column.key];
 
           if (column.numeric) {
-            return `<td class="number-cell">${escapeHtml(formatNumber(value))}</td>`;
+            return renderWorkerCancellationMetricCell(row, filters, column);
           }
 
-          return `<td>${escapeHtml(value || '')}</td>`;
+          const classAttribute = column.key === 'phone' ? ' class="phone-cell"' : '';
+
+          return `<td${classAttribute}>${escapeHtml(value || '')}</td>`;
         })
         .join('');
 
@@ -3167,6 +3414,68 @@ function renderWorkerCancellationsTable(rows, filters, pagination) {
   <thead><tr>${headerCells}</tr></thead>
   <tbody>${bodyRows}</tbody>
 </table></div>`;
+}
+
+function formatDateTimeValue(value) {
+  const text = String(value || '').trim();
+
+  if (text === '') {
+    return '-';
+  }
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+
+  if (!match) {
+    return text;
+  }
+
+  return `${match[3]}.${match[2]}.${match[1]} ${match[4]}:${match[5]}`;
+}
+
+function detailText(value) {
+  const text = String(value || '').trim();
+
+  return text === '' ? '-' : text;
+}
+
+function renderWorkerCancellationsDetails({ details }) {
+  const shifts = (details && details.shifts) || [];
+  const metricLabel = details && details.metricLabel ? details.metricLabel : 'метрика';
+
+  if (shifts.length === 0) {
+    return `<div class="worker-cancellation-details">
+  <h2>Детализация: ${escapeHtml(metricLabel)}</h2>
+  <p class="empty">Нет смен для выбранной метрики за период.</p>
+</div>`;
+  }
+
+  const rows = shifts
+    .map((shift) => `<tr>
+  <td>${escapeHtml(detailText(shift.shiftId))}</td>
+  <td>${escapeHtml(detailText(shift.brand))}</td>
+  <td>${escapeHtml(detailText(shift.address))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(shift.plannedStart))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(shift.bookedAt))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(shift.cancelledAt))}</td>
+  <td>${escapeHtml(detailText(shift.cancelledBy))}</td>
+</tr>`)
+    .join('');
+
+  return `<div class="worker-cancellation-details">
+  <h2>Детализация: ${escapeHtml(metricLabel)}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Смена</th>
+      <th>Бренд</th>
+      <th>Адрес</th>
+      <th>Старт смены</th>
+      <th>Забронирована</th>
+      <th>Отменена</th>
+      <th>Кем отменена</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>
+</div>`;
 }
 
 function renderWorkerCancellationsPaginationPages({ filters, page, totalPages }) {
@@ -3232,6 +3541,21 @@ function renderWorkerCancellationsPageSizeOptions(selectedPageSize) {
     .join('');
 }
 
+function renderWorkerCancellationsModal() {
+  return `<div class="worker-cancellation-modal" data-worker-cancellation-modal hidden>
+  <div class="worker-cancellation-modal-backdrop" data-worker-cancellation-modal-close></div>
+  <div class="worker-cancellation-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="worker-cancellation-modal-title">
+    <div class="worker-cancellation-modal-head">
+      <h2 id="worker-cancellation-modal-title">Детализация смен</h2>
+      <button type="button" class="worker-cancellation-modal-close" data-worker-cancellation-modal-close aria-label="Закрыть">&times;</button>
+    </div>
+    <div class="worker-cancellation-modal-body" data-worker-cancellation-modal-body>
+      <p class="loading">Загружается</p>
+    </div>
+  </div>
+</div>`;
+}
+
 function renderWorkerCancellationsDashboardSection({ dashboard, section }) {
   if (section === 'workers') {
     const rows = dashboard.rows || dashboard.workers || [];
@@ -3284,7 +3608,8 @@ function renderWorkerCancellationsDashboard({
     <button type="submit">Применить</button>
   </form>
 </section>
-${workersHtml}`;
+${workersHtml}
+${renderWorkerCancellationsModal()}`;
 
   return layout({
     title: 'Отмены гигерами',
@@ -5140,6 +5465,7 @@ module.exports = {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,

@@ -4,10 +4,33 @@ const MAX_PAGE = 100000;
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_SORT = 'workerCancellations24h';
 const DEFAULT_DIRECTION = 'desc';
+const DETAIL_LIMIT = 500;
 const ALLOWED_PAGE_SIZES = new Set([50, 100, 200, 500]);
 const ALLOWED_DIRECTIONS = new Set(['asc', 'desc']);
 const WORKER_CANCELLATIONS_SECTION_NAMES = ['workers'];
 const WORKER_CANCELLATIONS_SECTIONS = new Set(WORKER_CANCELLATIONS_SECTION_NAMES);
+const WORKER_CANCELLATION_DETAIL_METRICS = Object.freeze({
+  confirmedShifts: {
+    label: 'Выполнено',
+    condition: "sf.status = 'confirmed'"
+  },
+  workerCancellations: {
+    label: 'Отмены worker',
+    condition: "sf.status = 'cancelled' AND ifNull(cf.is_worker_cancelled, 0) = 1"
+  },
+  workerCancellations24h: {
+    label: 'Отмены worker < 24ч',
+    condition: "sf.status = 'cancelled' AND ifNull(cf.is_worker_cancelled_24h, 0) = 1"
+  },
+  postStartCancellations: {
+    label: 'Отмены после старта',
+    condition: "sf.status = 'cancelled' AND ifNull(cf.is_post_start_cancelled, 0) = 1"
+  },
+  failedShifts: {
+    label: 'Провалы / failed',
+    condition: "sf.status = 'failed'"
+  }
+});
 const SORT_COLUMNS = {
   fullName: 'full_name',
   phone: 'phone',
@@ -60,11 +83,11 @@ function cleanText(value) {
   const values = Array.isArray(value) ? value : [value];
 
   for (const rawValue of values) {
-    if (typeof rawValue !== 'string') {
+    if (rawValue === null || typeof rawValue === 'undefined') {
       continue;
     }
 
-    const text = rawValue.trim();
+    const text = String(rawValue).trim();
 
     if (text !== '') {
       return text;
@@ -139,7 +162,13 @@ function numberValue(value) {
 }
 
 function textValue(value) {
-  return typeof value === 'string' ? value.trim() : '';
+  return cleanText(value);
+}
+
+function phoneValue(value) {
+  const text = textValue(value);
+
+  return text.replace(/^(\+?\d+)\.0$/, '$1');
 }
 
 function paginationFromTotal(filters, totalWorkers) {
@@ -164,7 +193,7 @@ function mergeWorkerCancellationRows(filters, workerRows = [], totalRows = []) {
     return {
       workerId,
       fullName,
-      phone: textValue(row.phone),
+      phone: phoneValue(row.phone),
       city: textValue(row.city),
       confirmedShifts: numberValue(row.confirmed_shifts),
       workerCancellations: numberValue(row.worker_cancellations),
@@ -181,6 +210,13 @@ function mergeWorkerCancellationRows(filters, workerRows = [], totalRows = []) {
   };
 }
 
+function createBadRequestError(message) {
+  const error = new Error(message);
+
+  error.status = 400;
+  return error;
+}
+
 function emptyWorkerCancellationsDashboard(filters) {
   return mergeWorkerCancellationRows(filters, [], []);
 }
@@ -190,10 +226,53 @@ function assertWorkerCancellationsSection(section) {
     return;
   }
 
-  const error = new Error(`Unknown worker cancellations section: ${section}`);
+  throw createBadRequestError(`Unknown worker cancellations section: ${section}`);
+}
 
-  error.status = 400;
-  throw error;
+function assertWorkerCancellationMetric(metric) {
+  if (Object.prototype.hasOwnProperty.call(WORKER_CANCELLATION_DETAIL_METRICS, metric)) {
+    return;
+  }
+
+  throw createBadRequestError(`Unknown worker cancellation metric: ${metric}`);
+}
+
+function normalizeWorkerCancellationDetailInput(input = {}, now = new Date()) {
+  const filters = normalizeWorkerCancellationFilters(input, now);
+  const workerId = cleanText(input.workerId);
+  const metric = cleanText(input.metric);
+
+  if (workerId === '') {
+    throw createBadRequestError('Worker id is required');
+  }
+
+  assertWorkerCancellationMetric(metric);
+
+  return {
+    filters,
+    workerId,
+    metric,
+    metricLabel: WORKER_CANCELLATION_DETAIL_METRICS[metric].label
+  };
+}
+
+function mergeWorkerCancellationDetails(detailInput, detailRows = []) {
+  return {
+    filters: detailInput.filters,
+    workerId: detailInput.workerId,
+    metric: detailInput.metric,
+    metricLabel: detailInput.metricLabel,
+    limit: DETAIL_LIMIT,
+    shifts: detailRows.map((row) => ({
+      shiftId: textValue(row.shift_id),
+      brand: textValue(row.brand),
+      address: textValue(row.address),
+      plannedStart: textValue(row.planned_start),
+      bookedAt: textValue(row.booked_at),
+      cancelledAt: textValue(row.cancelled_at),
+      cancelledBy: textValue(row.cancelled_by)
+    }))
+  };
 }
 
 async function readThroughCache(cache, key, loader) {
@@ -225,6 +304,15 @@ function paramsForFilters(filters) {
     param_to: filters.toExclusiveDateTime,
     param_limit: filters.pageSize,
     param_offset: filters.offset
+  };
+}
+
+function paramsForDetails(detailInput) {
+  return {
+    param_from: detailInput.filters.fromDateTime,
+    param_to: detailInput.filters.toExclusiveDateTime,
+    param_worker_id: detailInput.workerId,
+    param_limit: DETAIL_LIMIT
   };
 }
 
@@ -337,6 +425,96 @@ function workersQuery(filters) {
   FORMAT JSONEachRow`;
 }
 
+function workerCancellationDetailsQuery(metric) {
+  const metricCondition = WORKER_CANCELLATION_DETAIL_METRICS[metric].condition;
+
+  return `WITH shift_facts AS (
+    SELECT
+      j._id AS job,
+      j.worker AS worker_id,
+      j.start AS start,
+      ifNull(j.status, '') AS status,
+      ifNull(j.client, '') AS client_id,
+      ifNull(j.workplace, '') AS workplace_id
+    FROM mg_jobs AS j
+    WHERE j.start >= {from:DateTime}
+      AND j.start < {to:DateTime}
+      AND j.worker = {worker_id:String}
+      AND ifNull(j.deleted, 0) = 0
+  ),
+  cancellation_events AS (
+    SELECT
+      h.job AS job,
+      h.initiator = 'worker' AS is_worker_event,
+      coalesce(h.createdAt, h.updatedAt) AS event_at
+    FROM mg_job_history AS h
+    INNER JOIN shift_facts AS sf ON h.job = sf.job
+    WHERE h.status = 'cancelled'
+  ),
+  cancellation_flags AS (
+    SELECT
+      sf.job AS job,
+      max(if(ce.is_worker_event, 1, 0)) AS is_worker_cancelled,
+      max(if(
+        ce.is_worker_event
+          AND ce.event_at >= sf.start - INTERVAL 24 HOUR
+          AND ce.event_at < sf.start,
+        1,
+        0
+      )) AS is_worker_cancelled_24h,
+      max(if(ce.event_at >= sf.start, 1, 0)) AS is_post_start_cancelled
+    FROM shift_facts AS sf
+    LEFT JOIN cancellation_events AS ce ON ce.job = sf.job
+    GROUP BY sf.job
+  ),
+  booking_events AS (
+    SELECT
+      h.job AS job,
+      min(coalesce(h.createdAt, h.updatedAt)) AS booked_at
+    FROM mg_job_history AS h
+    INNER JOIN shift_facts AS sf ON h.job = sf.job
+    WHERE h.status = 'booked'
+    GROUP BY h.job
+  ),
+  cancel_events AS (
+    SELECT
+      h.job AS job,
+      max(coalesce(h.createdAt, h.updatedAt)) AS cancelled_at,
+      argMax(ifNull(h.initiator, ''), coalesce(h.createdAt, h.updatedAt)) AS cancelled_by
+    FROM mg_job_history AS h
+    INNER JOIN shift_facts AS sf ON h.job = sf.job
+    WHERE h.status = 'cancelled'
+    GROUP BY h.job
+  )
+  SELECT
+    sf.job AS shift_id,
+    coalesce(nullIf(trim(ifNull(c.title, '')), ''), nullIf(sf.client_id, ''), '') AS brand,
+    coalesce(
+      nullIf(arrayStringConcat(arrayFilter(x -> x != '', [
+        ifNull(wp.address__city, ''),
+        ifNull(wp.address__street, ''),
+        ifNull(wp.address__house, '')
+      ]), ', '), ''),
+      nullIf(trim(ifNull(wp.title, '')), ''),
+      nullIf(sf.workplace_id, ''),
+      ''
+    ) AS address,
+    sf.start AS planned_start,
+    be.booked_at AS booked_at,
+    ce.cancelled_at AS cancelled_at,
+    ce.cancelled_by AS cancelled_by
+  FROM shift_facts AS sf
+  LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job
+  LEFT JOIN booking_events AS be ON be.job = sf.job
+  LEFT JOIN cancel_events AS ce ON ce.job = sf.job
+  LEFT JOIN mg_clients AS c ON sf.client_id = c._id
+  LEFT JOIN mg_workplaces AS wp ON sf.workplace_id = wp._id
+  WHERE ${metricCondition}
+  ORDER BY sf.start DESC, sf.job ASC
+  LIMIT {limit:UInt64}
+  FORMAT JSONEachRow`;
+}
+
 async function loadWorkerCancellationRows(client, filters) {
   const params = paramsForFilters(filters);
   const [totalRows, workerRows] = await Promise.all([
@@ -353,6 +531,17 @@ async function loadWorkerCancellationRows(client, filters) {
   ]);
 
   return { totalRows, workerRows };
+}
+
+async function loadWorkerCancellationsDetails(client, input = {}, now = new Date()) {
+  const detailInput = normalizeWorkerCancellationDetailInput(input, now);
+  const detailRows = await client.queryJSONEachRow(
+    workerCancellationDetailsQuery(detailInput.metric),
+    paramsForDetails(detailInput),
+    'worker cancellations detail shifts'
+  );
+
+  return mergeWorkerCancellationDetails(detailInput, detailRows);
 }
 
 async function loadWorkerCancellationsDashboardShell(client, input = {}, now = new Date()) {
@@ -381,9 +570,13 @@ async function loadWorkerCancellationsDashboardSection(
 }
 
 module.exports = {
+  WORKER_CANCELLATION_DETAIL_METRICS,
   WORKER_CANCELLATIONS_SECTIONS,
   loadWorkerCancellationsDashboardSection,
+  loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell,
+  mergeWorkerCancellationDetails,
   mergeWorkerCancellationRows,
+  normalizeWorkerCancellationDetailInput,
   normalizeWorkerCancellationFilters
 };

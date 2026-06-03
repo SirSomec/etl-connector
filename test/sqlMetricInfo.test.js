@@ -13,6 +13,8 @@ test('getSqlMetricInfo returns stable metadata without secrets', () => {
   assert.equal(info.id, 'sales-by-project.summary');
   assert.match(info.title, /Продажи/);
   assert.match(info.description, /Показывает/);
+  assert.doesNotMatch(info.title, /Рџ|Рљ|СЃ/);
+  assert.doesNotMatch(info.description, /Рџ|Рљ|СЃ/);
   assert.match(info.sql, /SELECT/i);
   assert.doesNotMatch(info.sql, /CLICKHOUSE_PASSWORD|AUTH_ADMIN_PASSWORD|AUTH_SESSION_SECRET/);
 });
@@ -27,6 +29,8 @@ test('getSqlMetricInfo derives child metric metadata from parent SQL info', () =
   assert.equal(info.id, 'workplace-point.charts.calendar-sla');
   assert.match(info.title, /calendar sla/);
   assert.match(info.description, /calendar sla/);
+  assert.match(info.description, /Кнопка относится к конкретному показателю/);
+  assert.doesNotMatch(info.description, /Рџ|Рљ|СЃ/);
   assert.match(info.sql, /mg_orders/);
   assert.match(info.sql, /\{workplaceId:String\}/);
 });

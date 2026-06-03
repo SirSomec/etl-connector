@@ -4743,9 +4743,14 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
   const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
   const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
   const detailUrl = workplacePointDayDetailsUrl(filters || {}, row.period);
+  const hasSqlInspector = canViewSqlInspector(currentUser);
+  const controlOpen = hasSqlInspector
+    ? `<div class="point-calendar-cell-button" role="button" tabindex="0" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">`
+    : `<button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">`;
+  const controlClose = hasSqlInspector ? '</div>' : '</button>';
 
   return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
-  <button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">
+  ${controlOpen}
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
       ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ', 'workplace-point.charts.calendar-ordered-shifts', currentUser)}
@@ -4754,7 +4759,7 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
       ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее', 'workplace-point.charts.calendar-order-lead-avg', currentUser)}
       ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум', 'workplace-point.charts.calendar-order-lead-min', currentUser)}
     </div>
-  </button>
+  ${controlClose}
 </div>`;
 }
 

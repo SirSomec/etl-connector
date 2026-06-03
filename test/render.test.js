@@ -805,6 +805,7 @@ test('dashboard visual outputs render SQL inspectors on individual values', () =
   assert.match(workplaceHtml, /data-sql-inspector-open="workplace-analysis\.points\.sla"/);
   assert.match(workplaceHtml, /data-sql-inspector-open="workplace-analysis\.points\.heatmap"/);
   assert.match(pointHtml, /data-sql-inspector-open="workplace-point\.charts\.calendar-sla"/);
+  assert.doesNotMatch(pointHtml, /<button[^>]*class="point-calendar-cell-button"[\s\S]*<button[^>]*class="sql-inspector-button"/);
   assert.match(pointHtml, /data-sql-inspector-open="workplace-point\.charts\.professions"/);
   assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.combo-ordered-shifts"/);
   assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.heatmap-active-users-per-request"/);

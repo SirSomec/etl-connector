@@ -195,6 +195,45 @@ GROUP BY worker`
   }
 };
 
+function decodeWindows1251Mojibake(value) {
+  const text = String(value || '');
+
+  if (!/[РС][\u0400-\u04ff]/.test(text) || typeof TextDecoder === 'undefined') {
+    return text;
+  }
+
+  const decoder = new TextDecoder('windows-1251');
+  const charToByte = new Map();
+
+  for (let byte = 0; byte <= 255; byte += 1) {
+    charToByte.set(decoder.decode(Uint8Array.of(byte)), byte);
+  }
+
+  const bytes = [];
+
+  for (const char of text) {
+    const byte = charToByte.get(char);
+
+    if (byte === undefined) {
+      return text;
+    }
+
+    bytes.push(byte);
+  }
+
+  const decoded = Buffer.from(bytes).toString('utf8');
+
+  return decoded.includes('\uFFFD') ? text : decoded;
+}
+
+function normalizeSqlMetricInfo(info) {
+  return {
+    ...info,
+    title: decodeWindows1251Mojibake(info.title),
+    description: decodeWindows1251Mojibake(info.description)
+  };
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -209,7 +248,7 @@ function getSqlMetricInfo(id) {
   const info = SQL_METRIC_INFO[infoId];
 
   if (info) {
-    return { ...info };
+    return normalizeSqlMetricInfo(info);
   }
 
   const parentId = Object.keys(SQL_METRIC_INFO)
@@ -220,7 +259,7 @@ function getSqlMetricInfo(id) {
     return null;
   }
 
-  const parentInfo = SQL_METRIC_INFO[parentId];
+  const parentInfo = normalizeSqlMetricInfo(SQL_METRIC_INFO[parentId]);
   const metricLabel = infoId
     .slice(parentId.length + 1)
     .split('.')
@@ -231,7 +270,7 @@ function getSqlMetricInfo(id) {
     ...parentInfo,
     id: infoId,
     title: `${parentInfo.title}: ${metricLabel}`,
-    description: `${parentInfo.description} РљРЅРѕРїРєР° РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє РєРѕРЅРєСЂРµС‚РЅРѕРјСѓ РїРѕРєР°Р·Р°С‚РµР»СЋ: ${metricLabel}.`
+    description: `${parentInfo.description} Кнопка относится к конкретному показателю: ${metricLabel}.`
   };
 }
 

@@ -84,16 +84,36 @@ const RENDERED_SQL_METRIC_IDS = [
   'city-analysis.summary.completed-users',
   'city-analysis.summary.avg-daily-30d-active-users-per-request',
   'city-analysis.composition',
+  'city-analysis.composition.brands',
+  'city-analysis.composition.brands.ordered-shifts',
+  'city-analysis.composition.professions',
+  'city-analysis.composition.professions.ordered-shifts',
+  'city-analysis.composition.rate-buckets',
+  'city-analysis.composition.rate-buckets.ordered-shifts',
   'city-analysis.dynamics',
   'city-analysis.dynamics.combo-ordered-shifts',
   'city-analysis.dynamics.combo-app-active-users',
   'city-analysis.dynamics.combo-booked-users',
   'city-analysis.dynamics.combo-completed-users',
+  'city-analysis.dynamics.multiples-ordered-shifts',
+  'city-analysis.dynamics.multiples-app-active-users',
+  'city-analysis.dynamics.multiples-booked-users',
+  'city-analysis.dynamics.multiples-completed-users',
+  'city-analysis.dynamics.multiples-active-users-per-request',
   'city-analysis.dynamics.heatmap-ordered-shifts',
   'city-analysis.dynamics.heatmap-app-active-users',
   'city-analysis.dynamics.heatmap-booked-users',
   'city-analysis.dynamics.heatmap-completed-users',
   'city-analysis.dynamics.heatmap-active-users-per-request',
+  'city-analysis.dynamics.funnel-ordered-shifts',
+  'city-analysis.dynamics.funnel-app-active-users',
+  'city-analysis.dynamics.funnel-booked-users',
+  'city-analysis.dynamics.funnel-completed-users',
+  'city-analysis.dynamics.index-ordered-shifts',
+  'city-analysis.dynamics.index-app-active-users',
+  'city-analysis.dynamics.index-booked-users',
+  'city-analysis.dynamics.index-completed-users',
+  'city-analysis.dynamics.index-active-users-per-request',
   'heatmap.map',
   'heatmap.map.points-with-order',
   'heatmap.map.ordered-shifts',
@@ -151,6 +171,22 @@ test('workplace point chart metrics point to their actual query templates', () =
   assert.match(calendar.sql, /GROUP BY period/);
   assert.match(professions.sql, /GROUP BY profession/);
   assert.doesNotMatch(professions.sql, /GROUP BY period/);
+});
+
+test('city composition metrics show the exact grouped SQL for visible row values', () => {
+  const brands = getSqlMetricInfo('city-analysis.composition.brands.ordered-shifts');
+  const professions = getSqlMetricInfo('city-analysis.composition.professions.ordered-shifts');
+  const rateBuckets = getSqlMetricInfo('city-analysis.composition.rate-buckets.ordered-shifts');
+
+  assert.match(brands.sql, /ordered_shifts/);
+  assert.match(brands.sql, /share_percent/);
+  assert.match(brands.sql, /brand AS label/);
+  assert.match(professions.sql, /profession AS label/);
+  assert.match(professions.sql, /share_percent/);
+  assert.match(rateBuckets.sql, /multiIf/);
+  assert.match(rateBuckets.sql, /avgIf\(salary_per_hour, salary_per_hour > 0\) AS avg_salary_per_hour/);
+  assert.match(rateBuckets.sql, /share_percent/);
+  assert.doesNotMatch(rateBuckets.sql, /brand AS label/);
 });
 
 test('geo and cancellation metrics show the specialized SQL used for those values', () => {

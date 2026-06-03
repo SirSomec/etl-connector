@@ -1810,6 +1810,105 @@ test('renderCityAnalysisDashboardSection renders requested fragment without full
   assert.match(compositionHtml, /Brand A/);
 });
 
+test('renderCityAnalysisDashboardSection renders SQL inspectors for every city metric fragment value', () => {
+  const currentUser = { role: 'admin', permissions: [] };
+  const summaryDashboard = {
+    summary: {
+      orderedShifts: 120,
+      activeOrderRequests: 34,
+      totalLocatedUsers: 5000,
+      readyLocatedUsers: 900,
+      readyStatusLocatedUsers: 420,
+      bookedStatusLocatedUsers: 310,
+      workedStatusLocatedUsers: 170,
+      appActiveUsers: 400,
+      app30dActiveUsers: 560,
+      app30dReadyStatusUsers: 210,
+      app30dBookedStatusUsers: 190,
+      app30dWorkedStatusUsers: 160,
+      bookedUsers: 130,
+      completedUsers: 75,
+      avgDaily30dActiveUsersPerRequest: 11.25
+    },
+    context: {
+      hasCity: true,
+      hasCityCoordinates: true
+    }
+  };
+  const summaryHtml = [
+    'summary-demand',
+    'summary-base',
+    'summary-app',
+    'summary-responses',
+    'summary-ratio'
+  ]
+    .map((section) => renderCityAnalysisDashboardSection({ dashboard: summaryDashboard, section, currentUser }))
+    .join('');
+  const compositionHtml = renderCityAnalysisDashboardSection({
+    currentUser,
+    section: 'composition',
+    dashboard: {
+      composition: {
+        brands: [{ label: 'Brand A', orderedShifts: 80, sharePercent: 66.666 }],
+        professions: [{ label: 'Picker', orderedShifts: 40, sharePercent: 33.333 }],
+        rateBuckets: [{ label: '250-350', orderedShifts: 60, sharePercent: 50, avgSalaryPerHour: 310 }]
+      }
+    }
+  });
+  const dynamicsHtml = renderCityAnalysisDashboardSection({
+    currentUser,
+    section: 'dynamics',
+    dashboard: {
+      dynamics: [
+        {
+          period: '2026-05-01',
+          orderedShifts: 50,
+          appActiveUsers: 20,
+          bookedUsers: 10,
+          completedUsers: 7,
+          activeUsersPerRequest: 2.5
+        }
+      ]
+    }
+  });
+  const html = `${summaryHtml}${compositionHtml}${dynamicsHtml}`;
+  const expectedIds = [
+    'city-analysis.summary.ordered-shifts',
+    'city-analysis.summary.active-order-requests',
+    'city-analysis.summary.total-located-users',
+    'city-analysis.summary.ready-located-users',
+    'city-analysis.summary.app-active-users',
+    'city-analysis.summary.app-30d-active-users',
+    'city-analysis.summary.booked-users',
+    'city-analysis.summary.completed-users',
+    'city-analysis.summary.avg-daily-30d-active-users-per-request',
+    'city-analysis.composition.brands',
+    'city-analysis.composition.brands.ordered-shifts',
+    'city-analysis.composition.professions',
+    'city-analysis.composition.professions.ordered-shifts',
+    'city-analysis.composition.rate-buckets',
+    'city-analysis.composition.rate-buckets.ordered-shifts',
+    'city-analysis.dynamics.multiples-ordered-shifts',
+    'city-analysis.dynamics.multiples-app-active-users',
+    'city-analysis.dynamics.multiples-booked-users',
+    'city-analysis.dynamics.multiples-completed-users',
+    'city-analysis.dynamics.multiples-active-users-per-request',
+    'city-analysis.dynamics.funnel-ordered-shifts',
+    'city-analysis.dynamics.funnel-app-active-users',
+    'city-analysis.dynamics.funnel-booked-users',
+    'city-analysis.dynamics.funnel-completed-users',
+    'city-analysis.dynamics.index-ordered-shifts',
+    'city-analysis.dynamics.index-app-active-users',
+    'city-analysis.dynamics.index-booked-users',
+    'city-analysis.dynamics.index-completed-users',
+    'city-analysis.dynamics.index-active-users-per-request'
+  ];
+
+  for (const id of expectedIds) {
+    assert.match(html, new RegExp(`data-sql-inspector-open="${escapeRegExp(id)}"`));
+  }
+});
+
 test('renderCityAnalysisDashboardSection renders five dynamics subtabs', () => {
   const html = renderCityAnalysisDashboardSection({
     section: 'dynamics',

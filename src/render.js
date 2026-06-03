@@ -820,6 +820,12 @@ function layout({
       padding-right: 24px;
     }
 
+    .mini-panel-title.metric-info-scope,
+    .metric-info-scope .mini-meta,
+    .city-funnel-meta.metric-info-scope {
+      padding-right: 24px;
+    }
+
     td.metric-info-scope {
       padding-right: 32px;
     }
@@ -5405,10 +5411,17 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
 
   if (section === 'summary-demand') {
     return [
-      renderCityKpiCard({ label: 'Заказ', value: formatNumber(summary.orderedShifts) }),
+      renderCityKpiCard({
+        label: 'Заказ',
+        value: formatNumber(summary.orderedShifts),
+        metricId: 'city-analysis.summary.ordered-shifts',
+        currentUser
+      }),
       renderCityKpiCard({
         label: 'Не удаленные заявки',
-        value: formatNumber(summary.activeOrderRequests)
+        value: formatNumber(summary.activeOrderRequests),
+        metricId: 'city-analysis.summary.active-order-requests',
+        currentUser
       })
     ].join('');
   }
@@ -5423,12 +5436,16 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
       renderCityKpiCard({
         label: 'Общая база',
         value: formatNumber(summary.totalLocatedUsers),
-        detail: coordinateDetail
+        detail: coordinateDetail,
+        metricId: 'city-analysis.summary.total-located-users',
+        currentUser
       }),
       renderCityKpiCard({
         label: 'Активная база',
         value: formatNumber(summary.readyLocatedUsers),
-        detail: `ready ${formatNumber(summary.readyStatusLocatedUsers)} · booked ${formatNumber(summary.bookedStatusLocatedUsers)} · worked ${formatNumber(summary.workedStatusLocatedUsers)}`
+        detail: `ready ${formatNumber(summary.readyStatusLocatedUsers)} · booked ${formatNumber(summary.bookedStatusLocatedUsers)} · worked ${formatNumber(summary.workedStatusLocatedUsers)}`,
+        metricId: 'city-analysis.summary.ready-located-users',
+        currentUser
       })
     ].join('');
   }
@@ -5437,27 +5454,43 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
     return [
       renderCityKpiCard({
         label: 'Входили в приложение',
-        value: formatNumber(summary.appActiveUsers)
+        value: formatNumber(summary.appActiveUsers),
+        metricId: 'city-analysis.summary.app-active-users',
+        currentUser
       }),
       renderCityKpiCard({
         label: 'Активная за 30 дней',
         value: formatNumber(summary.app30dActiveUsers),
-        detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`
+        detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`,
+        metricId: 'city-analysis.summary.app-30d-active-users',
+        currentUser
       })
     ].join('');
   }
 
   if (section === 'summary-responses') {
     return [
-      renderCityKpiCard({ label: 'Откликались', value: formatNumber(summary.bookedUsers) }),
-      renderCityKpiCard({ label: 'Завершали', value: formatNumber(summary.completedUsers) })
+      renderCityKpiCard({
+        label: 'Откликались',
+        value: formatNumber(summary.bookedUsers),
+        metricId: 'city-analysis.summary.booked-users',
+        currentUser
+      }),
+      renderCityKpiCard({
+        label: 'Завершали',
+        value: formatNumber(summary.completedUsers),
+        metricId: 'city-analysis.summary.completed-users',
+        currentUser
+      })
     ].join('');
   }
 
   if (section === 'summary-ratio') {
     return renderCityKpiCard({
       label: '30д активные / заявка',
-      value: formatNumber(summary.avgDaily30dActiveUsersPerRequest, 1)
+      value: formatNumber(summary.avgDaily30dActiveUsersPerRequest, 1),
+      metricId: 'city-analysis.summary.avg-daily-30d-active-users-per-request',
+      currentUser
     });
   }
 
@@ -5488,12 +5521,19 @@ function safeRows(rows) {
   return Array.isArray(rows) ? rows : [];
 }
 
-function renderMiniBarPanel({ title, rows, valueForWidth, metaForRow }) {
+function renderMiniBarPanel({ title, rows, valueForWidth, metaForRow, metricId, rowMetricId, currentUser }) {
   const panelRows = safeRows(rows);
+  const titleHtml = renderMetricInfoScope({
+    tag: 'h3',
+    className: 'mini-panel-title',
+    metricId,
+    currentUser,
+    content: escapeHtml(title)
+  });
 
   if (panelRows.length === 0) {
     return `<article class="mini-panel">
-  <h3>${escapeHtml(title)}</h3>
+  ${titleHtml}
   ${renderEmptyDashboardTable()}
 </article>`;
   }
@@ -5504,18 +5544,24 @@ function renderMiniBarPanel({ title, rows, valueForWidth, metaForRow }) {
       const rawValue = Number(valueForWidth(row)) || 0;
       const width = maxValue > 0 ? clampPercent((rawValue / maxValue) * 100) : 0;
 
-      return `<div class="mini-bar-row">
-    <div class="mini-row-head">
+      const metricIdForRow = typeof rowMetricId === 'function' ? rowMetricId(row) : rowMetricId;
+      const content = `<div class="mini-row-head">
       <span class="mini-label">${escapeHtml(row.label || '')}</span>
       <span class="mini-meta">${escapeHtml(metaForRow(row))}</span>
     </div>
-    <div class="mini-bar-track"><div class="mini-bar-fill" style="width: ${escapeHtml(formatNumber(width, 1).replace(',', '.'))}%"></div></div>
-  </div>`;
+    <div class="mini-bar-track"><div class="mini-bar-fill" style="width: ${escapeHtml(formatNumber(width, 1).replace(',', '.'))}%"></div></div>`;
+
+      return renderMetricInfoScope({
+        className: 'mini-bar-row',
+        metricId: metricIdForRow,
+        currentUser,
+        content
+      });
     })
     .join('');
 
   return `<article class="mini-panel">
-  <h3>${escapeHtml(title)}</h3>
+  ${titleHtml}
   <div class="mini-bar-list">${rowsHtml}</div>
 </article>`;
 }
@@ -5651,22 +5697,25 @@ function cityDynamicRowsForMetric(rows, key) {
   }));
 }
 
-function renderCitySmallMultiples(rows) {
+function renderCitySmallMultiples(rows, currentUser) {
   const panels = [
-    ['Заказ', 'orderedShifts', 0, 'смен'],
-    ['Входили в приложение', 'appActiveUsers', 0, 'польз.'],
-    ['Откликались', 'bookedUsers', 0, 'польз.'],
-    ['Завершали', 'completedUsers', 0, 'польз.'],
-    ['Активные / заявка', 'activeUsersPerRequest', 1, '']
+    ['Заказ', 'orderedShifts', 0, 'смен', 'city-analysis.dynamics.multiples-ordered-shifts'],
+    ['Входили в приложение', 'appActiveUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-app-active-users'],
+    ['Откликались', 'bookedUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-booked-users'],
+    ['Завершали', 'completedUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-completed-users'],
+    ['Активные / заявка', 'activeUsersPerRequest', 1, '', 'city-analysis.dynamics.multiples-active-users-per-request']
   ];
 
   return `<div class="mini-panels-grid">${panels
-    .map(([title, key, digits, suffix]) =>
+    .map(([title, key, digits, suffix, metricId]) =>
       renderMiniBarPanel({
         title,
         rows: cityDynamicRowsForMetric(rows, key),
         valueForWidth: (row) => row.metricValue,
-        metaForRow: (row) => `${formatNumber(row.metricValue, digits)}${suffix ? ` ${suffix}` : ''}`
+        metaForRow: (row) => `${formatNumber(row.metricValue, digits)}${suffix ? ` ${suffix}` : ''}`,
+        metricId,
+        rowMetricId: metricId,
+        currentUser
       })
     )
     .join('')}</div>`;
@@ -5760,15 +5809,18 @@ function renderCityHeatmap(rows, currentUser) {
 </article>`;
 }
 
-function renderCityFunnelStep({ label, value, maxValue, className }) {
-  return `<div class="city-funnel-step">
-  <span>${escapeHtml(label)}</span>
+function renderCityFunnelStep({ label, value, maxValue, className, metricId, currentUser }) {
+  return renderMetricInfoScope({
+    className: 'city-funnel-step',
+    metricId,
+    currentUser,
+    content: `<span>${escapeHtml(label)}</span>
   <div class="city-funnel-track"><div class="city-funnel-fill ${escapeHtml(className)}" style="width: ${cssPercent(cityDynamicWidth(value, maxValue))}%"></div></div>
-  <span class="city-funnel-value">${escapeHtml(formatNumber(value))}</span>
-</div>`;
+  <span class="city-funnel-value">${escapeHtml(formatNumber(value))}</span>`
+  });
 }
 
-function renderCityFunnel(rows) {
+function renderCityFunnel(rows, currentUser) {
   return `<article class="mini-panel">
   <h3>Воронка</h3>
   <div class="city-funnel-list">${rows
@@ -5778,26 +5830,37 @@ function renderCityFunnel(rows) {
       return `<div class="city-funnel-day">
     <div>
       <div class="city-funnel-date">${escapeHtml(row.period)}</div>
-      <div class="city-funnel-meta">заказ ${escapeHtml(formatNumber(row.orderedShifts))}</div>
+      ${renderMetricInfoScope({
+        className: 'city-funnel-meta',
+        metricId: 'city-analysis.dynamics.funnel-ordered-shifts',
+        currentUser,
+        content: `заказ ${escapeHtml(formatNumber(row.orderedShifts))}`
+      })}
     </div>
     <div class="city-funnel-main">
       ${renderCityFunnelStep({
         label: 'Входы',
         value: row.appActiveUsers,
         maxValue,
-        className: 'city-series-app'
+        className: 'city-series-app',
+        metricId: 'city-analysis.dynamics.funnel-app-active-users',
+        currentUser
       })}
       ${renderCityFunnelStep({
         label: 'Отклики',
         value: row.bookedUsers,
         maxValue,
-        className: 'city-series-booked'
+        className: 'city-series-booked',
+        metricId: 'city-analysis.dynamics.funnel-booked-users',
+        currentUser
       })}
       ${renderCityFunnelStep({
         label: 'Завершения',
         value: row.completedUsers,
         maxValue,
-        className: 'city-series-completed'
+        className: 'city-series-completed',
+        metricId: 'city-analysis.dynamics.funnel-completed-users',
+        currentUser
       })}
     </div>
   </div>`;
@@ -5812,7 +5875,7 @@ function firstPositiveCityDynamicValue(rows, key) {
   return row ? Number(row[key]) : 1;
 }
 
-function renderCityIndexMetric({ rows, label, key, digits, className }) {
+function renderCityIndexMetric({ rows, label, key, digits, className, metricId, currentUser }) {
   const base = firstPositiveCityDynamicValue(rows, key);
   const cellsStyle = `grid-template-columns: repeat(${Math.max(rows.length, 1)}, 28px);`;
 
@@ -5825,26 +5888,34 @@ function renderCityIndexMetric({ rows, label, key, digits, className }) {
       const height = Math.min(100, indexValue / 2);
       const title = `${row.period}: ${label} ${formatNumber(value, digits)}; индекс ${formatNumber(indexValue, 0)}`;
 
-      return `<span class="city-index-cell" title="${escapeHtml(title)}"><span class="city-index-fill ${escapeHtml(className)}" style="height: ${cssPercent(height)}%"></span></span>`;
+      return renderMetricInfoScope({
+        className: 'city-index-cell',
+        metricId,
+        currentUser,
+        content: `<span class="city-index-fill ${escapeHtml(className)}" style="height: ${cssPercent(height)}%"></span>`,
+        attributes: `title="${escapeHtml(title)}"`
+      });
     })
     .join('')}</div>
 </div>`;
 }
 
-function renderCityIndexDynamics(rows) {
+function renderCityIndexDynamics(rows, currentUser) {
   const metrics = [
-    ['Заказ', 'orderedShifts', 0, 'city-series-demand'],
-    ['Входы', 'appActiveUsers', 0, 'city-series-app'],
-    ['Отклики', 'bookedUsers', 0, 'city-series-booked'],
-    ['Завершения', 'completedUsers', 0, 'city-series-completed'],
-    ['Актив/заявка', 'activeUsersPerRequest', 1, 'city-series-ratio']
+    ['Заказ', 'orderedShifts', 0, 'city-series-demand', 'city-analysis.dynamics.index-ordered-shifts'],
+    ['Входы', 'appActiveUsers', 0, 'city-series-app', 'city-analysis.dynamics.index-app-active-users'],
+    ['Отклики', 'bookedUsers', 0, 'city-series-booked', 'city-analysis.dynamics.index-booked-users'],
+    ['Завершения', 'completedUsers', 0, 'city-series-completed', 'city-analysis.dynamics.index-completed-users'],
+    ['Актив/заявка', 'activeUsersPerRequest', 1, 'city-series-ratio', 'city-analysis.dynamics.index-active-users-per-request']
   ];
 
   return `<article class="mini-panel">
   <h3>Индексы</h3>
   <div class="city-index-scroll">
     <div class="city-index-chart">${metrics
-      .map(([label, key, digits, className]) => renderCityIndexMetric({ rows, label, key, digits, className }))
+      .map(([label, key, digits, className, metricId]) =>
+        renderCityIndexMetric({ rows, label, key, digits, className, metricId, currentUser })
+      )
       .join('')}</div>
   </div>
 </article>`;
@@ -5860,19 +5931,28 @@ function renderCityComposition(composition, currentUser) {
       title: 'Бренды',
       rows: safeComposition.brands,
       valueForWidth: (row) => row.orderedShifts,
-      metaForRow: cityCompositionMeta
+      metaForRow: cityCompositionMeta,
+      metricId: 'city-analysis.composition.brands',
+      rowMetricId: 'city-analysis.composition.brands.ordered-shifts',
+      currentUser
     })}
     ${renderMiniBarPanel({
       title: 'Специальности',
       rows: safeComposition.professions,
       valueForWidth: (row) => row.orderedShifts,
-      metaForRow: cityCompositionMeta
+      metaForRow: cityCompositionMeta,
+      metricId: 'city-analysis.composition.professions',
+      rowMetricId: 'city-analysis.composition.professions.ordered-shifts',
+      currentUser
     })}
     ${renderMiniBarPanel({
       title: 'Ставки',
       rows: safeComposition.rateBuckets,
       valueForWidth: (row) => row.orderedShifts,
-      metaForRow: cityRateBucketMeta
+      metaForRow: cityRateBucketMeta,
+      metricId: 'city-analysis.composition.rate-buckets',
+      rowMetricId: 'city-analysis.composition.rate-buckets.ordered-shifts',
+      currentUser
     })}
   </div>
 </section>`;
@@ -5891,7 +5971,9 @@ function renderCityDynamics(dynamics, currentUser) {
     title: 'По дням',
     rows,
     valueForWidth: (row) => row.orderedShifts,
-    metaForRow: cityDynamicsMeta
+    metaForRow: cityDynamicsMeta,
+    metricId: 'city-analysis.dynamics',
+    currentUser
   })}
 </section>`;
   }
@@ -5913,10 +5995,10 @@ function renderCityDynamics(dynamics, currentUser) {
     </div>
     <div class="city-dynamics-panels">
       <div class="city-dynamics-panel city-dynamics-panel-combo">${renderCityComboDynamics(rows, currentUser)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-multiples">${renderCitySmallMultiples(rows)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-multiples">${renderCitySmallMultiples(rows, currentUser)}</div>
       <div class="city-dynamics-panel city-dynamics-panel-heatmap">${renderCityHeatmap(rows, currentUser)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-funnel">${renderCityFunnel(rows)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-index">${renderCityIndexDynamics(rows)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-funnel">${renderCityFunnel(rows, currentUser)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-index">${renderCityIndexDynamics(rows, currentUser)}</div>
     </div>
   </div>
 </section>`;

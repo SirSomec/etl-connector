@@ -702,7 +702,8 @@ SELECT
   ifNull((SELECT avg_ratio FROM daily_30d_ratio), 0) AS avg_daily_30d_active_users_per_request
 FORMAT JSONEachRow`;
 
-const CITY_COMPOSITION_SQL = `WITH filtered_orders AS (
+function cityCompositionSql(dimensionExpression) {
+  return `WITH filtered_orders AS (
   SELECT
     ifNull(o.amount, 0) AS amount,
     ifNull(c.title, '') AS brand,
@@ -714,15 +715,73 @@ const CITY_COMPOSITION_SQL = `WITH filtered_orders AS (
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
   LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   WHERE <whereSql>
+),
+ranked AS (
+  SELECT
+    ${dimensionExpression} AS label,
+    sum(amount) AS ordered_shifts
+  FROM filtered_orders
+  GROUP BY label
+  HAVING label != ''
+  ORDER BY ordered_shifts DESC, label
+  LIMIT 8
+),
+display_total AS (
+  SELECT sum(ordered_shifts) AS total_ordered_shifts
+  FROM ranked
 )
 SELECT
-  <brand_or_profession_or_rate_bucket> AS label,
-  sum(amount) AS ordered_shifts
-FROM filtered_orders
-GROUP BY label
-HAVING label != ''
+  ranked.label AS label,
+  ranked.ordered_shifts AS ordered_shifts,
+  if(display_total.total_ordered_shifts > 0, ranked.ordered_shifts / display_total.total_ordered_shifts * 100, 0) AS share_percent
+FROM ranked
+CROSS JOIN display_total
 ORDER BY ordered_shifts DESC, label
-LIMIT 8
+FORMAT JSONEachRow`;
+}
+
+const CITY_COMPOSITION_SQL = cityCompositionSql('<brand_or_profession>');
+const CITY_COMPOSITION_BRANDS_SQL = cityCompositionSql('brand');
+const CITY_COMPOSITION_PROFESSIONS_SQL = cityCompositionSql('profession');
+
+const CITY_RATE_BUCKETS_SQL = `WITH filtered_orders AS (
+  SELECT
+    ifNull(o.amount, 0) AS amount,
+    ifNull(c.title, '') AS brand,
+    if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession,
+    ifNull(o.salary_per_hour, 0) AS salary_per_hour
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE <whereSql>
+),
+grouped AS (
+  SELECT
+    multiIf(
+      salary_per_hour < 250, '0-250',
+      salary_per_hour < 350, '250-350',
+      salary_per_hour < 450, '350-450',
+      '450+'
+    ) AS label,
+    sum(amount) AS ordered_shifts,
+    avgIf(salary_per_hour, salary_per_hour > 0) AS avg_salary_per_hour
+  FROM filtered_orders
+  GROUP BY label
+),
+display_total AS (
+  SELECT sum(ordered_shifts) AS total_ordered_shifts
+  FROM grouped
+)
+SELECT
+  grouped.label AS label,
+  grouped.ordered_shifts AS ordered_shifts,
+  if(display_total.total_ordered_shifts > 0, grouped.ordered_shifts / display_total.total_ordered_shifts * 100, 0) AS share_percent,
+  grouped.avg_salary_per_hour AS avg_salary_per_hour
+FROM grouped
+CROSS JOIN display_total
+ORDER BY label
 FORMAT JSONEachRow`;
 
 const CITY_DYNAMICS_SQL = `WITH filtered_orders AS (
@@ -1081,7 +1140,13 @@ defineMetricSet({
   baseId: 'city-analysis.composition',
   sql: CITY_COMPOSITION_SQL,
   metrics: [
-    { id: 'city-analysis.composition', title: 'Состав заказа', description: 'Показывает, из каких брендов, профессий и ставок состоит плановый заказ в выбранном городе.' }
+    { id: 'city-analysis.composition', title: 'Состав заказа', description: 'Показывает, из каких брендов, профессий и ставок состоит плановый заказ в выбранном городе.' },
+    { suffix: 'brands', title: 'Состав заказа: бренды', description: 'Показывает распределение планового заказа по брендам клиентов.', sql: CITY_COMPOSITION_BRANDS_SQL },
+    { suffix: 'brands.ordered-shifts', title: 'Состав заказа: смены по бренду', description: 'Количество плановых смен и доля выбранного бренда в заказе города.', sql: CITY_COMPOSITION_BRANDS_SQL },
+    { suffix: 'professions', title: 'Состав заказа: специальности', description: 'Показывает распределение планового заказа по специальностям.', sql: CITY_COMPOSITION_PROFESSIONS_SQL },
+    { suffix: 'professions.ordered-shifts', title: 'Состав заказа: смены по специальности', description: 'Количество плановых смен и доля выбранной специальности в заказе города.', sql: CITY_COMPOSITION_PROFESSIONS_SQL },
+    { suffix: 'rate-buckets', title: 'Состав заказа: ставки', description: 'Показывает распределение планового заказа по диапазонам часовой ставки.', sql: CITY_RATE_BUCKETS_SQL },
+    { suffix: 'rate-buckets.ordered-shifts', title: 'Состав заказа: смены и средняя ставка', description: 'Количество плановых смен, доля диапазона ставки и средняя ставка внутри этого диапазона.', sql: CITY_RATE_BUCKETS_SQL }
   ]
 });
 
@@ -1094,11 +1159,25 @@ defineMetricSet({
     { suffix: 'combo-app-active-users', title: 'Динамика города: входы', description: 'Дневное количество пользователей базы, входивших в приложение.' },
     { suffix: 'combo-booked-users', title: 'Динамика города: отклики', description: 'Дневное количество пользователей, бронировавших смены.' },
     { suffix: 'combo-completed-users', title: 'Динамика города: завершения', description: 'Дневное количество пользователей, завершивших смены.' },
+    { suffix: 'multiples-ordered-shifts', title: 'Small multiples: заказ', description: 'Отдельный дневной график планового заказа.' },
+    { suffix: 'multiples-app-active-users', title: 'Small multiples: входы', description: 'Отдельный дневной график пользователей базы, входивших в приложение.' },
+    { suffix: 'multiples-booked-users', title: 'Small multiples: отклики', description: 'Отдельный дневной график пользователей, бронировавших смены.' },
+    { suffix: 'multiples-completed-users', title: 'Small multiples: завершения', description: 'Отдельный дневной график пользователей, завершивших смены.' },
+    { suffix: 'multiples-active-users-per-request', title: 'Small multiples: актив / заявка', description: 'Отдельный дневной график отношения активных пользователей приложения к активным заявкам.' },
     { suffix: 'heatmap-ordered-shifts', title: 'Heatmap города: заказ', description: 'Дневной заказ в табличной тепловой карте динамики.' },
     { suffix: 'heatmap-app-active-users', title: 'Heatmap города: входы', description: 'Дневные входы пользователей базы в табличной тепловой карте.' },
     { suffix: 'heatmap-booked-users', title: 'Heatmap города: отклики', description: 'Дневные отклики пользователей в табличной тепловой карте.' },
     { suffix: 'heatmap-completed-users', title: 'Heatmap города: завершения', description: 'Дневные завершения смен пользователями в табличной тепловой карте.' },
-    { suffix: 'heatmap-active-users-per-request', title: 'Heatmap города: актив / заявка', description: 'Дневное отношение активных пользователей приложения к активным заявкам.' }
+    { suffix: 'heatmap-active-users-per-request', title: 'Heatmap города: актив / заявка', description: 'Дневное отношение активных пользователей приложения к активным заявкам.' },
+    { suffix: 'funnel-ordered-shifts', title: 'Воронка города: заказ', description: 'Плановый заказ дня, рядом с которым сравниваются входы, отклики и завершения.' },
+    { suffix: 'funnel-app-active-users', title: 'Воронка города: входы', description: 'Количество пользователей базы, входивших в приложение в этот день.' },
+    { suffix: 'funnel-booked-users', title: 'Воронка города: отклики', description: 'Количество пользователей, бронировавших смены в этот день.' },
+    { suffix: 'funnel-completed-users', title: 'Воронка города: завершения', description: 'Количество пользователей, завершивших смены в этот день.' },
+    { suffix: 'index-ordered-shifts', title: 'Индексы города: заказ', description: 'Индекс дневного планового заказа относительно первого положительного значения периода.' },
+    { suffix: 'index-app-active-users', title: 'Индексы города: входы', description: 'Индекс дневных входов в приложение относительно первого положительного значения периода.' },
+    { suffix: 'index-booked-users', title: 'Индексы города: отклики', description: 'Индекс дневных откликов относительно первого положительного значения периода.' },
+    { suffix: 'index-completed-users', title: 'Индексы города: завершения', description: 'Индекс дневных завершений относительно первого положительного значения периода.' },
+    { suffix: 'index-active-users-per-request', title: 'Индексы города: актив / заявка', description: 'Индекс дневного отношения активных пользователей приложения к активным заявкам.' }
   ]
 });
 

@@ -423,6 +423,8 @@ test('loadWorkplacePointDayDetails queries one selected day with safe parameters
   assert.equal(calls[0].query.includes("ifNull(j.status, '') IN ('confirmed', 'completed')"), true);
   assert.equal(calls[0].query.includes("j.status = 'cancelled'"), true);
   assert.equal(calls[0].query.includes("payment_status, '') IN ('done', 'bank_done')"), true);
+  assert.equal(calls[0].query.includes("'%F %H:%M'"), false);
+  assert.equal(calls[0].query.includes("'%d.%m.%Y %H:%i'"), true);
 });
 
 test('loadWorkplacePointDayDetails treats completed factual shifts as detail rows', async () => {

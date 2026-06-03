@@ -5,6 +5,7 @@ const RADIUS_KM = [5, 10, 15, 20];
 const WORKPLACE_POINT_SECTION_NAMES = ['summary', 'charts', 'radius'];
 const WORKPLACE_POINT_SECTIONS = new Set(WORKPLACE_POINT_SECTION_NAMES);
 const DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL = "('confirmed', 'completed')";
+const DAY_DETAIL_FACTUAL_TIME_FORMAT_SQL = "'%d.%m.%Y %H:%i'";
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -794,9 +795,9 @@ function dayDetailsQuery(whereSql) {
     cj.status AS confirmed_status,
     cj.actual_hours AS actual_hours,
     concat(
-      formatDateTime(toTimeZone(cj.start_fact, 'Europe/Moscow'), '%F %H:%M'),
+      formatDateTime(toTimeZone(cj.start_fact, 'Europe/Moscow'), ${DAY_DETAIL_FACTUAL_TIME_FORMAT_SQL}),
       ' - ',
-      formatDateTime(toTimeZone(cj.finish_fact, 'Europe/Moscow'), '%F %H:%M')
+      formatDateTime(toTimeZone(cj.finish_fact, 'Europe/Moscow'), ${DAY_DETAIL_FACTUAL_TIME_FORMAT_SQL})
     ) AS actual_time_local,
     ifNull(pay.payment_amount, 0) AS payment_amount,
     ifNull(jr.cancelled_shifts, 0) AS cancelled_shifts,

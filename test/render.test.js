@@ -1245,12 +1245,13 @@ test('renderHeatmapDashboard renders filters, navigation, and progressive map pl
         periodKey: '2026-05',
         from: '2026-05-01',
         to: '2026-05-31',
-        activeFromDateTime: '2026-05-02 00:00:00',
+        activeFromDateTime: '2026-05-01 00:00:00',
         activeToExclusiveDateTime: '2026-06-01 00:00:00',
         client: ['<script>client</script>'],
         excludedProfession: ['Курьер<script>bad</script>'],
         addressSearch: 'Тверская<script>addr</script>',
-        activeBaseMode: 'ready'
+        activeBaseMode: 'ready',
+        activeBasePeriod: 'selected'
       },
       filterOptions: {
         client: ['<script>client</script>', 'Brand A'],
@@ -1277,14 +1278,18 @@ test('renderHeatmapDashboard renders filters, navigation, and progressive map pl
   assert.match(html, /<input id="addressSearch" name="addressSearch" type="search" value="Тверская&lt;script&gt;addr&lt;\/script&gt;"/);
   assert.match(html, /name="activeBaseMode" value="all"/);
   assert.match(html, /name="activeBaseMode" value="ready" checked/);
+  assert.match(html, /name="activeBasePeriod" value="last30d"/);
+  assert.match(html, /name="activeBasePeriod" value="selected" checked/);
   assert.match(html, /Все зарегистрированные/);
   assert.match(html, /ready, booked, worked/);
+  assert.match(html, /Выбранный месяц/);
   assert.match(html, /<input type="checkbox" name="client" value="&lt;script&gt;client&lt;\/script&gt;" checked data-multi-filter-checkbox>/);
   assert.match(html, /<input type="checkbox" name="excludedProfession" value="Курьер&lt;script&gt;bad&lt;\/script&gt;" checked data-multi-filter-checkbox>/);
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/heatmap\/section\?section=map&amp;year=2026&amp;month=5/);
   assert.match(html, /addressSearch=%D0%A2%D0%B2%D0%B5%D1%80%D1%81%D0%BA%D0%B0%D1%8F%3Cscript%3Eaddr%3C%2Fscript%3E/);
+  assert.match(html, /activeBasePeriod=selected/);
   assert.match(html, /Загружается/);
-  assert.match(html, /Активная база: 2026-05-02 00:00:00 - 2026-06-01 00:00:00/);
+  assert.match(html, /Активная база: 2026-05-01 00:00:00 - 2026-06-01 00:00:00/);
   assert.doesNotMatch(html, /<script>client<\/script>/);
   assert.doesNotMatch(html, /<script>bad<\/script>/);
 });

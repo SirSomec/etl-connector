@@ -4490,6 +4490,27 @@ function renderHeatmapActiveMode(filters) {
     </div>`;
 }
 
+function renderHeatmapActivePeriod(filters) {
+  const selected = String((filters && filters.activeBasePeriod) || 'last30d');
+  const modes = [
+    ['last30d', 'Последние 30 дней'],
+    ['selected', 'Выбранный месяц']
+  ];
+
+  return `<div class="field">
+      <label>Период входов в приложение</label>
+      <div class="heatmap-mode-group">
+        ${modes
+          .map(([value, label]) => {
+            const checked = value === selected ? ' checked' : '';
+
+            return `<label class="heatmap-mode-option"><input type="radio" name="activeBasePeriod" value="${escapeHtml(value)}"${checked}>${escapeHtml(label)}</label>`;
+          })
+          .join('')}
+      </div>
+    </div>`;
+}
+
 function addHeatmapQueryParam(params, key, value) {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -4516,6 +4537,7 @@ function heatmapSectionUrl(filters, section) {
   addHeatmapQueryParam(params, 'excludedProfession', filters.excludedProfession);
   addHeatmapQueryParam(params, 'addressSearch', filters.addressSearch);
   addHeatmapQueryParam(params, 'activeBaseMode', filters.activeBaseMode);
+  addHeatmapQueryParam(params, 'activeBasePeriod', filters.activeBasePeriod);
 
   return `/dashboards/heatmap/section?${params.toString()}`;
 }
@@ -4764,6 +4786,7 @@ function renderHeatmapDashboard({
       selected: filters.excludedProfession
     })}
     ${renderHeatmapActiveMode(filters)}
+    ${renderHeatmapActivePeriod(filters)}
     <button type="submit">Применить</button>
   </form>
 </section>

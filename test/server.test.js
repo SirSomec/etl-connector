@@ -730,7 +730,7 @@ test('GET /dashboards/heatmap renders dashboard with query filters', async () =>
   await withServer(client, async (baseUrl) => {
     const { response, text } = await fetchText(
       baseUrl,
-      '/dashboards/heatmap?year=2026&month=5&client=Brand%20A&excludedProfession=Курьер&addressSearch=Тверская&activeBaseMode=ready'
+      '/dashboards/heatmap?year=2026&month=5&client=Brand%20A&excludedProfession=Курьер&addressSearch=Тверская&activeBaseMode=ready&activeBasePeriod=selected'
     );
 
     assert.equal(response.status, 200);
@@ -738,6 +738,7 @@ test('GET /dashboards/heatmap renders dashboard with query filters', async () =>
     assert.match(text, /Тепловая карта/);
     assert.match(text, /data-dashboard-fragment-url="\/dashboards\/heatmap\/section\?section=map/);
     assert.match(text, /addressSearch=%D0%A2%D0%B2%D0%B5%D1%80%D1%81%D0%BA%D0%B0%D1%8F/);
+    assert.match(text, /activeBasePeriod=selected/);
     assert.match(text, /Загружается/);
     assert.doesNotMatch(text, /class="country-heatmap-map" data-heatmap-leaflet-map/);
   });
@@ -757,7 +758,7 @@ test('GET /dashboards/heatmap/section renders cached heatmap fragment', async ()
 
   await withServer(client, async (baseUrl) => {
     const path =
-      '/dashboards/heatmap/section?section=map&year=2026&month=5&client=Brand%20A&excludedProfession=Курьер&addressSearch=Тверская&activeBaseMode=ready';
+      '/dashboards/heatmap/section?section=map&year=2026&month=5&client=Brand%20A&excludedProfession=Курьер&addressSearch=Тверская&activeBaseMode=ready&activeBasePeriod=selected';
     const first = await fetchText(baseUrl, path);
     const second = await fetchText(baseUrl, path);
 
@@ -780,7 +781,7 @@ test('GET /dashboards/heatmap/section renders cached heatmap fragment', async ()
   assert.equal(heatmapCalls[0][2].param_clients, "['Brand A']");
   assert.equal(heatmapCalls[0][2].param_excluded_professions, "['Курьер']");
   assert.equal(heatmapCalls[0][2].param_address_search, 'Тверская');
-  assert.equal(heatmapCalls[0][2].param_active_from, '2026-05-02 00:00:00');
+  assert.equal(heatmapCalls[0][2].param_active_from, '2026-05-01 00:00:00');
   assert.equal(heatmapCalls[0][2].param_active_to, '2026-06-01 00:00:00');
 });
 

@@ -19,7 +19,8 @@ test('normalizeHeatmapFilters defaults to the previous month and cleans filter v
       client: ['Brand A', 'Brand A', ' '],
       excludedProfession: ['Курьер', 'Курьер', ' '],
       addressSearch: '  Тверская  ',
-      activeBaseMode: 'unsafe'
+      activeBaseMode: 'unsafe',
+      activeBasePeriod: 'unsafe'
     },
     new Date('2026-06-15T12:00:00.000Z')
   );
@@ -37,16 +38,18 @@ test('normalizeHeatmapFilters defaults to the previous month and cleans filter v
     client: ['Brand A'],
     excludedProfession: ['Курьер'],
     addressSearch: 'Тверская',
-    activeBaseMode: 'all'
+    activeBaseMode: 'all',
+    activeBasePeriod: 'last30d'
   });
 });
 
-test('normalizeHeatmapFilters accepts selected year, month, and ready-status base mode', () => {
+test('normalizeHeatmapFilters accepts selected year, month, ready-status base mode, and selected-period activity', () => {
   const filters = normalizeHeatmapFilters(
     {
       year: '2024',
       month: '2',
-      activeBaseMode: 'ready'
+      activeBaseMode: 'ready',
+      activeBasePeriod: 'selected'
     },
     new Date('2026-06-15T12:00:00.000Z')
   );
@@ -55,8 +58,9 @@ test('normalizeHeatmapFilters accepts selected year, month, and ready-status bas
   assert.equal(filters.from, '2024-02-01');
   assert.equal(filters.to, '2024-02-29');
   assert.equal(filters.toExclusiveDateTime, '2024-03-01 00:00:00');
-  assert.equal(filters.activeFromDateTime, '2024-01-31 00:00:00');
+  assert.equal(filters.activeFromDateTime, '2024-02-01 00:00:00');
   assert.equal(filters.activeBaseMode, 'ready');
+  assert.equal(filters.activeBasePeriod, 'selected');
 });
 
 test('mergeHeatmapRows joins weighted demand points and calculates balance', () => {
@@ -198,7 +202,8 @@ test('loadHeatmapDashboardSection queries weighted demand points with safe param
       client: ['Brand A', 'Brand B'],
       excludedProfession: 'Курьер',
       addressSearch: '  Тверская  ',
-      activeBaseMode: 'ready'
+      activeBaseMode: 'ready',
+      activeBasePeriod: 'selected'
     },
     'map',
     new Date('2026-06-15T12:00:00.000Z')
@@ -232,12 +237,13 @@ test('loadHeatmapDashboardSection queries weighted demand points with safe param
   assert.equal(orderCall.query.includes('positionCaseInsensitive(ifNull(w.technical_name'), true);
   assert.equal(orderCall.query.includes('ifNull(o.amount, 0) AS amount'), true);
   assert.equal(orderCall.query.includes('w.location__coordinates AS workplace_coordinates'), true);
+  assert.equal(orderCall.query.includes('HAVING ordered_shifts > 0'), true);
   assert.equal(orderCall.query.includes('greatCircleDistance'), true);
   assert.equal(orderCall.query.includes('distance_m <= 5000'), true);
   assert.equal(orderCall.query.includes('distance_m <= 10000'), true);
   assert.equal(orderCall.query.includes('distance_m <= 15000'), true);
   assert.equal(orderCall.query.includes('weighted_active_users'), true);
-  assert.equal(orderCall.params.param_active_from, '2026-05-02 00:00:00');
+  assert.equal(orderCall.params.param_active_from, '2026-05-01 00:00:00');
   assert.equal(orderCall.params.param_active_to, '2026-06-01 00:00:00');
   assert.equal(orderCall.query.includes('appmetrica_sessions'), true);
   assert.equal(orderCall.query.includes('mg_workers AS worker'), true);
@@ -280,6 +286,19 @@ test('loadHeatmapDashboardSection caches the map section', async () => {
   assert.equal(second.points.length, 1);
   assert.deepEqual(calls, ['heatmap demand points']);
 
+  await loadHeatmapDashboardSection(
+    client,
+    { ...input, activeBasePeriod: 'selected' },
+    'map',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.deepEqual(calls, [
+    'heatmap demand points',
+    'heatmap demand points'
+  ]);
+
   timestamp += 10 * 60 * 60 * 1000 + 1;
 
   await loadHeatmapDashboardSection(
@@ -291,6 +310,7 @@ test('loadHeatmapDashboardSection caches the map section', async () => {
   );
 
   assert.deepEqual(calls, [
+    'heatmap demand points',
     'heatmap demand points',
     'heatmap demand points'
   ]);

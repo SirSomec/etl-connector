@@ -1,9 +1,11 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ACTIVE_BASE_MODES = new Set(['all', 'ready']);
+const ALLOWED_ACTIVE_BASE_PERIODS = new Set(['last30d', 'selected']);
 const FILTER_OPTION_KEYS = ['client', 'excludedProfession'];
 const HEATMAP_SECTION_NAMES = ['map'];
 const HEATMAP_SECTIONS = new Set(HEATMAP_SECTION_NAMES);
 const DEFAULT_ACTIVE_BASE_MODE = 'all';
+const DEFAULT_ACTIVE_BASE_PERIOD = 'last30d';
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -105,15 +107,21 @@ function normalizeHeatmapFilters(input = {}, now = new Date()) {
   const fromDate = firstDayOfMonthUTC(year, month);
   const toExclusiveDate = nextMonthUTC(year, month);
   const toDate = addDaysUTC(toExclusiveDate, -1);
-  const activeFromDate = addDaysUTC(toExclusiveDate, -30);
   const from = formatDateUTC(fromDate);
   const to = formatDateUTC(toDate);
   const toExclusive = formatDateUTC(toExclusiveDate);
-  const activeFrom = formatDateUTC(activeFromDate);
   const requestedMode = cleanText(input.activeBaseMode);
   const activeBaseMode = ALLOWED_ACTIVE_BASE_MODES.has(requestedMode)
     ? requestedMode
     : DEFAULT_ACTIVE_BASE_MODE;
+  const requestedPeriod = cleanText(input.activeBasePeriod);
+  const activeBasePeriod = ALLOWED_ACTIVE_BASE_PERIODS.has(requestedPeriod)
+    ? requestedPeriod
+    : DEFAULT_ACTIVE_BASE_PERIOD;
+  const activeFromDate = activeBasePeriod === 'selected'
+    ? fromDate
+    : addDaysUTC(toExclusiveDate, -30);
+  const activeFrom = formatDateUTC(activeFromDate);
 
   return {
     year,
@@ -128,7 +136,8 @@ function normalizeHeatmapFilters(input = {}, now = new Date()) {
     client: cleanValues(input.client),
     excludedProfession: cleanValues(input.excludedProfession),
     addressSearch: cleanText(input.addressSearch),
-    activeBaseMode
+    activeBaseMode,
+    activeBasePeriod
   };
 }
 
@@ -421,6 +430,7 @@ function demandPointsQuery(whereSql, filters) {
       AND workplace_coordinates[1] BETWEEN -180 AND 180
       AND workplace_coordinates[2] BETWEEN -90 AND 90
     GROUP BY workplace_id
+    HAVING ordered_shifts > 0
   ),
   demand_bounds AS (
     SELECT
@@ -546,7 +556,8 @@ function cacheKeyForHeatmapSection(section, filters) {
       client: filters.client,
       excludedProfession: filters.excludedProfession,
       addressSearch: filters.addressSearch,
-      activeBaseMode: filters.activeBaseMode
+      activeBaseMode: filters.activeBaseMode,
+      activeBasePeriod: filters.activeBasePeriod
     }
   });
 }

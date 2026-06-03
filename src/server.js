@@ -39,6 +39,11 @@ const {
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell
 } = require('./workplacePointDashboard');
+const {
+  WORKER_CANCELLATIONS_SECTIONS,
+  loadWorkerCancellationsDashboardSection,
+  loadWorkerCancellationsDashboardShell
+} = require('./workerCancellationsDashboard');
 const { createWorkplaceActiveGigersCache } = require('./workplaceActiveGigersCache');
 const {
   renderAccountManagement,
@@ -54,6 +59,8 @@ const {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderWorkerCancellationsDashboard,
+  renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
   renderWorkplaceAnalysisDashboardSection,
   renderWorkplacePointDashboard,
@@ -99,7 +106,8 @@ function activeNavForPath(path) {
     '/dashboards/city-analysis': 'city-analysis',
     '/dashboards/heatmap': 'heatmap',
     '/dashboards/sales-by-project': 'sales-by-project',
-    '/dashboards/workplace-analysis': 'workplace-analysis'
+    '/dashboards/workplace-analysis': 'workplace-analysis',
+    '/dashboards/worker-cancellations': 'worker-cancellations'
   };
 
   if (normalized.startsWith('/admin/users/')) {
@@ -120,6 +128,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/dashboards/sales-by-project/')) {
     return 'sales-by-project';
+  }
+
+  if (normalized.startsWith('/dashboards/worker-cancellations/')) {
+    return 'worker-cancellations';
   }
 
   return navByPath[normalized] || 'tables';
@@ -782,6 +794,63 @@ function createApp({
           .status(200)
           .type('html')
           .send(renderWorkplacePointDashboardSection({ dashboard, section }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/worker-cancellations',
+    requireAuth('worker-cancellations'),
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadWorkerCancellationsDashboardShell(client, req.query, new Date());
+
+      res
+        .status(200)
+        .type('html')
+        .send(renderWorkerCancellationsDashboard({ database, dashboard, progressive: true, ...viewContext(req) }));
+    })
+  );
+
+  app.get(
+    '/dashboards/worker-cancellations/section',
+    requireAuth('worker-cancellations'),
+    asyncRoute(async (req, res) => {
+      const section = String(req.query.section || '');
+
+      if (!WORKER_CANCELLATIONS_SECTIONS.has(section)) {
+        res
+          .status(400)
+          .type('html')
+          .send(
+            renderDashboardSectionError({
+              message: sanitizeForResponse(`Unknown worker cancellations section: ${section}`, config)
+            })
+          );
+        return;
+      }
+
+      try {
+        const dashboard = await loadWorkerCancellationsDashboardSection(
+          client,
+          req.query,
+          section,
+          new Date(),
+          {
+            cache: dashboardSectionCache
+          }
+        );
+
+        res
+          .status(200)
+          .type('html')
+          .send(renderWorkerCancellationsDashboardSection({ dashboard, section }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 

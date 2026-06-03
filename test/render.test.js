@@ -11,6 +11,8 @@ const {
   renderHome,
   renderSalesByProjectDashboard,
   renderTable,
+  renderWorkerCancellationsDashboard,
+  renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
   renderWorkplacePointDashboard
 } = require('../src/render');
@@ -87,6 +89,173 @@ test('renderHome includes workplace analysis navigation', () => {
   assert.match(html, /href="\/dashboards\/city-analysis"/);
   assert.match(html, /Тепловая карта/);
   assert.match(html, /href="\/dashboards\/heatmap"/);
+});
+
+test('renderHome includes worker cancellations navigation', () => {
+  const html = renderHome({
+    database: 'etl',
+    tables: ['mg_orders']
+  });
+
+  assert.match(html, /Отмены гигерами/);
+  assert.match(html, /href="\/dashboards\/worker-cancellations"/);
+});
+
+test('renderWorkerCancellationsDashboard renders filters and progressive table loading state', () => {
+  const html = renderWorkerCancellationsDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 2,
+        pageSize: 200,
+        sort: 'workerCancellations24h',
+        direction: 'desc'
+      }
+    }
+  });
+
+  assert.match(html, /<h1>Отмены гигерами<\/h1>/);
+  assert.match(html, /class="nav-link active" href="\/dashboards\/worker-cancellations"/);
+  assert.match(html, /<form class="filter-bar" action="\/dashboards\/worker-cancellations" method="get">/);
+  assert.match(html, /<input id="from" name="from" type="date" value="2026-05-01">/);
+  assert.match(html, /<input id="to" name="to" type="date" value="2026-05-31">/);
+  assert.match(html, /<option value="200" selected>200<\/option>/);
+  assert.match(html, /Период по плановому старту смены/);
+  assert.match(
+    html,
+    /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers&amp;from=2026-05-01&amp;to=2026-05-31&amp;page=2&amp;pageSize=200&amp;sort=workerCancellations24h&amp;direction=desc"/
+  );
+  assert.match(html, /Загружается/);
+  assert.match(html, /document\.querySelectorAll\('\[data-dashboard-fragment-url\]/);
+});
+
+test('renderWorkerCancellationsDashboardSection renders sortable escaped table and full phone', () => {
+  const html = renderWorkerCancellationsDashboardSection({
+    section: 'workers',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        pageSize: 50,
+        sort: 'workerCancellations',
+        direction: 'asc'
+      },
+      rows: [
+        {
+          workerId: 'worker-1',
+          fullName: 'Иванов <script>Иван</script>',
+          phone: '+79990000000<script>x</script>',
+          city: 'Москва<script>bad</script>',
+          confirmedShifts: 10,
+          workerCancellations: 3,
+          workerCancellations24h: 2,
+          postStartCancellations: 1,
+          failedShifts: 4
+        }
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 50,
+        totalWorkers: 125,
+        totalPages: 3,
+        hasPrevious: false,
+        hasNext: true
+      }
+    }
+  });
+
+  assert.match(html, /ФИО/);
+  assert.match(html, /Телефон/);
+  assert.match(html, /Город/);
+  assert.match(html, /Выполнено/);
+  assert.match(html, /Отмены worker/);
+  assert.match(html, /Отмены worker &lt; 24ч/);
+  assert.match(html, /Отмены после старта/);
+  assert.match(html, /Провалы \/ failed/);
+  assert.match(
+    html,
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=fullName&amp;direction=asc"/
+  );
+  assert.match(
+    html,
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc"/
+  );
+  assert.match(html, /\+79990000000&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /Иванов &lt;script&gt;Иван&lt;\/script&gt;/);
+  assert.match(html, /Москва&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /Страница 1 из 3 · исполнителей: 125/);
+  assert.match(html, /page=2/);
+  assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerCancellationsDashboardSection renders empty state', () => {
+  const html = renderWorkerCancellationsDashboardSection({
+    section: 'workers',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        pageSize: 50,
+        sort: 'workerCancellations',
+        direction: 'desc'
+      },
+      rows: [],
+      pagination: {
+        page: 1,
+        pageSize: 50,
+        totalWorkers: 0,
+        totalPages: 1,
+        hasPrevious: false,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /Нет исполнителей со сменами за выбранный период/);
+  assert.doesNotMatch(html, /<table>/);
+  assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerCancellationsDashboardSection handles out-of-range pages without false empty state', () => {
+  const html = renderWorkerCancellationsDashboardSection({
+    section: 'workers',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 4,
+        pageSize: 50,
+        sort: 'workerCancellations',
+        direction: 'desc'
+      },
+      rows: [],
+      pagination: {
+        page: 4,
+        pageSize: 50,
+        totalWorkers: 125,
+        totalPages: 3,
+        hasPrevious: true,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /Страница 4 вне диапазона\. Доступно страниц: 3\./);
+  assert.match(
+    html,
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;page=3&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc"/
+  );
+  assert.match(html, /Страница 3 из 3 · исполнителей: 125/);
+  assert.match(html, /pagination-current" aria-current="page">3<\/span>/);
+  assert.doesNotMatch(html, /Нет исполнителей со сменами за выбранный период/);
+  assert.doesNotMatch(html, /Страница 4 из 4/);
+  assert.doesNotMatch(html, /<html/);
 });
 
 test('renderTable escapes metadata and cells, formats complex values, and uses column order', () => {

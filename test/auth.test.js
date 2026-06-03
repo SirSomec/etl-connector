@@ -76,14 +76,14 @@ test('user store exposes env admin and persists managed accounts', async () => {
       email: 'Analyst@Example.Test',
       name: 'Analyst <One>',
       role: 'analyst',
-      permissions: ['city-analysis', 'heatmap', 'users', 'unknown'],
+      permissions: ['city-analysis', 'heatmap', 'worker-cancellations', 'users', 'unknown'],
       password: 'AnalystPass123'
     });
 
     assert.equal(created.email, 'analyst@example.test');
     assert.equal(created.name, 'Analyst <One>');
     assert.equal(created.role, 'analyst');
-    assert.deepEqual(created.permissions, ['city-analysis', 'heatmap']);
+    assert.deepEqual(created.permissions, ['city-analysis', 'heatmap', 'worker-cancellations']);
 
     const fileBody = await fs.readFile(filePath, 'utf8');
     assert.doesNotMatch(fileBody, /AnalystPass123/);
@@ -94,6 +94,7 @@ test('user store exposes env admin and persists managed accounts', async () => {
     assert.equal(analyst.id, created.id);
     assert.equal(hasPermission(analyst, 'city-analysis'), true);
     assert.equal(hasPermission(analyst, 'heatmap'), true);
+    assert.equal(hasPermission(analyst, 'worker-cancellations'), true);
     assert.equal(hasPermission(analyst, 'users'), false);
 
     const updated = await store.updateUser(created.id, {

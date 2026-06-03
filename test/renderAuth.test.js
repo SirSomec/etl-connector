@@ -46,7 +46,7 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
         email: 'analyst@example.test',
         name: '<Analyst>',
         role: 'analyst',
-        permissions: ['tables'],
+        permissions: ['tables', 'worker-cancellations'],
         source: 'managed',
         createdAt: '2026-06-02T10:00:00.000Z',
         updatedAt: '2026-06-02T10:00:00.000Z'
@@ -63,6 +63,8 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
   assert.match(html, /name="csrfToken" value="csrf-token"/);
   assert.match(html, /action="\/admin\/users\/user-1\/update"/);
   assert.match(html, /action="\/admin\/users\/user-1\/delete"/);
+  assert.match(html, /Отмены гигерами/);
+  assert.match(html, /name="permissions" value="worker-cancellations" checked/);
   assert.match(html, /class="nav-link active" href="\/admin\/users"/);
   assert.doesNotMatch(html, /<Analyst>/);
 });

@@ -50,6 +50,12 @@ const NAV_LINKS = [
     permission: 'heatmap'
   },
   {
+    href: '/dashboards/worker-cancellations',
+    label: 'Отмены гигерами',
+    id: 'worker-cancellations',
+    permission: 'worker-cancellations'
+  },
+  {
     href: '/admin/users',
     label: 'Учетные записи',
     id: 'users',
@@ -764,6 +770,25 @@ function layout({
     th {
       background: #eef2f6;
       font-weight: 700;
+    }
+
+    .sortable-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .sortable-header:hover,
+    .sortable-header:focus {
+      color: var(--link);
+      outline: none;
+    }
+
+    .sort-indicator {
+      color: var(--muted);
+      font-size: 12px;
     }
 
     tr:last-child td {
@@ -3007,6 +3032,270 @@ function renderWorkplaceAnalysisPointsSection(dashboard) {
 </section>`;
 }
 
+const WORKER_CANCELLATION_PAGE_SIZES = [50, 100, 200, 500];
+
+const WORKER_CANCELLATION_COLUMNS = [
+  { key: 'fullName', label: 'ФИО', numeric: false },
+  { key: 'phone', label: 'Телефон', numeric: false },
+  { key: 'city', label: 'Город', numeric: false },
+  { key: 'confirmedShifts', label: 'Выполнено', numeric: true },
+  { key: 'workerCancellations', label: 'Отмены worker', numeric: true },
+  { key: 'workerCancellations24h', label: 'Отмены worker < 24ч', numeric: true },
+  { key: 'postStartCancellations', label: 'Отмены после старта', numeric: true },
+  { key: 'failedShifts', label: 'Провалы / failed', numeric: true }
+];
+
+function workerCancellationsColumn(key) {
+  return WORKER_CANCELLATION_COLUMNS.find((column) => column.key === key) || WORKER_CANCELLATION_COLUMNS[0];
+}
+
+function workerCancellationsPageHref(filters, overrides = {}) {
+  const params = new URLSearchParams();
+  const nextFilters = { ...filters, ...overrides };
+
+  addDashboardQueryParam(params, 'from', nextFilters.from);
+  addDashboardQueryParam(params, 'to', nextFilters.to);
+
+  if (Object.prototype.hasOwnProperty.call(overrides, 'page')) {
+    const page = Number(nextFilters.page) || 1;
+
+    if (page > 1) {
+      params.set('page', String(page));
+    }
+  }
+
+  addDashboardQueryParam(params, 'pageSize', nextFilters.pageSize);
+  addDashboardQueryParam(params, 'sort', nextFilters.sort);
+  addDashboardQueryParam(params, 'direction', nextFilters.direction);
+
+  const query = params.toString();
+
+  return query === '' ? '/dashboards/worker-cancellations' : `/dashboards/worker-cancellations?${query}`;
+}
+
+function workerCancellationsSectionUrl(filters, section) {
+  const href = workerCancellationsPageHref(filters, { page: filters.page });
+  const query = href.includes('?') ? href.slice(href.indexOf('?') + 1) : '';
+  const suffix = query === '' ? '' : `&${query}`;
+
+  return `/dashboards/worker-cancellations/section?section=${encodeURIComponent(section)}${suffix}`;
+}
+
+function workerCancellationsSortDirection(filters, column) {
+  const currentSort = String(filters.sort || '');
+  const currentDirection = String(filters.direction || 'desc') === 'asc' ? 'asc' : 'desc';
+
+  if (currentSort === column.key) {
+    return currentDirection === 'asc' ? 'desc' : 'asc';
+  }
+
+  return column.numeric ? 'desc' : 'asc';
+}
+
+function renderWorkerCancellationsHeaderCell(filters, column) {
+  const isActive = String(filters.sort || '') === column.key;
+  const direction = workerCancellationsSortDirection(filters, column);
+  const href = workerCancellationsPageHref(filters, {
+    sort: column.key,
+    direction
+  });
+  const indicator = isActive
+    ? `<span class="sort-indicator" aria-hidden="true">${escapeHtml(String(filters.direction || 'desc') === 'asc' ? '↑' : '↓')}</span>`
+    : '';
+
+  return `<th><a class="sortable-header" href="${escapeHtml(href)}"><span>${escapeHtml(column.label)}</span>${indicator}</a></th>`;
+}
+
+function workerCancellationsPaginationBounds(pagination, filters) {
+  const requestedPage = Number((pagination && pagination.page) || filters.page) || 1;
+  const totalWorkers = Number(pagination && pagination.totalWorkers) || 0;
+  const totalPages = Math.max(1, Number(pagination && pagination.totalPages) || 1);
+  const effectivePage = Math.min(Math.max(1, requestedPage), totalPages);
+
+  return {
+    requestedPage,
+    totalWorkers,
+    totalPages,
+    effectivePage,
+    isOutOfRange: totalWorkers > 0 && requestedPage > totalPages
+  };
+}
+
+function renderWorkerCancellationsOutOfRangeState({ filters, requestedPage, totalPages }) {
+  const href = workerCancellationsPageHref(filters, { page: totalPages });
+
+  return `<p class="empty">Страница ${escapeHtml(requestedPage)} вне диапазона. Доступно страниц: ${escapeHtml(totalPages)}. <a href="${escapeHtml(href)}">Открыть последнюю страницу</a></p>`;
+}
+
+function renderWorkerCancellationsTable(rows, filters, pagination) {
+  if (rows.length === 0) {
+    const bounds = workerCancellationsPaginationBounds(pagination, filters);
+
+    if (bounds.isOutOfRange) {
+      return renderWorkerCancellationsOutOfRangeState({
+        filters,
+        requestedPage: bounds.requestedPage,
+        totalPages: bounds.totalPages
+      });
+    }
+
+    return '<p class="empty">Нет исполнителей со сменами за выбранный период.</p>';
+  }
+
+  const headerCells = WORKER_CANCELLATION_COLUMNS
+    .map((column) => renderWorkerCancellationsHeaderCell(filters, column))
+    .join('');
+  const bodyRows = rows
+    .map((row) => {
+      const cells = WORKER_CANCELLATION_COLUMNS
+        .map((column) => {
+          const value = row[column.key];
+
+          if (column.numeric) {
+            return `<td class="number-cell">${escapeHtml(formatNumber(value))}</td>`;
+          }
+
+          return `<td>${escapeHtml(value || '')}</td>`;
+        })
+        .join('');
+
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr>${headerCells}</tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderWorkerCancellationsPaginationPages({ filters, page, totalPages }) {
+  const pageNumbers = paginationPageNumbers(page, totalPages);
+  let previousPage = 0;
+  const items = [];
+
+  for (const pageNumber of pageNumbers) {
+    if (previousPage > 0 && pageNumber - previousPage > 1) {
+      items.push('<span class="pagination-ellipsis" aria-hidden="true">...</span>');
+    }
+
+    if (pageNumber === page) {
+      items.push(`<span class="pagination-link pagination-page pagination-current" aria-current="page">${escapeHtml(pageNumber)}</span>`);
+    } else {
+      items.push(`<a class="pagination-link pagination-page" href="${escapeHtml(workerCancellationsPageHref(filters, { page: pageNumber }))}">${escapeHtml(pageNumber)}</a>`);
+    }
+
+    previousPage = pageNumber;
+  }
+
+  return `<div class="pagination-pages" aria-label="Страницы">${items.join('')}</div>`;
+}
+
+function renderWorkerCancellationsPagination({ filters, pagination }) {
+  if (!pagination || (!pagination.hasPrevious && !pagination.hasNext)) {
+    return '';
+  }
+
+  const bounds = workerCancellationsPaginationBounds(pagination, filters);
+  const page = bounds.effectivePage;
+  const totalPages = bounds.totalPages;
+  const previousPage = Math.max(1, page - 1);
+  const nextPage = Math.min(totalPages, page + 1);
+  const totalLabel = bounds.totalWorkers;
+
+  return `<nav class="pagination" aria-label="Пагинация исполнителей">
+  <div class="pagination-meta">Страница ${escapeHtml(page)} из ${escapeHtml(totalPages)} · исполнителей: ${escapeHtml(formatNumber(totalLabel))}</div>
+  <div class="pagination-actions">
+    ${renderPaginationLink({
+      href: workerCancellationsPageHref(filters, { page: previousPage }),
+      label: 'Назад',
+      disabled: !pagination.hasPrevious || page <= 1
+    })}
+    ${renderPaginationLink({
+      href: workerCancellationsPageHref(filters, { page: nextPage }),
+      label: 'Вперед',
+      disabled: !pagination.hasNext || page >= totalPages
+    })}
+  </div>
+  ${renderWorkerCancellationsPaginationPages({ filters, page, totalPages })}
+</nav>`;
+}
+
+function renderWorkerCancellationsPageSizeOptions(selectedPageSize) {
+  return WORKER_CANCELLATION_PAGE_SIZES
+    .map((pageSize) => {
+      const value = String(pageSize);
+      const selected = value === String(selectedPageSize) ? ' selected' : '';
+
+      return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(value)}</option>`;
+    })
+    .join('');
+}
+
+function renderWorkerCancellationsDashboardSection({ dashboard, section }) {
+  if (section === 'workers') {
+    const rows = dashboard.rows || dashboard.workers || [];
+
+    return `<section class="section">
+  ${renderWorkerCancellationsTable(rows, dashboard.filters, dashboard.pagination)}
+  ${renderWorkerCancellationsPagination({ filters: dashboard.filters, pagination: dashboard.pagination })}
+</section>`;
+  }
+
+  return '<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>';
+}
+
+function renderWorkerCancellationsDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
+  const filters = dashboard.filters;
+  const workersHtml = progressive
+    ? `<div data-dashboard-fragment-url="${escapeHtml(workerCancellationsSectionUrl(filters, 'workers'))}">
+  <section class="section">
+    <h2>Исполнители</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>`
+    : renderWorkerCancellationsDashboardSection({ dashboard, section: 'workers' });
+  const content = `<section class="section">
+  <h1>Отмены гигерами</h1>
+  <p class="technical-note">Период по плановому старту смены.</p>
+</section>
+<section class="section">
+  <form class="filter-bar" action="/dashboards/worker-cancellations" method="get">
+    <div class="field">
+      <label for="from">С</label>
+      <input id="from" name="from" type="date" value="${escapeHtml(filters.from)}">
+    </div>
+    <div class="field">
+      <label for="to">По</label>
+      <input id="to" name="to" type="date" value="${escapeHtml(filters.to)}">
+    </div>
+    <div class="field">
+      <label for="pageSize">Строк</label>
+      <select id="pageSize" name="pageSize">${renderWorkerCancellationsPageSizeOptions(filters.pageSize)}</select>
+    </div>
+    ${renderHiddenInput('sort', filters.sort || workerCancellationsColumn(filters.sort).key)}
+    ${renderHiddenInput('direction', filters.direction || 'desc')}
+    <button type="submit">Применить</button>
+  </form>
+</section>
+${workersHtml}`;
+
+  return layout({
+    title: 'Отмены гигерами',
+    database,
+    content,
+    activeNav: 'worker-cancellations',
+    currentUser,
+    csrfToken
+  });
+}
+
 function formatRadiusWorkerValue(summary, radius) {
   const workers = summary.radiusWorkers ? summary.radiusWorkers[radius] : 0;
   const activeSessionWorkers = summary.radiusActiveSessionWorkers
@@ -4851,6 +5140,8 @@ module.exports = {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderWorkerCancellationsDashboard,
+  renderWorkerCancellationsDashboardSection,
   renderWorkplaceAnalysisDashboard,
   renderWorkplaceAnalysisDashboardSection,
   renderWorkplacePointDashboard,

@@ -241,6 +241,26 @@ function createFakeClient(overrides = {}) {
         ];
       }
 
+      if (operation === 'worker cancellations total workers') {
+        return [{ total_workers: 1 }];
+      }
+
+      if (operation === 'worker cancellations workers') {
+        return [
+          {
+            worker_id: 'worker-1',
+            full_name: 'Иван Петров',
+            phone: '+79990000000',
+            city: 'Москва',
+            confirmed_shifts: 10,
+            worker_cancellations: 3,
+            worker_cancellations_24h: 2,
+            post_start_cancellations: 1,
+            failed_shifts: 4
+          }
+        ];
+      }
+
       return [];
     }
   };
@@ -822,6 +842,123 @@ test('GET /dashboards/heatmap keeps navigation active and redacts upstream error
   });
 });
 
+test('GET /dashboards/worker-cancellations renders dashboard shell without heavy query', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/worker-cancellations?from=2026-05-01&to=2026-05-31&page=2&pageSize=200&sort=failedShifts&direction=asc'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Отмены гигерами/);
+    assert.match(text, /Загружается/);
+    assert.match(
+      text,
+      /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers/
+    );
+    assert.match(text, /pageSize=200/);
+    assert.match(text, /sort=failedShifts/);
+    assert.match(text, /direction=asc/);
+  });
+
+  const workerCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('worker cancellations')
+  );
+
+  assert.equal(workerCalls.length, 0);
+});
+
+test('GET /dashboards/worker-cancellations/section renders cached workers fragment', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const path =
+      '/dashboards/worker-cancellations/section?section=workers&from=2026-05-01&to=2026-05-31&pageSize=50&sort=workerCancellations&direction=desc';
+    const first = await fetchText(baseUrl, path);
+    const second = await fetchText(baseUrl, path);
+
+    assert.equal(first.response.status, 200);
+    assert.match(first.response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(first.text, /Иван Петров/);
+    assert.match(first.text, /\+79990000000/);
+    assert.match(first.text, /Отмены worker/);
+    assert.match(first.text, /Провалы \/ failed/);
+    assert.doesNotMatch(first.text, /<html/);
+    assert.equal(second.response.status, 200);
+  });
+
+  const workerCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('worker cancellations')
+  );
+
+  assert.deepEqual(workerCalls.map((call) => call[1]), [
+    'worker cancellations total workers',
+    'worker cancellations workers'
+  ]);
+
+  for (const call of workerCalls) {
+    assert.equal(call[2].param_from, '2026-05-01 00:00:00');
+    assert.equal(call[2].param_to, '2026-06-01 00:00:00');
+  }
+});
+
+test('GET /dashboards/worker-cancellations/section redacts upstream errors in fragment', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+      throw new Error('ClickHouse rejected password super-secret');
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/worker-cancellations/section?section=workers'
+    );
+
+    assert.equal(response.status, 502);
+    assert.match(text, /ClickHouse rejected password \[redacted\]/);
+    assert.doesNotMatch(text, /super-secret/);
+    assert.doesNotMatch(text, /<html/);
+  });
+});
+
+test('GET /dashboards/worker-cancellations/section renders unknown section error as fragment', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/dashboards/worker-cancellations/section?section=bad');
+
+    assert.equal(response.status, 400);
+    assert.match(text, /Unknown worker cancellations section: bad/);
+    assert.doesNotMatch(text, /<html/);
+  });
+});
+
+test('GET /dashboards/worker-cancellations keeps navigation active and redacts upstream errors', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+      throw new Error('ClickHouse rejected password super-secret');
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(baseUrl, '/dashboards/worker-cancellations/');
+
+    assert.ok([200, 404, 502].includes(response.status));
+    assert.match(text, /class="nav-link active" href="\/dashboards\/worker-cancellations"/);
+    assert.doesNotMatch(text, /super-secret/);
+
+    if (response.status === 502) {
+      assert.match(text, /ClickHouse rejected password \[redacted\]/);
+    }
+  });
+});
+
 test('activeNavForPath normalizes dashboard trailing slashes', () => {
   assert.equal(activeNavForPath('/dashboards/workplace-analysis/'), 'workplace-analysis');
   assert.equal(activeNavForPath('/dashboards/sales-by-project/'), 'sales-by-project');
@@ -829,6 +966,8 @@ test('activeNavForPath normalizes dashboard trailing slashes', () => {
   assert.equal(activeNavForPath('/dashboards/city-analysis/'), 'city-analysis');
   assert.equal(activeNavForPath('/dashboards/heatmap'), 'heatmap');
   assert.equal(activeNavForPath('/dashboards/heatmap/'), 'heatmap');
+  assert.equal(activeNavForPath('/dashboards/worker-cancellations'), 'worker-cancellations');
+  assert.equal(activeNavForPath('/dashboards/worker-cancellations/'), 'worker-cancellations');
   assert.equal(activeNavForPath('/'), 'tables');
 });
 

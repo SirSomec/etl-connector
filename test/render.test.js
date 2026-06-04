@@ -1679,6 +1679,8 @@ test('renderWorkplacePointDayDetails renders escaped compact table fragment', ()
   assert.match(html, /\+79990000000/);
   assert.match(html, /confirmed/);
   assert.match(html, /7\.5/);
+  assert.match(html, /class="actual-time-cell"/);
+  assert.match(html, /<col class="actual-time-col">/);
   assert.match(html, /4 500/);
   assert.match(html, /class="compact-detail-table"/);
   assert.doesNotMatch(html, /<html/);

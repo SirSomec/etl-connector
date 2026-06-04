@@ -1272,8 +1272,57 @@ function layout({
     }
 
     .compact-detail-table {
-      min-width: 1040px;
+      width: 100%;
+      min-width: 1200px;
       table-layout: fixed;
+    }
+
+    .compact-detail-table .order-id-col {
+      width: 8%;
+    }
+
+    .compact-detail-table .profession-col {
+      width: 10%;
+    }
+
+    .compact-detail-table .start-col {
+      width: 9%;
+    }
+
+    .compact-detail-table .hours-col {
+      width: 5%;
+    }
+
+    .compact-detail-table .worker-col {
+      width: 10%;
+    }
+
+    .compact-detail-table .phone-col {
+      width: 9%;
+    }
+
+    .compact-detail-table .status-col {
+      width: 7%;
+    }
+
+    .compact-detail-table .actual-hours-col {
+      width: 6%;
+    }
+
+    .compact-detail-table .actual-time-col {
+      width: 16%;
+    }
+
+    .compact-detail-table .payment-col {
+      width: 8%;
+    }
+
+    .compact-detail-table .cancelled-col {
+      width: 6%;
+    }
+
+    .compact-detail-table .last-cancelled-col {
+      width: 6%;
     }
 
     .compact-detail-table th,
@@ -1289,6 +1338,11 @@ function layout({
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .compact-detail-table .actual-time-cell {
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
 
     .bar-cell {
@@ -4706,7 +4760,7 @@ function renderWorkplacePointDayDetails({ details }) {
   <td class="nowrap-cell">${escapeHtml(detailText(row.workerPhone))}</td>
   <td>${escapeHtml(detailText(row.confirmedStatus))}</td>
   <td class="number-cell">${escapeHtml(formatNullableNumber(row.actualHours, 1))}</td>
-  <td class="nowrap-cell">${escapeHtml(detailText(row.actualTimeLocal))}</td>
+  <td class="actual-time-cell">${escapeHtml(detailText(row.actualTimeLocal))}</td>
   <td class="number-cell">${escapeHtml(formatNumber(row.paymentAmount))}</td>
   <td class="number-cell">${escapeHtml(formatNumber(row.cancelledShifts))}</td>
   <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(row.lastCancelledAtLocal))}</td>
@@ -4716,6 +4770,20 @@ function renderWorkplacePointDayDetails({ details }) {
   return `<div class="workplace-point-day-details">
   <h2>Детализация дня: ${escapeHtml(date)}</h2>
   <div class="table-wrap compact-detail-table-wrap"><table class="compact-detail-table">
+    <colgroup>
+      <col class="order-id-col">
+      <col class="profession-col">
+      <col class="start-col">
+      <col class="hours-col">
+      <col class="worker-col">
+      <col class="phone-col">
+      <col class="status-col">
+      <col class="actual-hours-col">
+      <col class="actual-time-col">
+      <col class="payment-col">
+      <col class="cancelled-col">
+      <col class="last-cancelled-col">
+    </colgroup>
     <thead><tr>
       <th>Заказ</th>
       <th>Профессия</th>

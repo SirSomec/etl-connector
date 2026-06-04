@@ -330,6 +330,11 @@ const WORKPLACE_ATTENTION_SQL = `WITH filtered_orders AS (
     o.workplace AS workplace_id,
     toDate(o.start) AS order_date,
     w.location__coordinates AS workplace_coordinates,
+    if(
+      ifNull(p.caption, '') = '',
+      if(ifNull(o.spec, '') = '', 'Без специальности', o.spec),
+      p.caption
+    ) AS profession,
     ifNull(o.amount, 0) AS amount
   FROM mg_orders AS o
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -364,6 +369,16 @@ daily_point AS (
   LEFT JOIN covered_jobs AS cj ON fo.order_id = cj.order_id
   GROUP BY fo.workplace_id, fo.order_date
 ),
+profession_free_rows AS (
+  SELECT
+    fo.workplace_id AS workplace_id,
+    fo.profession AS profession,
+    sum(greatest(fo.amount - ifNull(cj.covered, 0), 0)) AS free
+  FROM filtered_orders AS fo
+  LEFT JOIN covered_jobs AS cj ON fo.order_id = cj.order_id
+  GROUP BY fo.workplace_id, fo.profession
+  HAVING free > 0
+),
 attention_points AS (
   SELECT
     workplace_id,
@@ -379,6 +394,22 @@ attention_points AS (
   GROUP BY workplace_id
   HAVING free_7d > 0
   LIMIT {limit:UInt64}
+),
+point_professions AS (
+  SELECT
+    workplace_id,
+    groupArray(profession) AS free_professions_7d,
+    groupArray(free) AS free_profession_counts_7d
+  FROM (
+    SELECT
+      pfr.workplace_id AS workplace_id,
+      pfr.profession AS profession,
+      pfr.free AS free
+    FROM profession_free_rows AS pfr
+    INNER JOIN attention_points AS ap ON pfr.workplace_id = ap.workplace_id
+    ORDER BY pfr.workplace_id ASC, pfr.free DESC, pfr.profession ASC
+  )
+  GROUP BY workplace_id
 ),
 active_session_users AS (
   SELECT DISTINCT ifNull(profile_id, '') AS user_id
@@ -415,12 +446,15 @@ SELECT
   ap.ordered_7d,
   ap.covered_7d,
   ap.free_7d,
+  pp.free_professions_7d,
+  pp.free_profession_counts_7d,
   ap.max_daily_free,
   uniqExact(pwp.user_id) AS total_workers_15km,
   uniqExactIf(pwp.user_id, pwp.is_active_30d) AS active_workers_30d_15km
 FROM attention_points AS ap
 LEFT JOIN point_worker_pairs AS pwp ON ap.workplace_id = pwp.workplace_id
-GROUP BY ap.workplace_id, ap.ordered_7d, ap.covered_7d, ap.free_7d, ap.max_daily_free
+LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
+GROUP BY ap.workplace_id, ap.ordered_7d, ap.covered_7d, ap.free_7d, pp.free_professions_7d, pp.free_profession_counts_7d, ap.max_daily_free
 ORDER BY free_7d DESC, max_daily_free DESC
 FORMAT JSONEachRow`;
 

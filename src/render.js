@@ -1124,14 +1124,16 @@ function layout({
       flex: 1 1 auto;
     }
 
-    .attention-status-breakdown {
+    .attention-status-breakdown,
+    .attention-profession-breakdown {
       display: grid;
       gap: 2px;
       margin-top: 4px;
       white-space: normal;
     }
 
-    .attention-status-line {
+    .attention-status-line,
+    .attention-profession-line {
       display: block;
     }
 
@@ -4190,6 +4192,28 @@ function renderAttentionStatusBreakdown(statuses = {}) {
     .join('')}</div>`;
 }
 
+function renderAttentionProfessionBreakdown(professions = []) {
+  if (!Array.isArray(professions) || professions.length === 0) {
+    return '';
+  }
+
+  const rows = professions
+    .map((row) => {
+      const profession = String(row?.profession || '').trim();
+      const free7d = Number(row?.free7d || 0);
+
+      if (!profession || !Number.isFinite(free7d) || free7d <= 0) {
+        return '';
+      }
+
+      return `<span class="attention-profession-line">${escapeHtml(profession)} ${escapeHtml(formatNumber(free7d))}</span>`;
+    })
+    .filter(Boolean)
+    .join('');
+
+  return rows ? `<div class="muted attention-profession-breakdown">${rows}</div>` : '';
+}
+
 function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '', className = 'number-cell') {
   return renderMetricInfoScope({
     tag: 'td',
@@ -4283,7 +4307,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
 
         return `<tr>
         <td class="attention-point-cell"><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
-        ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser)}
+        ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser, 0, renderAttentionProfessionBreakdown(point.freeProfessions7d))}
         <td>${escapeHtml(point.nearestFreeDate || '')}</td>
         <td class="number-cell">${escapeHtml(formatNumber(point.maxDailyFree))}</td>
         ${renderAttentionPercentCell(point.coveragePercent, 'workplace-analysis.attention.coverage', currentUser)}

@@ -295,6 +295,22 @@ function statusBreakdown(row, prefix) {
   };
 }
 
+function arrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function attentionProfessionBreakdown(row) {
+  const professions = arrayValue(row.free_professions_7d);
+  const counts = arrayValue(row.free_profession_counts_7d);
+
+  return professions
+    .map((profession, index) => ({
+      profession: String(profession || '').trim(),
+      free7d: numberValue(counts[index])
+    }))
+    .filter((item) => item.profession && item.free7d > 0);
+}
+
 function daysUntil(filters, dateKey) {
   const start = parseDateOnly(filters.attentionFrom);
   const date = parseDateOnly(String(dateKey || ''));
@@ -418,6 +434,7 @@ function mergeWorkplaceAttentionRows(filters, rows = []) {
         ordered7d: numberValue(row.ordered_7d),
         covered7d: numberValue(row.covered_7d),
         free7d,
+        freeProfessions7d: attentionProfessionBreakdown(row),
         coveragePercent: percent(numberValue(row.covered_7d), numberValue(row.ordered_7d)),
         maxDailyFree: numberValue(row.max_daily_free),
         daysWithFree: numberValue(row.days_with_free),
@@ -1232,6 +1249,11 @@ function attentionPointsQuery(whereSql) {
       ifNull(any(w.address__region), '') AS region,
       ifNull(any(w.address__street), '') AS street,
       any(w.location__coordinates) AS workplace_coordinates,
+      if(
+        ifNull(any(p.caption), '') = '',
+        if(ifNull(any(o.spec), '') = '', 'Без специальности', any(o.spec)),
+        any(p.caption)
+      ) AS profession,
       sum(ifNull(o.amount, 0)) AS amount
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -1269,6 +1291,16 @@ function attentionPointsQuery(whereSql) {
     LEFT JOIN covered_jobs AS cj ON fo.order_id = cj.order_id
     GROUP BY workplace_id, order_date
   ),
+  profession_free_rows AS (
+    SELECT
+      fo.workplace_id AS workplace_id,
+      fo.profession AS profession,
+      sum(greatest(fo.amount - ifNull(cj.covered, 0), 0)) AS free
+    FROM filtered_orders AS fo
+    LEFT JOIN covered_jobs AS cj ON fo.order_id = cj.order_id
+    GROUP BY fo.workplace_id, fo.profession
+    HAVING free > 0
+  ),
   attention_points AS (
     SELECT
       workplace_id,
@@ -1295,6 +1327,22 @@ function attentionPointsQuery(whereSql) {
     HAVING free_7d > 0
     ORDER BY free_7d DESC, max_daily_free DESC, workplace_id ASC
     LIMIT {limit:UInt64}
+  ),
+  point_professions AS (
+    SELECT
+      workplace_id,
+      groupArray(profession) AS free_professions_7d,
+      groupArray(free) AS free_profession_counts_7d
+    FROM (
+      SELECT
+        pfr.workplace_id AS workplace_id,
+        pfr.profession AS profession,
+        pfr.free AS free
+      FROM profession_free_rows AS pfr
+      INNER JOIN attention_points AS ap ON pfr.workplace_id = ap.workplace_id
+      ORDER BY pfr.workplace_id ASC, pfr.free DESC, pfr.profession ASC
+    )
+    GROUP BY workplace_id
   ),
   point_bounds AS (
     SELECT
@@ -1388,6 +1436,8 @@ function attentionPointsQuery(whereSql) {
     ap.ordered_7d AS ordered_7d,
     ap.covered_7d AS covered_7d,
     ap.free_7d AS free_7d,
+    pp.free_professions_7d AS free_professions_7d,
+    pp.free_profession_counts_7d AS free_profession_counts_7d,
     ap.max_daily_free AS max_daily_free,
     ap.days_with_free AS days_with_free,
     toString(ap.nearest_free_date) AS nearest_free_date,
@@ -1403,6 +1453,7 @@ function attentionPointsQuery(whereSql) {
     ifNull(pw.active_status_other, 0) AS active_status_other
   FROM attention_points AS ap
   LEFT JOIN point_workers AS pw ON ap.workplace_id = pw.workplace_id
+  LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
   ORDER BY free_7d DESC, max_daily_free DESC, workplace_id ASC
   FORMAT JSONEachRow`;
 }

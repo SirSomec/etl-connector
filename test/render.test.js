@@ -1084,6 +1084,10 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
           ordered7d: 10,
           covered7d: 4,
           coveragePercent: 40,
+          freeProfessions7d: [
+            { profession: 'Picker<script>', free7d: 4 },
+            { profession: 'Courier', free7d: 2 }
+          ],
           maxDailyFree: 5,
           nearestFreeDate: '2026-06-04',
           totalWorkers15km: 20,
@@ -1100,6 +1104,9 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
   assert.match(html, /Точки, требующие внимания/);
   assert.match(html, /Своб\. 7д/);
   assert.match(html, /&lt;script&gt;Север&lt;\/script&gt;/);
+  assert.match(html, /attention-profession-breakdown/);
+  assert.match(html, /class="attention-profession-line">Picker&lt;script&gt; 4<\/span>/);
+  assert.match(html, /class="attention-profession-line">Courier 2<\/span>/);
   assert.match(html, /class="attention-status-line">ready 2<\/span>/);
   assert.match(html, /class="attention-status-line">booked 1<\/span>/);
   assert.match(html, /class="attention-status-line">worked 0<\/span>/);

@@ -654,6 +654,8 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
             ordered_7d: 10,
             covered_7d: 4,
             free_7d: 6,
+            free_professions_7d: ['Picker', 'Courier<script>'],
+            free_profession_counts_7d: [4, 2],
             max_daily_free: 5,
             days_with_free: 2,
             nearest_free_date: '2026-06-04',
@@ -690,6 +692,10 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
   assert.equal(dashboard.attentionPoints.length, 1);
   assert.equal(dashboard.attentionPoints[0].workplaceId, 'wp1');
   assert.equal(dashboard.attentionPoints[0].free7d, 6);
+  assert.deepEqual(dashboard.attentionPoints[0].freeProfessions7d, [
+    { profession: 'Picker', free7d: 4 },
+    { profession: 'Courier<script>', free7d: 2 }
+  ]);
   assert.equal(attentionCall.operation, 'workplace analysis attention points');
   assert.equal(attentionCall.params.param_from, '2026-06-04 00:00:00');
   assert.equal(attentionCall.params.param_to, '2026-06-12 00:00:00');
@@ -697,6 +703,8 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
   assert.equal(attentionCall.params.param_active_to, '2026-06-05 00:00:00');
   assert.equal(attentionCall.params.param_clients, "['Бренд']");
   assert.equal(attentionCall.query.includes('completed'), true);
+  assert.equal(attentionCall.query.includes('free_professions_7d'), true);
+  assert.equal(attentionCall.query.includes('free_profession_counts_7d'), true);
   assert.equal(attentionCall.query.includes('doccheck'), false);
   assert.equal(attentionCall.query.includes('greatCircleDistance'), true);
   assert.equal(attentionCall.query.includes('<= 15000'), true);

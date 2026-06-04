@@ -689,6 +689,79 @@ test('loadWorkplacePointDayDetails keeps completed factual shifts when confirmed
   assert.equal(calls[1].params.param_job_statuses, "['confirmed','completed']");
 });
 
+test('loadWorkplacePointDayDetails keeps completed shifts without factual interval details', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point day orders') {
+        return [
+          {
+            order_id: 'order-1',
+            profession: 'picker',
+            order_start_local: '2026-06-04 10:00:00',
+            planned_hours: 11
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day jobs') {
+        return [
+          {
+            order_id: 'order-1',
+            job_id: 'job-1',
+            status: 'completed',
+            worker_id: 'worker-1',
+            actual_hours: 11,
+            is_factual: 0,
+            actual_time_local: ''
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day workers') {
+        return [
+          {
+            worker_id: 'worker-1',
+            worker_full_name: 'Worker Name',
+            worker_phone: '+79990000000'
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day payments') {
+        return [{ job_id: 'job-1', payment_amount: 2200 }];
+      }
+
+      return [];
+    }
+  };
+
+  const details = await loadWorkplacePointDayDetails(
+    client,
+    {
+      workplaceId: 'wp1',
+      date: '2026-06-04',
+      jobStatus: ['confirmed']
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.rows[0].confirmedStatus, 'completed');
+  assert.equal(details.rows[0].workerFullName, 'Worker Name');
+  assert.equal(details.rows[0].workerPhone, '+79990000000');
+  assert.equal(details.rows[0].actualHours, 11);
+  assert.equal(details.rows[0].actualTimeLocal, '');
+  assert.equal(details.rows[0].paymentAmount, 2200);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'workplace point day orders',
+    'workplace point day jobs',
+    'workplace point day workers',
+    'workplace point day payments'
+  ]);
+});
+
 test('mergeWorkplacePointDayDetails keeps legacy row mapping', () => {
   const detailInput = normalizeWorkplacePointDayDetailsInput(
     { workplaceId: 'wp1', date: '2026-06-02' },

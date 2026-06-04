@@ -4,6 +4,7 @@ const FILTER_OPTION_KEYS = ['profession', 'orderType', 'jobStatus'];
 const RADIUS_KM = [5, 10, 15, 20];
 const WORKPLACE_POINT_SECTION_NAMES = ['summary', 'charts', 'radius'];
 const WORKPLACE_POINT_SECTIONS = new Set(WORKPLACE_POINT_SECTION_NAMES);
+const DAY_DETAIL_COMPLETED_JOB_STATUSES = new Set(['confirmed', 'completed']);
 const DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL = "('confirmed', 'completed')";
 const DAY_DETAIL_FACTUAL_TIME_FORMAT_SQL = "'%d.%m.%Y %H:%i'";
 
@@ -410,6 +411,10 @@ function isFactualDayJob(row) {
   return numberValue(row.is_factual) === 1;
 }
 
+function isCompletedDayJob(row) {
+  return DAY_DETAIL_COMPLETED_JOB_STATUSES.has(textValue(row.status)) || isFactualDayJob(row);
+}
+
 function latestTextValue(values) {
   return uniqueTextValues(values).sort().pop() || '';
 }
@@ -468,12 +473,12 @@ function mergeWorkplacePointDayDetailDatasets(detailInput, datasets) {
   for (const order of datasets.orderRows || []) {
     const orderId = textValue(order.order_id);
     const jobs = jobsByOrderId.get(orderId) || [];
-    const factualJobs = jobs.filter(isFactualDayJob);
+    const completedJobs = jobs.filter(isCompletedDayJob);
     const cancelledJobs = jobs.filter((job) => textValue(job.status) === 'cancelled');
     const cancelledShifts = cancelledJobs.length;
 
-    if (factualJobs.length > 0) {
-      for (const job of factualJobs) {
+    if (completedJobs.length > 0) {
+      for (const job of completedJobs) {
         const worker = workersById.get(textValue(job.worker_id)) || {};
         const payment = paymentsByJobId.get(textValue(job.job_id)) || {};
 
@@ -1091,9 +1096,9 @@ async function loadWorkplacePointDayDetails(client, input = {}, now = new Date()
     jobParams,
     'workplace point day jobs'
   );
-  const factualJobs = jobRows.filter(isFactualDayJob);
-  const factualJobIds = uniqueTextValues(factualJobs.map((row) => row.job_id));
-  const workerIds = uniqueTextValues(factualJobs.map((row) => row.worker_id));
+  const completedJobs = jobRows.filter(isCompletedDayJob);
+  const completedJobIds = uniqueTextValues(completedJobs.map((row) => row.job_id));
+  const workerIds = uniqueTextValues(completedJobs.map((row) => row.worker_id));
   const cancelledJobIds = uniqueTextValues(
     jobRows
       .filter((row) => textValue(row.status) === 'cancelled')
@@ -1107,10 +1112,10 @@ async function loadWorkplacePointDayDetails(client, input = {}, now = new Date()
         'workplace point day workers'
       )
       : Promise.resolve([]),
-    factualJobIds.length > 0
+    completedJobIds.length > 0
       ? client.queryJSONEachRow(
         dayDetailsPaymentsQuery(),
-        { param_job_ids: serializeStringArray(factualJobIds) },
+        { param_job_ids: serializeStringArray(completedJobIds) },
         'workplace point day payments'
       )
       : Promise.resolve([]),

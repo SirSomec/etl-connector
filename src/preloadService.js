@@ -12,7 +12,7 @@ function createPreloadService({ client, storePath, store = null, scheduler = nul
         refreshSalesByProjectPreload({ client, store: actualStore, fromDate, toDate })
     }
   });
-  let closed = false;
+  let closePromise = null;
 
   actualScheduler.reschedule();
 
@@ -50,13 +50,21 @@ function createPreloadService({ client, storePath, store = null, scheduler = nul
       return actualStore.readSalesByProjectSectionRows(input);
     },
     close() {
-      if (closed) {
-        return;
+      if (closePromise) {
+        return closePromise;
       }
 
-      closed = true;
-      actualScheduler.stop();
-      actualStore.close();
+      closePromise = (async () => {
+        actualScheduler.stop();
+
+        if (typeof actualScheduler.drain === 'function') {
+          await actualScheduler.drain();
+        }
+
+        await actualStore.close();
+      })();
+
+      return closePromise;
     }
   };
 }

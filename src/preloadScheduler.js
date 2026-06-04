@@ -161,7 +161,12 @@ function createPreloadScheduler({
     clearTimer();
   }
 
+  function drain() {
+    return Promise.allSettled([...runningByJob.values()]);
+  }
+
   return {
+    drain,
     runNow,
     reschedule,
     stop

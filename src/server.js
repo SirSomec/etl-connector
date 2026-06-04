@@ -178,6 +178,47 @@ function createManualRangeError() {
   return error;
 }
 
+function createScheduleSettingsError() {
+  const error = new Error('Неверные настройки расписания');
+
+  error.status = 400;
+  return error;
+}
+
+function parseScheduleTimeFromBody(value) {
+  const text = String(value || '');
+  const match = /^(\d{2}):(\d{2})$/.exec(text);
+
+  if (!match) {
+    throw createScheduleSettingsError();
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (hours > 23 || minutes > 59) {
+    throw createScheduleSettingsError();
+  }
+
+  return text;
+}
+
+function parseRefreshDaysFromBody(value) {
+  const text = String(value || '');
+
+  if (!/^\d+$/.test(text)) {
+    throw createScheduleSettingsError();
+  }
+
+  const refreshDays = Number(text);
+
+  if (!Number.isInteger(refreshDays) || refreshDays < 1 || refreshDays > 366) {
+    throw createScheduleSettingsError();
+  }
+
+  return refreshDays;
+}
+
 function parseManualDate(value) {
   const text = String(value || '').trim();
 
@@ -391,8 +432,8 @@ function createApp({
 
     return {
       enabled: enabledValue === '1' || enabledValue === 'on' || enabledValue === 'true',
-      scheduleTime: body && body.scheduleTime,
-      refreshDays: Number(body && body.refreshDays)
+      scheduleTime: parseScheduleTimeFromBody(body && body.scheduleTime),
+      refreshDays: parseRefreshDaysFromBody(body && body.refreshDays)
     };
   }
 
@@ -1143,11 +1184,29 @@ function start(options = {}) {
   const workplaceDirectoryCache = createWorkplaceDirectoryCache({
     filePath: workplaceDirectoryCachePathFromEnv(env)
   });
-  const preloadService = createPreloadServiceFn({
-    client,
-    storePath: config.preload.storePath,
-    sanitizeError: (error) => sanitizeForResponse(error && error.message, config)
-  });
+  let preloadService = null;
+
+  function warn(message) {
+    if (logger && typeof logger.warn === 'function') {
+      logger.warn(message);
+      return;
+    }
+
+    if (logger && typeof logger.log === 'function') {
+      logger.log(message);
+    }
+  }
+
+  try {
+    preloadService = createPreloadServiceFn({
+      client,
+      storePath: config.preload.storePath,
+      sanitizeError: (error) => sanitizeForResponse(error && error.message, config)
+    });
+  } catch (error) {
+    warn(`Preload service disabled: ${sanitizeForResponse(error && error.message, config)}`);
+  }
+
   const app = createAppFn({
     config,
     client,
@@ -1167,7 +1226,22 @@ function start(options = {}) {
 
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
-    preloadService.close();
+
+    if (!preloadService || typeof preloadService.close !== 'function') {
+      return;
+    }
+
+    try {
+      const closeResult = preloadService.close();
+
+      if (closeResult && typeof closeResult.catch === 'function') {
+        closeResult.catch((error) => {
+          warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
+        });
+      }
+    } catch (error) {
+      warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
+    }
   });
 
   return server;

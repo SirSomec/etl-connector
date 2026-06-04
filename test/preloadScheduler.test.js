@@ -382,7 +382,7 @@ test('preload service facade delegates schedule, run and covered reads', async (
     toDate: '2026-05-01'
   });
 
-  service.close();
+  await service.close();
 
   assert.deepEqual(saved, { id: SALES_PRELOAD_JOB_ID, enabled: false });
   assert.deepEqual(run, { status: 'success' });
@@ -429,7 +429,104 @@ test('preload service facade delegates schedule, run and covered reads', async (
   ]);
 });
 
-test('preload service close is idempotent', () => {
+test('preload service close waits for active scheduler run before closing store', async () => {
+  let releaseLoader;
+  let markLoaderStarted;
+  const loaderCanFinish = new Promise((resolve) => {
+    releaseLoader = resolve;
+  });
+  const loaderStarted = new Promise((resolve) => {
+    markLoaderStarted = resolve;
+  });
+  const calls = [];
+  const store = {
+    closed: false,
+    startRun(input) {
+      calls.push('store.startRun');
+      return { id: 1, ...input };
+    },
+    finishRun(runId, input) {
+      calls.push(`store.finishRun:${this.closed ? 'closed' : 'open'}`);
+      return { id: runId, ...input };
+    },
+    getJob() {
+      return null;
+    },
+    getSalesByProjectOverview() {
+      return {};
+    },
+    listRuns() {
+      return [];
+    },
+    saveJobSchedule() {
+      return null;
+    },
+    hasSalesByProjectCoverage() {
+      return false;
+    },
+    readSalesByProjectSectionRows() {
+      return null;
+    },
+    close() {
+      this.closed = true;
+      calls.push('store.close');
+    }
+  };
+  const scheduler = createPreloadScheduler({
+    store,
+    loaders: {
+      [SALES_PRELOAD_JOB_ID]: async () => {
+        calls.push('loader.start');
+        markLoaderStarted();
+        await loaderCanFinish;
+        calls.push('loader.finish');
+        return { rowsWritten: 1 };
+      }
+    },
+    sanitizeError: (error) => String(error && error.message)
+  });
+  const service = createPreloadService({ client: {}, store, scheduler });
+  const runPromise = service.runSalesByProject({
+    fromDate: '2026-05-01',
+    toDate: '2026-06-01'
+  });
+  let closePromise;
+  let assertionError;
+
+  runPromise.catch(() => {});
+  await loaderStarted;
+
+  try {
+    closePromise = service.close();
+    assert.equal(store.closed, false);
+  } catch (error) {
+    assertionError = error;
+  } finally {
+    releaseLoader();
+  }
+
+  if (closePromise && typeof closePromise.then === 'function') {
+    await closePromise;
+  }
+
+  const run = await runPromise;
+
+  if (assertionError) {
+    throw assertionError;
+  }
+
+  assert.equal(run.status, 'success');
+  assert.equal(store.closed, true);
+  assert.deepEqual(calls, [
+    'store.startRun',
+    'loader.start',
+    'loader.finish',
+    'store.finishRun:open',
+    'store.close'
+  ]);
+});
+
+test('preload service close is idempotent', async () => {
   const calls = [];
   const store = {
     getSalesByProjectOverview() {
@@ -463,16 +560,25 @@ test('preload service close is idempotent', () => {
     },
     stop() {
       calls.push('scheduler.stop');
+    },
+    drain() {
+      calls.push('scheduler.drain');
+      return Promise.resolve();
     }
   };
   const service = createPreloadService({ client: {}, store, scheduler });
 
-  service.close();
-  service.close();
+  const firstClose = service.close();
+  const secondClose = service.close();
+
+  assert.equal(typeof firstClose.then, 'function');
+  assert.equal(firstClose, secondClose);
+  await Promise.all([firstClose, secondClose]);
 
   assert.deepEqual(calls, [
     'scheduler.reschedule',
     'scheduler.stop',
+    'scheduler.drain',
     'store.close'
   ]);
 });

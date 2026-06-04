@@ -1513,7 +1513,7 @@ test('preload admin routes render, save schedule, and run manual refresh', async
         body: formBody({
           enabled: '1',
           scheduleTime: '04:30',
-          refreshDays: '30'
+          refreshDays: '60'
         })
       });
 
@@ -1551,7 +1551,7 @@ test('preload admin routes render, save schedule, and run manual refresh', async
       {
         enabled: true,
         scheduleTime: '04:30',
-        refreshDays: 30
+        refreshDays: 60
       }
     ],
     [
@@ -1562,6 +1562,45 @@ test('preload admin routes render, save schedule, and run manual refresh', async
       }
     ]
   ]);
+});
+
+test('POST /admin/preload/schedule rejects invalid schedule settings', async () => {
+  const invalidCases = [
+    { scheduleTime: 'bad', refreshDays: '60' },
+    { scheduleTime: '24:00', refreshDays: '60' },
+    { scheduleTime: '04:30', refreshDays: '0' },
+    { scheduleTime: '04:30', refreshDays: '0.5' },
+    { scheduleTime: '04:30', refreshDays: '999999' }
+  ];
+
+  for (const invalidCase of invalidCases) {
+    const client = createFakeClient();
+    const preloadService = createFakePreloadService();
+
+    await withServer(
+      client,
+      async (baseUrl) => {
+        const result = await fetchText(baseUrl, '/admin/preload/schedule', {
+          method: 'POST',
+          redirect: 'manual',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({
+            enabled: '1',
+            ...invalidCase
+          })
+        });
+
+        assert.equal(result.response.status, 400);
+        assert.match(result.text, /Неверные настройки расписания/);
+      },
+      baseConfig(),
+      { preloadService }
+    );
+
+    assert.deepEqual(preloadService.calls, []);
+  }
 });
 
 test('POST /admin/preload/run redirects when refresh is already running', async () => {
@@ -1714,6 +1753,71 @@ test('start uses injectable dependencies and logs the listening port without sec
   }
 
   assert.equal(preloadServiceClosed, true);
+});
+
+test('start falls back without preload service when preload creation fails', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    }
+  };
+  const warningMessages = [];
+  const logMessages = [];
+  let createAppArgs;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  const server = start({
+    loadConfigFn: () => config,
+    ClientClass: FakeClient,
+    createPreloadServiceFn: () => {
+      throw new Error('failed to open sqlite with password super-secret');
+    },
+    createAppFn: (args) => {
+      createAppArgs = args;
+
+      return http.createServer((req, res) => {
+        res.setHeader('content-type', 'text/plain');
+        res.end(args.preloadService === null ? 'fallback' : 'preload');
+      });
+    },
+    logger: {
+      log(message) {
+        logMessages.push(message);
+      },
+      warn(message) {
+        warningMessages.push(message);
+      }
+    }
+  });
+
+  try {
+    await waitForListening(server);
+
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    const text = await response.text();
+
+    assert.equal(text, 'fallback');
+    assert.equal(createAppArgs.preloadService, null);
+    assert.equal(warningMessages.length, 1);
+    assert.match(warningMessages[0], /failed to open sqlite with password \[redacted\]/);
+    assert.doesNotMatch(warningMessages[0], /super-secret/);
+    assert.equal(logMessages.length, 1);
+  } finally {
+    await closeServer(server);
+  }
 });
 
 test('unknown routes return 404', async () => {

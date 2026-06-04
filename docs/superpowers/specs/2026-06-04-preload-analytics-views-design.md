@@ -121,7 +121,7 @@ Runtime-файлы проекта уже хранятся в `data/` и прим
 
 Основная витрина пилотного дашборда.
 
-Гранулярность: день + бренд + статусные и финансовые агрегаты, достаточные для секций `summary`, `trend`, `brands`, `statuses`.
+Гранулярность: день + бренд + статусные и финансовые агрегаты, достаточные для быстрых сумм секций `summary`, `trend`, `brands`, `statuses`.
 
 Ключевые поля:
 
@@ -148,6 +148,13 @@ Runtime-файлы проекта уже хранятся в `data/` и прим
 - диапазон дат;
 - бренд;
 - статус.
+
+Для точного сохранения текущей семантики `uniqExact` и `countDistinct` по произвольным диапазонам одной дневной суммы недостаточно: сумма дневных уникальных исполнителей или точек может переучитывать одинаковые id в разные дни. Поэтому первая итерация также хранит тонкие fact-таблицы:
+
+- `sales_by_project_order_facts` - `period_date`, `brand`, `order_id`, `workplace_id`, `ordered_shifts`;
+- `sales_by_project_shift_facts` - `period_date`, `brand`, `job_id`, `worker_id`, `workplace_id`, `status`, `revenue_rub`, `cancelled_shifts`, `self_booked_confirmed_shift`, `worker_rate_hour`.
+
+Эти таблицы используются для точных `count(DISTINCT ...)` при чтении из SQLite. Таблица `sales_by_project_daily` остается быстрым rollup-слоем для сумм, тренда и статусных счетчиков.
 
 ## Обновление витрины
 

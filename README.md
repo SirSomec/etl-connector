@@ -55,6 +55,7 @@ CLICKHOUSE_CA_PATH=/usr/local/share/ca-certificates/Yandex/RootCA.crt
 CLICKHOUSE_REQUEST_TIMEOUT_MS=120000
 DASHBOARD_SECTION_CACHE_PATH=./data/dashboard-section-cache.json
 WORKPLACE_DIRECTORY_CACHE_PATH=./data/workplace-directory-cache.json
+PRELOAD_STORE_PATH=./data/preload.sqlite
 AUTH_ENABLED=true
 AUTH_ADMIN_EMAIL=admin@example.com
 AUTH_ADMIN_PASSWORD=change-me
@@ -68,6 +69,14 @@ PORT=3000
 Реальный пароль задавайте только в локальном `.env` или в окружении деплоя. Не коммитьте `.env`.
 
 Новые секции дашбордов кешируются на 10 часов. По умолчанию кеш хранится в `./data/dashboard-section-cache.json`; путь можно переопределить через `DASHBOARD_SECTION_CACHE_PATH`. Справочник точек для подсказок в дашборде `Анализ точек` хранится в `./data/workplace-directory-cache.json` и обновляется фоново не чаще одного раза в 7 дней; путь можно переопределить через `WORKPLACE_DIRECTORY_CACHE_PATH`.
+
+### Предзагрузка витрин
+
+Первая итерация предзагрузки использует локальную SQLite-базу `data/preload.sqlite`; путь можно переопределить через `PRELOAD_STORE_PATH`. Это runtime-файл в `./data`, его не нужно коммитить вместе с кодом.
+
+Страница управления `/admin/preload` требует права `Предзагрузка витрин` / permission `preload-admin`. Пилотная витрина ускоряет дашборд `Продажи по проектам`: расписание по умолчанию запускается ежедневно в `03:00 Europe/Moscow` и пересчитывает последние 45 дней. Ручной запуск позволяет выбрать диапазон дат.
+
+В Docker volume `./data:/app/data` должен быть доступен на запись пользователю контейнера `node` (`uid 1000`), иначе обновления SQLite/store будут падать с `EACCES`. Если витрина отсутствует, не покрывает выбранный период или недоступна, дашборд сохраняет текущее поведение и читает данные напрямую из ClickHouse fallback.
 
 Авторизация включена по умолчанию. Администратор по умолчанию берется из `AUTH_ADMIN_EMAIL` и `AUTH_ADMIN_PASSWORD`, отображается в UI как read-only запись и не сохраняется в `data/users.json`. Управляемые учетные записи создаются через `/admin/users`, пароли хранятся только в виде PBKDF2-хешей. Для локального отключения авторизации можно задать `AUTH_ENABLED=false`.
 

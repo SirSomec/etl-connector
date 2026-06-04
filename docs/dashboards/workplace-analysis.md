@@ -2,7 +2,7 @@
 
 Код: `src/workplaceAnalysisDashboard.js`. Маршрут: `/dashboards/workplace-analysis`.
 
-Экран ранжирует рабочие места по плановому заказу, SLA и стабильности. Основная таблица - `mg_orders`; факт выполнения берется из `mg_jobs` через `mg_jobs.source = mg_orders._id`.
+Экран ранжирует рабочие места по плановому заказу, SLA и стабильности. Основная таблица - `mg_orders`; факт выполнения берется из `mg_jobs` через `mg_jobs.source = mg_orders._id`. Для SLA учитываются только успешные `confirmed`-смены: нулевые `confirmed` с длительностью `0:00` и нулевым начислением/выплатой считаются прогулом.
 
 Внутри экрана есть подвкладка `Требуют внимания`. Она показывает точки с незакрытым заказом на ближайшие 7 дней и базой исполнителей в радиусе 15 км.
 
@@ -56,10 +56,10 @@ o._id IN (
 Незакрытый заказ считается как плановый заказ `mg_orders.amount` минус смены `mg_jobs`, связанные через `mg_jobs.source = mg_orders._id`, в закрывающих статусах:
 
 ```text
-booked, going, inprogress, checkingin, checkingout, completed, confirmed, delayed, waiting
+booked, going, inprogress, checkingin, checkingout, completed, delayed, waiting
 ```
 
-`doccheck` не закрывает заказ. `completed` закрывает заказ, потому что смена успешно завершена.
+`confirmed` закрывает заказ только если смена успешная: есть положительная длительность, начисление/выплата или положительный фактический интервал `start_fact` - `finish_fact`. `doccheck` не закрывает заказ. `completed` закрывает заказ, потому что смена завершена.
 
 Метрики подвкладки:
 
@@ -182,10 +182,31 @@ FROM (
     LEFT JOIN mg_clients AS c ON o.client = c._id
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
     LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
-    INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
+    INNER JOIN (
+      SELECT
+        j.source AS source,
+        if(
+          ifNull(j.status, '') = 'confirmed'
+          AND (
+            ifNull(j.hours, 0) > 0
+            OR ifNull(j.payment, 0) > 0
+            OR ifNull(j.salary_per_job, 0) > 0
+            OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+            OR (
+              j.start_fact IS NOT NULL
+              AND j.finish_fact IS NOT NULL
+              AND j.finish_fact > j.start_fact
+              AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+            )
+          ),
+          1,
+          0
+        ) AS is_successful_confirmed_shift
+      FROM mg_jobs AS j
+      WHERE ifNull(j.deleted, 0) = 0
+    ) AS completed_job ON completed_job.source = o._id
     WHERE <whereSql>
-      AND completed_job.deleted = 0
-      AND ifNull(completed_job.status, '') = 'confirmed'
+      AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id
   ) AS sc ON os.workplace_id = sc.workplace_id
 ) AS metrics
@@ -237,7 +258,7 @@ FORMAT JSONEachRow
 
 ## SQL: дневные значения
 
-Для обычной страницы сначала выбираются `top_workplaces`, затем дневные заказы и подтвержденные смены:
+Для обычной страницы сначала выбираются `top_workplaces`, затем дневные заказы и успешные подтвержденные смены:
 
 ```sql
 WITH top_workplaces AS (
@@ -270,10 +291,31 @@ daily_completed AS (
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
   LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
-  INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
+  INNER JOIN (
+    SELECT
+      j.source AS source,
+      if(
+        ifNull(j.status, '') = 'confirmed'
+        AND (
+          ifNull(j.hours, 0) > 0
+          OR ifNull(j.payment, 0) > 0
+          OR ifNull(j.salary_per_job, 0) > 0
+          OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+          OR (
+            j.start_fact IS NOT NULL
+            AND j.finish_fact IS NOT NULL
+            AND j.finish_fact > j.start_fact
+            AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+          )
+        ),
+        1,
+        0
+      ) AS is_successful_confirmed_shift
+    FROM mg_jobs AS j
+    WHERE ifNull(j.deleted, 0) = 0
+  ) AS completed_job ON completed_job.source = o._id
   WHERE <whereSql>
-    AND completed_job.deleted = 0
-    AND ifNull(completed_job.status, '') = 'confirmed'
+    AND completed_job.is_successful_confirmed_shift = 1
   GROUP BY workplace_id, order_date
 )
 SELECT
@@ -345,9 +387,9 @@ FORMAT JSONEachRow
 - `activeDays`: количество уникальных дат `toDate(o.start)` с заказами.
 - `stabilityPercent`: `activeDays / rangeDays * 100`; доля дней периода, где у точки был плановый заказ.
 - `slaOrderedShifts`: сумма `amount` только по неудаленным и нескрытым заказам.
-- `slaCompletedShifts`: число подтвержденных `mg_jobs.status = 'confirmed'`, привязанных к заказам точки.
+- `slaCompletedShifts`: число успешных подтвержденных смен, привязанных к заказам точки; `confirmed` с длительностью `0:00` и нулевым начислением/выплатой исключаются как прогул.
 - `slaPercent`: `slaCompletedShifts / slaOrderedShifts * 100`.
 - `avgDailyOrder`: `totalOrderedShifts / activeDays`.
-- `completedShifts`: дневное число подтвержденных смен.
+- `completedShifts`: дневное число успешных подтвержденных смен.
 - `heatmapDays.level`: уровень 0-4, рассчитывается в JS от дневного `ordered_shifts` относительно максимума на странице.
 - `activeGigers5km`: уникальные исполнители со статусом `ready`, `worked` или `booked`, у которых была AppMetrica-сессия за последние 30 дней и последняя известная геопозиция в радиусе 5 км.

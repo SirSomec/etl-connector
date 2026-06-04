@@ -32,6 +32,94 @@ test('preload store initializes default sales job', async () => {
   }
 });
 
+test('preload store invalidates legacy sales coverage when successful confirmed flag is added', async () => {
+  const filePath = await tempDbPath();
+  const legacyDb = new DatabaseSync(filePath);
+
+  try {
+    legacyDb.exec(`
+CREATE TABLE sales_by_project_shift_facts (
+  period_date TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  worker_id TEXT NOT NULL,
+  workplace_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  revenue_rub REAL NOT NULL DEFAULT 0,
+  cancelled_shifts REAL NOT NULL DEFAULT 0,
+  self_booked_confirmed_shift REAL NOT NULL DEFAULT 0,
+  worker_rate_hour REAL NOT NULL DEFAULT 0,
+  refreshed_at TEXT NOT NULL,
+  PRIMARY KEY (period_date, job_id)
+);
+
+CREATE TABLE sales_by_project_coverage (
+  period_date TEXT PRIMARY KEY,
+  source_from TEXT NOT NULL,
+  source_to TEXT NOT NULL,
+  refreshed_at TEXT NOT NULL
+);
+
+INSERT INTO sales_by_project_shift_facts (
+  period_date,
+  brand,
+  job_id,
+  worker_id,
+  workplace_id,
+  status,
+  revenue_rub,
+  cancelled_shifts,
+  self_booked_confirmed_shift,
+  worker_rate_hour,
+  refreshed_at
+) VALUES (
+  '2026-05-01',
+  'Brand A',
+  'legacy-confirmed',
+  'worker-1',
+  'workplace-1',
+  'confirmed',
+  100,
+  0,
+  0,
+  300,
+  '2026-06-04T10:00:00.000Z'
+);
+
+INSERT INTO sales_by_project_coverage (
+  period_date,
+  source_from,
+  source_to,
+  refreshed_at
+) VALUES (
+  '2026-05-01',
+  '2026-05-01',
+  '2026-05-02',
+  '2026-06-04T10:00:00.000Z'
+);
+`);
+  } finally {
+    legacyDb.close();
+  }
+
+  const store = createPreloadStore({ filePath });
+
+  try {
+    assert.equal(store.hasSalesByProjectCoverage('2026-05-01', '2026-05-02'), false);
+    assert.equal(
+      store.readSalesByProjectSectionRows({
+        section: 'summary',
+        period: 'month',
+        fromDate: '2026-05-01',
+        toDate: '2026-05-02'
+      }),
+      null
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test('preload store saves schedule and run history', async () => {
   const store = createPreloadStore({
     filePath: await tempDbPath(),

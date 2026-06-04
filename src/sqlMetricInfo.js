@@ -1,3 +1,8 @@
+const {
+  successfulConfirmedShiftCondition,
+  successfulConfirmedShiftFlagExpression
+} = require('./successfulConfirmedShift');
+
 const SQL_METRIC_INFO = {};
 
 function defineSqlMetric(info) {
@@ -35,7 +40,10 @@ const SALES_SHIFT_FACTS_SQL = `WITH shift_facts AS (
     j.salary_per_job AS salary_per_job,
     j.payment_per_hour AS payment_per_hour,
     j.payment_per_job AS payment_per_job,
-    j.hours AS hours
+    j.hours AS hours,
+    j.payment AS payment,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact
   FROM mg_jobs AS j
   WHERE j._id != ''
     AND j.deleted = 0
@@ -69,6 +77,10 @@ shift_enriched AS (
     sf.worker AS worker,
     sf.cancellation_reason AS cancellation_reason,
     sf.salary_per_hour AS salary_per_hour,
+    sf.hours AS hours,
+    sf.payment AS payment,
+    sf.start_fact AS start_fact,
+    sf.finish_fact AS finish_fact,
     coalesce(nullIf(sf.client, ''), o.client) AS client,
     coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
     ifNull(sb.is_self_booked, 0) AS is_self_booked,
@@ -76,7 +88,8 @@ shift_enriched AS (
     ifNull(ct.comission, 0) AS commission_percent,
     if(ifNull(sf.salary_per_job, 0) > 0, ifNull(sf.salary_per_job, 0), ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0)) AS worker_shift_amount,
     if(ifNull(sf.payment_per_job, 0) > 0, ifNull(sf.payment_per_job, 0), ifNull(sf.payment_per_hour, 0) * ifNull(sf.hours, 0)) AS customer_shift_amount,
-    ifNull(s.surcharge_amount, 0) AS surcharge_amount
+    ifNull(s.surcharge_amount, 0) AS surcharge_amount,
+    ${successfulConfirmedShiftFlagExpression('sf')} AS is_successful_confirmed_shift
   FROM shift_facts AS sf
   LEFT JOIN mg_orders AS o ON sf.source = o._id
   LEFT JOIN mg_workplaces AS w ON coalesce(nullIf(sf.workplace, ''), o.workplace) = w._id
@@ -98,13 +111,13 @@ FORMAT JSONEachRow;
 -- shifts summary
 ${SALES_SHIFT_FACTS_SQL}
 SELECT
-  uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts,
-  sum(if(status = 'confirmed', if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount, customer_shift_amount + surcharge_amount), 0)) AS revenue_rub,
-  uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-  uniqExactIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  sum(if(is_successful_confirmed_shift = 1, if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount, customer_shift_amount + surcharge_amount), 0)) AS revenue_rub,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
   countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
-  countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts,
-  avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0) AS avg_worker_rate_hour
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  avgIf(salary_per_hour, is_successful_confirmed_shift = 1 AND salary_per_hour > 0) AS avg_worker_rate_hour
 FROM shift_enriched
 FORMAT JSONEachRow`;
 
@@ -124,8 +137,8 @@ FORMAT JSONEachRow;
 ${SALES_SHIFT_FACTS_SQL}
 SELECT
   <period_expression(shift_start)> AS period,
-  uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts,
-  sum(if(status = 'confirmed', if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount, customer_shift_amount + surcharge_amount), 0)) AS revenue_rub,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  sum(if(is_successful_confirmed_shift = 1, if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount, customer_shift_amount + surcharge_amount), 0)) AS revenue_rub,
   countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts
 FROM shift_enriched
 GROUP BY period
@@ -150,13 +163,13 @@ FORMAT JSONEachRow;
 ${SALES_SHIFT_FACTS_SQL}
 SELECT
   ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
-  uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts,
-  sum(if(status = 'confirmed', if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount, customer_shift_amount + surcharge_amount), 0)) AS revenue_rub,
-  uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-  uniqExactIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  sum(if(is_successful_confirmed_shift = 1, if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount, customer_shift_amount + surcharge_amount), 0)) AS revenue_rub,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
   countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
-  countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts,
-  avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0) AS avg_worker_rate_hour
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  avgIf(salary_per_hour, is_successful_confirmed_shift = 1 AND salary_per_hour > 0) AS avg_worker_rate_hour
 FROM shift_enriched
 LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
 GROUP BY brand
@@ -224,10 +237,15 @@ FROM (
     LEFT JOIN mg_clients AS c ON o.client = c._id
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
     LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
-    INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
+    INNER JOIN (
+      SELECT
+        j.source AS source,
+        ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+      FROM mg_jobs AS j
+      WHERE ifNull(j.deleted, 0) = 0
+    ) AS completed_job ON completed_job.source = o._id
     WHERE <whereSql>
-      AND completed_job.deleted = 0
-      AND ifNull(completed_job.status, '') = 'confirmed'
+      AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id
   ) AS sc ON os.workplace_id = sc.workplace_id
 ) AS metrics
@@ -266,10 +284,15 @@ daily_completed AS (
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
   LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
-  INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
+  INNER JOIN (
+    SELECT
+      j.source AS source,
+      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+    FROM mg_jobs AS j
+    WHERE ifNull(j.deleted, 0) = 0
+  ) AS completed_job ON completed_job.source = o._id
   WHERE <whereSql>
-    AND completed_job.deleted = 0
-    AND ifNull(completed_job.status, '') = 'confirmed'
+    AND completed_job.is_successful_confirmed_shift = 1
   GROUP BY workplace_id, order_date
 )
 SELECT
@@ -354,7 +377,10 @@ covered_jobs AS (
   FROM mg_jobs AS j
   INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
   WHERE ifNull(j.deleted, 0) = 0
-    AND ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'confirmed', 'delayed', 'waiting')
+    AND (
+      ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')
+      OR (${successfulConfirmedShiftCondition('j')})
+    )
   GROUP BY order_id
 ),
 daily_point AS (
@@ -463,7 +489,8 @@ const WORKER_CANCELLATIONS_SQL = `WITH shift_facts AS (
     j._id AS job,
     j.worker AS worker_id,
     j.start AS start,
-    ifNull(j.status, '') AS status
+    ifNull(j.status, '') AS status,
+    ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
   FROM mg_jobs AS j
   WHERE j.start >= {from:DateTime}
     AND j.start < {to:DateTime}
@@ -498,7 +525,7 @@ cancellation_flags AS (
 worker_metrics AS (
   SELECT
     sf.worker_id AS worker_id,
-    uniqExactIf(sf.job, status = 'confirmed') AS confirmed_shifts,
+    uniqExactIf(sf.job, is_successful_confirmed_shift = 1) AS confirmed_shifts,
     uniqExactIf(sf.job, status = 'cancelled' AND ifNull(cf.is_worker_cancelled, 0) = 1) AS worker_cancellations,
     uniqExactIf(sf.job, status = 'cancelled' AND ifNull(cf.is_worker_cancelled_24h, 0) = 1) AS worker_cancellations_24h,
     uniqExactIf(sf.job, status = 'cancelled' AND ifNull(cf.is_post_start_cancelled, 0) = 1) AS post_start_cancellations,
@@ -546,6 +573,13 @@ shift_facts AS (
     j.worker AS worker,
     j.status AS status,
     j.start AS start,
+    j.hours AS hours,
+    j.payment AS payment,
+    j.salary_per_hour AS salary_per_hour,
+    j.salary_per_job AS salary_per_job,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact,
+    ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
     ifNull(j.cancellation_reason, '') AS cancellation_reason,
     ifNull(j.failure_reason, '') AS failure_reason
   FROM mg_jobs AS j
@@ -576,8 +610,8 @@ order_summary AS (
 ),
 shift_summary AS (
   SELECT
-    countIf(status = 'confirmed') AS completed_shifts,
-    uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_completed_workers,
+    countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
+    uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_completed_workers,
     uniqExactIf(sf.job_id, de.drop_at IS NOT NULL AND sf.start IS NOT NULL AND de.drop_at >= sf.start - INTERVAL 24 HOUR AND de.drop_at <= sf.start) AS dropoffs_24h
   FROM shift_facts AS sf
   LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
@@ -614,6 +648,13 @@ shift_facts AS (
     j.worker AS worker,
     j.status AS status,
     j.start AS start,
+    j.hours AS hours,
+    j.payment AS payment,
+    j.salary_per_hour AS salary_per_hour,
+    j.salary_per_job AS salary_per_job,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact,
+    ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
     ifNull(j.cancellation_reason, '') AS cancellation_reason,
     ifNull(j.failure_reason, '') AS failure_reason
   FROM mg_jobs AS j
@@ -640,7 +681,7 @@ order_daily AS (
 shift_daily AS (
   SELECT
     toString(toDate(sf.start)) AS period,
-    countIf(sf.status = 'confirmed') AS completed_shifts,
+    countIf(sf.is_successful_confirmed_shift = 1) AS completed_shifts,
     uniqExactIf(sf.job_id, de.drop_at IS NOT NULL AND sf.start IS NOT NULL AND de.drop_at >= sf.start - INTERVAL 24 HOUR AND de.drop_at <= sf.start) AS dropoffs_24h
   FROM shift_facts AS sf
   LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
@@ -814,11 +855,17 @@ booked_users AS (
 ),
 completed_users AS (
   SELECT DISTINCT worker.user AS user_id
-  FROM mg_jobs AS job
+  FROM (
+    SELECT
+      job.source AS source,
+      job.worker AS worker,
+      ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+    FROM mg_jobs AS job
+    WHERE ifNull(job.deleted, 0) = 0
+  ) AS job
   INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON job.worker = worker._id
-  WHERE ifNull(job.deleted, 0) = 0
-    AND ifNull(job.status, '') = 'confirmed'
+  WHERE job.is_successful_confirmed_shift = 1
     AND ifNull(worker.user, '') != ''
 ),
 daily_30d_ratio AS (
@@ -969,11 +1016,17 @@ daily_completed AS (
   SELECT
     fo.period AS period,
     uniqExact(worker.user) AS completed_users
-  FROM mg_jobs AS job
+  FROM (
+    SELECT
+      job.source AS source,
+      job.worker AS worker,
+      ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+    FROM mg_jobs AS job
+    WHERE ifNull(job.deleted, 0) = 0
+  ) AS job
   INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON job.worker = worker._id
-  WHERE ifNull(job.deleted, 0) = 0
-    AND ifNull(job.status, '') = 'confirmed'
+  WHERE job.is_successful_confirmed_shift = 1
     AND ifNull(worker.user, '') != ''
   GROUP BY period
 )
@@ -1132,15 +1185,15 @@ defineMetricSet({
   metrics: [
     { id: 'sales-by-project.summary', title: 'Продажи по проектам', description: 'Показывает общий заказ, выполненные смены, SLA, выручку и связанные показатели за выбранный период. Часть значений собирается из двух запросов: по заказам и по сменам.' },
     { suffix: 'ordered-shifts', title: 'Заказано смен', description: 'Сумма планового количества смен из заказов за выбранный период.' },
-    { suffix: 'worked-shifts', title: 'Отработано смен', description: 'Количество уникальных подтвержденных смен в заданиях за выбранный период.' },
-    { suffix: 'sla', title: 'SLA', description: 'Доля выполненных смен от планового заказа. В UI показатель собирается из заказанных и подтвержденных смен.' },
-    { suffix: 'revenue-rub', title: 'Выручка, руб.', description: 'Расчетная выручка по подтвержденным сменам с учетом типа договора, ставки и доплат.' },
-    { suffix: 'unique-workers', title: 'Уникальные исполнители', description: 'Количество уникальных исполнителей с подтвержденными сменами.' },
+    { suffix: 'worked-shifts', title: 'Отработано смен', description: 'Количество уникальных успешных подтвержденных смен в заданиях за выбранный период; нулевые прогулы исключаются.' },
+    { suffix: 'sla', title: 'SLA', description: 'Доля выполненных смен от планового заказа. В UI показатель собирается из заказанных и успешных подтвержденных смен.' },
+    { suffix: 'revenue-rub', title: 'Выручка, руб.', description: 'Расчетная выручка по успешным подтвержденным сменам с учетом типа договора, ставки и доплат.' },
+    { suffix: 'unique-workers', title: 'Уникальные исполнители', description: 'Количество уникальных исполнителей с успешными подтвержденными сменами.' },
     { suffix: 'workplaces-with-orders', title: 'ТТ с заказами', description: 'Количество рабочих мест, по которым был плановый заказ.' },
-    { suffix: 'workplaces-with-worked-shifts', title: 'ТТ с выполненными сменами', description: 'Количество рабочих мест, по которым были подтвержденные смены.' },
+    { suffix: 'workplaces-with-worked-shifts', title: 'ТТ с выполненными сменами', description: 'Количество рабочих мест, по которым были успешные подтвержденные смены.' },
     { suffix: 'cancelled-shifts', title: 'Отмены', description: 'Количество смен с причиной отмены или статусом failed.' },
-    { suffix: 'self-booking-percent', title: 'Самоброни', description: 'Доля подтвержденных смен, которые исполнитель забронировал сам.' },
-    { suffix: 'avg-worker-rate-hour', title: 'Средняя ставка в час', description: 'Средняя часовая ставка исполнителя по подтвержденным сменам.' }
+    { suffix: 'self-booking-percent', title: 'Самоброни', description: 'Доля успешных подтвержденных смен, которые исполнитель забронировал сам.' },
+    { suffix: 'avg-worker-rate-hour', title: 'Средняя ставка в час', description: 'Средняя часовая ставка исполнителя по успешным подтвержденным сменам.' }
   ]
 });
 
@@ -1150,9 +1203,9 @@ defineMetricSet({
   metrics: [
     { id: 'sales-by-project.trend', title: 'Динамика продаж', description: 'Показывает динамику заказа, выполнения, SLA, выручки и отмен по выбранной периодизации.' },
     { suffix: 'ordered-shifts', title: 'Динамика: заказано', description: 'Плановый заказ по периодам.' },
-    { suffix: 'worked-shifts', title: 'Динамика: отработано', description: 'Подтвержденные смены по периодам.' },
-    { suffix: 'sla', title: 'Динамика: SLA', description: 'Доля подтвержденных смен от заказа по каждому периоду.' },
-    { suffix: 'revenue-rub', title: 'Динамика: выручка', description: 'Расчетная выручка по подтвержденным сменам в периоде.' },
+    { suffix: 'worked-shifts', title: 'Динамика: отработано', description: 'Успешные подтвержденные смены по периодам.' },
+    { suffix: 'sla', title: 'Динамика: SLA', description: 'Доля успешных подтвержденных смен от заказа по каждому периоду.' },
+    { suffix: 'revenue-rub', title: 'Динамика: выручка', description: 'Расчетная выручка по успешным подтвержденным сменам в периоде.' },
     { suffix: 'cancelled-shifts', title: 'Динамика: отмены', description: 'Количество отмененных или failed смен по периодам.' },
     { suffix: 'chart', title: 'Динамика: график', description: 'Полоса в таблице строится по тем же строкам динамики и масштабируется относительно максимума выполненных смен.' }
   ]
@@ -1164,15 +1217,15 @@ defineMetricSet({
   metrics: [
     { id: 'sales-by-project.brands', title: 'Бренды', description: 'Показывает заказ, выполнение, SLA, выручку и связанные показатели в разрезе брендов клиентов.' },
     { suffix: 'ordered-shifts', title: 'Бренд: заказано', description: 'Плановый заказ по бренду.' },
-    { suffix: 'worked-shifts', title: 'Бренд: отработано', description: 'Подтвержденные смены по бренду.' },
-    { suffix: 'sla', title: 'Бренд: SLA', description: 'Доля подтвержденных смен от заказа по бренду.' },
-    { suffix: 'revenue-rub', title: 'Бренд: выручка', description: 'Расчетная выручка по подтвержденным сменам бренда.' },
-    { suffix: 'unique-workers', title: 'Бренд: уникальные исполнители', description: 'Количество исполнителей с подтвержденными сменами по бренду.' },
+    { suffix: 'worked-shifts', title: 'Бренд: отработано', description: 'Успешные подтвержденные смены по бренду.' },
+    { suffix: 'sla', title: 'Бренд: SLA', description: 'Доля успешных подтвержденных смен от заказа по бренду.' },
+    { suffix: 'revenue-rub', title: 'Бренд: выручка', description: 'Расчетная выручка по успешным подтвержденным сменам бренда.' },
+    { suffix: 'unique-workers', title: 'Бренд: уникальные исполнители', description: 'Количество исполнителей с успешными подтвержденными сменами по бренду.' },
     { suffix: 'workplaces-with-orders', title: 'Бренд: ТТ с заказами', description: 'Количество рабочих мест бренда с плановым заказом.' },
-    { suffix: 'workplaces-with-worked-shifts', title: 'Бренд: ТТ с выполнением', description: 'Количество рабочих мест бренда с подтвержденными сменами.' },
+    { suffix: 'workplaces-with-worked-shifts', title: 'Бренд: ТТ с выполнением', description: 'Количество рабочих мест бренда с успешными подтвержденными сменами.' },
     { suffix: 'cancelled-shifts', title: 'Бренд: отмены', description: 'Количество отмененных или failed смен по бренду.' },
-    { suffix: 'self-booking-percent', title: 'Бренд: самоброни', description: 'Доля самоброни среди подтвержденных смен бренда.' },
-    { suffix: 'avg-worker-rate-hour', title: 'Бренд: средняя ставка', description: 'Средняя часовая ставка исполнителя по подтвержденным сменам бренда.' }
+    { suffix: 'self-booking-percent', title: 'Бренд: самоброни', description: 'Доля самоброни среди успешных подтвержденных смен бренда.' },
+    { suffix: 'avg-worker-rate-hour', title: 'Бренд: средняя ставка', description: 'Средняя часовая ставка исполнителя по успешным подтвержденным сменам бренда.' }
   ]
 });
 
@@ -1191,7 +1244,7 @@ defineMetricSet({
   metrics: [
     { id: 'workplace-analysis.points', title: 'Анализ точек', description: 'Показывает рабочие места с заказом, SLA, стабильностью и дневной тепловой лентой.' },
     { suffix: 'ordered-shifts', title: 'Точка: заказано', description: 'Сумма планового заказа по рабочей точке.' },
-    { suffix: 'sla', title: 'Точка: SLA', description: 'Доля подтвержденных смен от заказа по рабочей точке.' },
+    { suffix: 'sla', title: 'Точка: SLA', description: 'Доля успешных подтвержденных смен от заказа по рабочей точке.' },
     { suffix: 'stability', title: 'Точка: стабильность', description: 'Доля дней диапазона, в которые по точке был плановый заказ.' },
     { suffix: 'active-days', title: 'Точка: активные дни', description: 'Количество дней с заказом по точке относительно длины выбранного диапазона.' },
     { suffix: 'avg-daily-order', title: 'Точка: средний дневной заказ', description: 'Средний плановый заказ на активный день рабочей точки.' },
@@ -1218,7 +1271,7 @@ defineMetricSet({
   sql: WORKER_CANCELLATIONS_SQL,
   metrics: [
     { id: 'worker-cancellations.workers', title: 'Отмены гигерами', description: 'Показывает исполнителей со сменами, отменами, поздними отменами и failed-сменами за выбранный период.' },
-    { suffix: 'confirmed-shifts', title: 'Исполнитель: выполнено', description: 'Количество подтвержденных смен исполнителя.' },
+    { suffix: 'confirmed-shifts', title: 'Исполнитель: выполнено', description: 'Количество успешных подтвержденных смен исполнителя; нулевые прогулы исключаются.' },
     { suffix: 'worker-cancellations', title: 'Исполнитель: отмены worker', description: 'Количество отмененных смен, где событие отмены пришло от исполнителя.' },
     { suffix: 'worker-cancellations24h', title: 'Исполнитель: отмены worker < 24ч', description: 'Количество отмен исполнителем в интервале менее 24 часов до планового старта смены.' },
     { suffix: 'post-start-cancellations', title: 'Исполнитель: отмены после старта', description: 'Количество отмен, где событие отмены произошло после планового старта смены.' },
@@ -1232,8 +1285,8 @@ defineMetricSet({
   metrics: [
     { id: 'workplace-point.summary', title: 'Детализация точки: основные показатели', description: 'Показывает заказ, выполнение, SLA, стабильность, уникальных исполнителей и слеты по выбранной рабочей точке.' },
     { suffix: 'ordered-shifts', title: 'Детализация точки: заказано', description: 'Сумма планового количества смен по выбранной рабочей точке.' },
-    { suffix: 'completed-shifts', title: 'Детализация точки: выполнено', description: 'Количество подтвержденных смен по выбранной рабочей точке.' },
-    { suffix: 'sla', title: 'Детализация точки: SLA', description: 'Доля подтвержденных смен от планового заказа по точке.' },
+    { suffix: 'completed-shifts', title: 'Детализация точки: выполнено', description: 'Количество успешных подтвержденных смен по выбранной рабочей точке; нулевые прогулы исключаются.' },
+    { suffix: 'sla', title: 'Детализация точки: SLA', description: 'Доля успешных подтвержденных смен от планового заказа по точке.' },
     { suffix: 'stability', title: 'Детализация точки: стабильность', description: 'Доля дней выбранного периода, в которые по точке был заказ.' },
     { suffix: 'unique-completed-workers', title: 'Детализация точки: уникальные завершали', description: 'Количество уникальных исполнителей, которые завершили смену на точке.' },
     { suffix: 'unique-booked-workers', title: 'Детализация точки: уникальные бронировали', description: 'Количество уникальных исполнителей, у которых была бронь смены на точке.' },
@@ -1258,7 +1311,7 @@ defineMetricSet({
   sql: WORKPLACE_POINT_DAILY_SQL,
   metrics: [
     { id: 'workplace-point.charts.calendar-ordered-shifts', title: 'Календарь точки: заказ', description: 'Дневной плановый заказ по выбранной точке.' },
-    { id: 'workplace-point.charts.calendar-sla', title: 'Календарь точки: SLA', description: 'Дневная доля подтвержденных смен от заказа по выбранной точке.' },
+    { id: 'workplace-point.charts.calendar-sla', title: 'Календарь точки: SLA', description: 'Дневная доля успешных подтвержденных смен от заказа по выбранной точке.' },
     { id: 'workplace-point.charts.calendar-dropoffs-24h', title: 'Календарь точки: слеты < 24ч', description: 'Дневное количество исполнительских слетов менее чем за 24 часа до старта.' },
     { id: 'workplace-point.charts.calendar-order-lead-avg', title: 'Календарь точки: среднее размещение', description: 'Среднее время между созданием заказа и плановым стартом смены за день.' },
     { id: 'workplace-point.charts.calendar-order-lead-min', title: 'Календарь точки: минимальное размещение', description: 'Минимальное время между созданием заказа и плановым стартом смены за день.' },
@@ -1278,7 +1331,7 @@ defineMetricSet({
     { suffix: 'app-active-users', title: 'Город: входили в приложение', description: 'Количество пользователей базы, входивших в приложение в выбранном периоде.' },
     { suffix: 'app-30d-active-users', title: 'Город: активные 30 дней', description: 'Количество пользователей базы, входивших в приложение за 30-дневное окно.' },
     { suffix: 'booked-users', title: 'Город: откликались', description: 'Количество пользователей, которые бронировали смены по заказам выбранного города.' },
-    { suffix: 'completed-users', title: 'Город: завершали', description: 'Количество пользователей, которые завершили смены по заказам выбранного города.' },
+    { suffix: 'completed-users', title: 'Город: завершали', description: 'Количество пользователей с успешными подтвержденными сменами по заказам выбранного города.' },
     { suffix: 'avg-daily-30d-active-users-per-request', title: 'Город: 30д активные / заявка', description: 'Среднее дневное отношение активной 30-дневной базы к количеству активных заявок.' }
   ]
 });

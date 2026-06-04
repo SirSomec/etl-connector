@@ -44,7 +44,10 @@ WITH shift_facts AS (
     j.salary_per_job AS salary_per_job,
     j.payment_per_hour AS payment_per_hour,
     j.payment_per_job AS payment_per_job,
-    j.hours AS hours
+    j.hours AS hours,
+    j.payment AS payment,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact
   FROM mg_jobs AS j
   WHERE j._id != ''
     AND j.deleted = 0
@@ -78,6 +81,10 @@ shift_enriched AS (
     sf.worker AS worker,
     sf.cancellation_reason AS cancellation_reason,
     sf.salary_per_hour AS salary_per_hour,
+    sf.hours AS hours,
+    sf.payment AS payment,
+    sf.start_fact AS start_fact,
+    sf.finish_fact AS finish_fact,
     coalesce(nullIf(sf.client, ''), o.client) AS client,
     coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
     ifNull(sb.is_self_booked, 0) AS is_self_booked,
@@ -85,7 +92,24 @@ shift_enriched AS (
     ifNull(ct.comission, 0) AS commission_percent,
     if(ifNull(sf.salary_per_job, 0) > 0, ifNull(sf.salary_per_job, 0), ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0)) AS worker_shift_amount,
     if(ifNull(sf.payment_per_job, 0) > 0, ifNull(sf.payment_per_job, 0), ifNull(sf.payment_per_hour, 0) * ifNull(sf.hours, 0)) AS customer_shift_amount,
-    ifNull(s.surcharge_amount, 0) AS surcharge_amount
+    ifNull(s.surcharge_amount, 0) AS surcharge_amount,
+    if(
+      ifNull(sf.status, '') = 'confirmed'
+      AND (
+        ifNull(sf.hours, 0) > 0
+        OR ifNull(sf.payment, 0) > 0
+        OR ifNull(sf.salary_per_job, 0) > 0
+        OR ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0) > 0
+        OR (
+          sf.start_fact IS NOT NULL
+          AND sf.finish_fact IS NOT NULL
+          AND sf.finish_fact > sf.start_fact
+          AND dateDiff('minute', sf.start_fact, sf.finish_fact) > 0
+        )
+      ),
+      1,
+      0
+    ) AS is_successful_confirmed_shift
   FROM shift_facts AS sf
   LEFT JOIN mg_orders AS o ON sf.source = o._id
   LEFT JOIN mg_workplaces AS w ON coalesce(nullIf(sf.workplace, ''), o.workplace) = w._id
@@ -95,10 +119,12 @@ shift_enriched AS (
 )
 ```
 
-Выручка считается только по `status = 'confirmed'`:
+Успешная `confirmed`-смена должна иметь ненулевую длительность, начисление/выплату или положительный фактический интервал. `confirmed`-смена с длительностью `0:00` и нулевым начислением/выплатой считается прогулом и не участвует в факте, SLA и выручке.
+
+Выручка считается только по `is_successful_confirmed_shift = 1`:
 
 ```sql
-if(status = 'confirmed',
+if(is_successful_confirmed_shift = 1,
   if(contract_type = 'saas',
     worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount,
     customer_shift_amount + surcharge_amount
@@ -127,13 +153,13 @@ FORMAT JSONEachRow
 ```sql
 WITH ... shift_enriched AS (...)
 SELECT
-  uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
   sum(<revenue_expression>) AS revenue_rub,
-  uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-  uniqExactIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
   countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
-  countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts,
-  avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0) AS avg_worker_rate_hour
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  avgIf(salary_per_hour, is_successful_confirmed_shift = 1 AND salary_per_hour > 0) AS avg_worker_rate_hour
 FROM shift_enriched
 FORMAT JSONEachRow
 ```
@@ -161,7 +187,7 @@ FORMAT JSONEachRow
 WITH ... shift_enriched AS (...)
 SELECT
   <period_expression_for_shift_start> AS period,
-  uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
   sum(<revenue_expression>) AS revenue_rub,
   countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts
 FROM shift_enriched
@@ -195,13 +221,13 @@ FORMAT JSONEachRow
 WITH ... shift_enriched AS (...)
 SELECT
   ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
-  uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
   sum(<revenue_expression>) AS revenue_rub,
-  uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-  uniqExactIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
   countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
-  countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts,
-  avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0) AS avg_worker_rate_hour
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  avgIf(salary_per_hour, is_successful_confirmed_shift = 1 AND salary_per_hour > 0) AS avg_worker_rate_hour
 FROM shift_enriched
 LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
 GROUP BY brand
@@ -245,13 +271,13 @@ FORMAT JSONEachRow
 ## Метрики
 
 - `orderedShifts`: сумма `mg_orders.amount`; плановое количество исполнителей в заказах.
-- `workedShifts`: `uniqExactIf(job, status = 'confirmed')`; факт выполненных смен.
+- `workedShifts`: `uniqExactIf(job, is_successful_confirmed_shift = 1)`; факт успешно выполненных смен без прогулов с `0:00` и нулевым начислением/выплатой.
 - `slaPercent`: `workedShifts / orderedShifts * 100`; показывает покрытие планового спроса фактом.
 - `revenueRub`: сумма выражения выручки; для `saas` берется сумма исполнителя с комиссией подрядчика, для остальных контрактов клиентская стоимость, в обоих случаях прибавляются surcharge.
-- `uniqueWorkers`: уникальные исполнители подтвержденных смен.
+- `uniqueWorkers`: уникальные исполнители успешных подтвержденных смен.
 - `workplacesWithOrders`: уникальные точки в заказах.
-- `workplacesWithWorkedShifts`: уникальные точки с подтвержденными сменами.
+- `workplacesWithWorkedShifts`: уникальные точки с успешными подтвержденными сменами.
 - `cancelledShifts`: смены с непустой причиной отмены или `status = 'failed'`.
 - `selfBookingPercent`: `self_booked_confirmed_shifts / workedShifts * 100`; доля выполненных смен, где в истории было событие `booked` от `initiator = 'worker'`.
-- `avgWorkerRateHour`: средний `salary_per_hour` по подтвержденным сменам с положительной ставкой.
+- `avgWorkerRateHour`: средний `salary_per_hour` по успешным подтвержденным сменам с положительной ставкой.
 - `statusRows.shifts`: количество смен по каждому статусу в `mg_jobs`.

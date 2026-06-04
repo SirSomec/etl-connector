@@ -762,6 +762,73 @@ test('loadWorkplacePointDayDetails keeps completed shifts without factual interv
   ]);
 });
 
+test('loadWorkplacePointDayDetails treats zero-duration zero-payment confirmed shifts as absences', async () => {
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      if (operation === 'workplace point day orders') {
+        return [
+          {
+            order_id: 'order-absence',
+            profession: 'picker',
+            order_start_local: '2026-06-04 10:00:00',
+            planned_hours: 8
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day jobs') {
+        return [
+          {
+            order_id: 'order-absence',
+            job_id: 'job-absence',
+            status: 'confirmed',
+            worker_id: 'worker-1',
+            actual_hours: 0,
+            is_factual: 0,
+            actual_time_local: ''
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day workers') {
+        return [{ worker_id: 'worker-1', worker_full_name: 'Worker Name', worker_phone: '+79990000000' }];
+      }
+
+      if (operation === 'workplace point day payments') {
+        return [{ job_id: 'job-absence', payment_amount: 0 }];
+      }
+
+      return [];
+    }
+  };
+
+  const details = await loadWorkplacePointDayDetails(
+    client,
+    {
+      workplaceId: 'wp1',
+      date: '2026-06-04',
+      jobStatus: ['confirmed']
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.deepEqual(details.rows[0], {
+    orderId: 'order-absence',
+    jobId: '',
+    profession: 'picker',
+    orderStartLocal: '2026-06-04 10:00:00',
+    plannedHours: 8,
+    workerFullName: '',
+    workerPhone: '',
+    confirmedStatus: '',
+    actualHours: null,
+    actualTimeLocal: '',
+    paymentAmount: 0,
+    cancelledShifts: 0,
+    lastCancelledAtLocal: ''
+  });
+});
+
 test('mergeWorkplacePointDayDetails keeps legacy row mapping', () => {
   const detailInput = normalizeWorkplacePointDayDetailsInput(
     { workplaceId: 'wp1', date: '2026-06-02' },

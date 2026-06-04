@@ -179,7 +179,7 @@ const SQL_METRIC_INFO = {
   )
 SELECT
   sum(filtered_orders.amount) AS ordered_shifts,
-  countIf(filtered_jobs.status = 'confirmed') AS worked_shifts
+  countIf(filtered_jobs.is_successful_confirmed_shift = 1) AS worked_shifts
 FROM filtered_orders
 LEFT JOIN filtered_jobs ON filtered_jobs.source = filtered_orders._id`
   },
@@ -244,8 +244,8 @@ ORDER BY ordered_shifts DESC`
     description: 'Показывает заказ, выполнение, SLA, уникальных исполнителей и слеты по выбранной рабочей точке.',
     sql: `SELECT
   sum(o.amount) AS ordered_shifts,
-  countIf(j.status = 'confirmed') AS completed_shifts,
-  uniqExactIf(j.worker, j.status = 'confirmed') AS unique_completed_workers
+  countIf(j.is_successful_confirmed_shift = 1) AS completed_shifts,
+  uniqExactIf(j.worker, j.is_successful_confirmed_shift = 1) AS unique_completed_workers
 FROM mg_orders AS o
 LEFT JOIN mg_jobs AS j ON j.source = o._id
 WHERE o.workplace = {workplaceId:String}
@@ -332,7 +332,7 @@ cancellation_events AS (
 )
 SELECT
   worker,
-  uniqExactIf(job, status = 'confirmed') AS confirmed_shifts,
+  uniqExactIf(job, is_successful_confirmed_shift = 1) AS confirmed_shifts,
   uniqExactIf(job, status = 'cancelled') AS worker_cancellations
 FROM shift_facts
 GROUP BY worker`

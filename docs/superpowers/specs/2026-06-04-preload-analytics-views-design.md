@@ -152,7 +152,9 @@ Runtime-файлы проекта уже хранятся в `data/` и прим
 Для точного сохранения текущей семантики `uniqExact` и `countDistinct` по произвольным диапазонам одной дневной суммы недостаточно: сумма дневных уникальных исполнителей или точек может переучитывать одинаковые id в разные дни. Поэтому первая итерация также хранит тонкие fact-таблицы:
 
 - `sales_by_project_order_facts` - `period_date`, `brand`, `order_id`, `workplace_id`, `ordered_shifts`;
-- `sales_by_project_shift_facts` - `period_date`, `brand`, `job_id`, `worker_id`, `workplace_id`, `status`, `revenue_rub`, `cancelled_shifts`, `self_booked_confirmed_shift`, `worker_rate_hour`.
+- `sales_by_project_shift_facts` - `period_date`, `brand`, `job_id`, `worker_id`, `workplace_id`, `status`, `is_successful_confirmed_shift`, `revenue_rub`, `cancelled_shifts`, `self_booked_confirmed_shift`, `worker_rate_hour`.
+
+`worked_shifts`, `revenue_rub`, `unique_workers`, `workplaces_with_worked_shifts`, `self_booked_confirmed_shifts` и средняя ставка считаются только по `is_successful_confirmed_shift = 1`. Нулевые `confirmed`-смены с длительностью `0:00` и нулевым начислением/выплатой остаются в статусном breakdown, но не считаются успешно выполненными.
 
 Эти таблицы используются для точных `count(DISTINCT ...)` при чтении из SQLite. Таблица `sales_by_project_daily` остается быстрым rollup-слоем для сумм, тренда и статусных счетчиков.
 

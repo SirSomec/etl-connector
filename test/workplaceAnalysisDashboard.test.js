@@ -449,8 +449,9 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls[1].query.includes('countDistinct(o.workplace)'), true);
   assert.equal(calls[3].query.includes('WITH top_workplaces'), true);
   assert.equal(calls[3].query.includes('INNER JOIN top_workplaces AS tw'), true);
-  assert.equal(calls[3].query.includes('mg_jobs AS completed_job'), true);
-  assert.equal(calls[3].query.includes("ifNull(completed_job.status, '') = 'confirmed'"), true);
+  assert.equal(calls[3].query.includes('FROM mg_jobs AS j'), true);
+  assert.equal(calls[3].query.includes('AS is_successful_confirmed_shift'), true);
+  assert.equal(calls[3].query.includes('completed_job.is_successful_confirmed_shift = 1'), true);
   assert.equal(calls[3].query.includes('sla_ordered_shifts'), true);
   assert.equal(calls[3].query.includes('sla_completed_shifts'), true);
   assert.deepEqual(dashboard.filterOptions.client, ['Бренд', 'Бренд 2']);

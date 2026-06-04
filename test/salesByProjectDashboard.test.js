@@ -193,7 +193,9 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.equal(calls.some((call) => call.query.includes('h.start >= {from_string:String}')), false);
   assert.ok(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0))")));
   assert.ok(calls.some((call) => call.query.includes('AS cancellation_reason')));
-  assert.ok(calls.some((call) => call.query.includes("uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts")));
+  assert.ok(calls.some((call) => call.query.includes('AS is_successful_confirmed_shift')));
+  assert.ok(calls.some((call) => call.query.includes("uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts")));
+  assert.equal(calls.some((call) => call.query.includes("uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts")), false);
   assert.ok(
     calls.some((call) =>
       call.query.includes("countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts")
@@ -201,7 +203,7 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   );
   assert.ok(
     calls.some((call) =>
-      call.query.includes("avgIf(salary_per_hour, status = 'confirmed' AND salary_per_hour > 0) AS avg_worker_rate_hour")
+      call.query.includes("avgIf(salary_per_hour, is_successful_confirmed_shift = 1 AND salary_per_hour > 0) AS avg_worker_rate_hour")
     )
   );
   assert.ok(calls.some((call) => call.query.includes('sf.salary_per_hour AS salary_per_hour')));

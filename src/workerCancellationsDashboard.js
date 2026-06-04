@@ -1,3 +1,5 @@
+const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100000;
@@ -12,7 +14,7 @@ const WORKER_CANCELLATIONS_SECTIONS = new Set(WORKER_CANCELLATIONS_SECTION_NAMES
 const WORKER_CANCELLATION_DETAIL_METRICS = Object.freeze({
   confirmedShifts: {
     label: 'Выполнено',
-    condition: "sf.status = 'confirmed'"
+    condition: 'sf.is_successful_confirmed_shift = 1'
   },
   workerCancellations: {
     label: 'Отмены worker',
@@ -425,7 +427,8 @@ function workerCancellationMetricsCtes() {
       j._id AS job,
       j.worker AS worker_id,
       j.start AS start,
-      ifNull(j.status, '') AS status
+      ifNull(j.status, '') AS status,
+      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
     WHERE j.start >= {from:DateTime}
       AND j.start < {to:DateTime}
@@ -460,7 +463,7 @@ function workerCancellationMetricsCtes() {
   worker_metrics AS (
     SELECT
       sf.worker_id AS worker_id,
-      uniqExactIf(sf.job, status = 'confirmed') AS confirmed_shifts,
+      uniqExactIf(sf.job, is_successful_confirmed_shift = 1) AS confirmed_shifts,
       uniqExactIf(
         sf.job,
         status = 'cancelled' AND ifNull(cf.is_worker_cancelled, 0) = 1
@@ -578,6 +581,7 @@ function workerCancellationDetailsQuery(metric) {
       j.worker AS worker_id,
       j.start AS start,
       ifNull(j.status, '') AS status,
+      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
       ifNull(j.client, '') AS client_id,
       ifNull(j.workplace, '') AS workplace_id
     FROM mg_jobs AS j

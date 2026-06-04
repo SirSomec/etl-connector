@@ -83,9 +83,10 @@ test('sales preload query builders use parameterized ClickHouse ranges', () => {
   assert.equal(queries.shiftFacts.includes('mg_transactions'), true);
   assert.equal(queries.shiftFacts.includes('INNER JOIN shift_facts AS sf'), true);
   assert.equal(queries.shiftFacts.includes("contract_type = 'saas'"), true);
+  assert.equal(queries.shiftFacts.includes('AS is_successful_confirmed_shift'), true);
   assert.equal(queries.shiftFacts.includes("if(ifNull(cancellation_reason, '') != '' OR status = 'failed', 1, 0) AS cancelled_shifts"), true);
-  assert.equal(queries.shiftFacts.includes("if(status = 'confirmed' AND is_self_booked = 1, 1, 0) AS self_booked_confirmed_shift"), true);
-  assert.equal(queries.shiftFacts.includes("if(status = 'confirmed' AND salary_per_hour > 0, salary_per_hour, 0) AS worker_rate_hour"), true);
+  assert.equal(queries.shiftFacts.includes("if(is_successful_confirmed_shift = 1 AND is_self_booked = 1, 1, 0) AS self_booked_confirmed_shift"), true);
+  assert.equal(queries.shiftFacts.includes("if(is_successful_confirmed_shift = 1 AND salary_per_hour > 0, salary_per_hour, 0) AS worker_rate_hour"), true);
   assert.equal(queries.shiftFacts.includes('FORMAT JSONEachRow'), true);
 });
 
@@ -128,6 +129,88 @@ test('refreshSalesByProjectPreload loads ClickHouse rows and writes sqlite range
     assert.equal(summary.shiftSummaryRows[0].worked_shifts, 1);
     assert.equal(summary.shiftSummaryRows[0].unique_workers, 1);
     assert.equal(summary.shiftSummaryRows[0].cancelled_shifts, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test('sales preload excludes zero-duration zero-payment confirmed shifts from worked metrics', async () => {
+  const store = createPreloadStore({ filePath: await tempDbPath() });
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      if (operation === 'preload sales by project order facts') {
+        return [
+          {
+            period_date: '2026-05-01',
+            brand: 'Brand A',
+            order_id: 'o1',
+            workplace_id: 'w1',
+            ordered_shifts: 2
+          }
+        ];
+      }
+
+      if (operation === 'preload sales by project shift facts') {
+        return [
+          {
+            period_date: '2026-05-01',
+            brand: 'Brand A',
+            job_id: 'worked',
+            worker_id: 'worker-1',
+            workplace_id: 'w1',
+            status: 'confirmed',
+            revenue_rub: 1000,
+            cancelled_shifts: 0,
+            self_booked_confirmed_shift: 1,
+            worker_rate_hour: 300,
+            is_successful_confirmed_shift: 1
+          },
+          {
+            period_date: '2026-05-01',
+            brand: 'Brand A',
+            job_id: 'absence',
+            worker_id: 'worker-2',
+            workplace_id: 'w1',
+            status: 'confirmed',
+            revenue_rub: 0,
+            cancelled_shifts: 0,
+            self_booked_confirmed_shift: 0,
+            worker_rate_hour: 0,
+            is_successful_confirmed_shift: 0
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  try {
+    await refreshSalesByProjectPreload({
+      client,
+      store,
+      fromDate: '2026-05-01',
+      toDate: '2026-05-02'
+    });
+
+    const summary = store.readSalesByProjectSectionRows({
+      section: 'summary',
+      period: 'day',
+      fromDate: '2026-05-01',
+      toDate: '2026-05-02'
+    });
+    const statuses = store.readSalesByProjectSectionRows({
+      section: 'statuses',
+      period: 'day',
+      fromDate: '2026-05-01',
+      toDate: '2026-05-02'
+    });
+
+    assert.equal(summary.shiftSummaryRows[0].worked_shifts, 1);
+    assert.equal(summary.shiftSummaryRows[0].revenue_rub, 1000);
+    assert.equal(summary.shiftSummaryRows[0].unique_workers, 1);
+    assert.equal(statuses.statusRows[0].status, 'confirmed');
+    assert.equal(statuses.statusRows[0].shifts, 2);
   } finally {
     store.close();
   }

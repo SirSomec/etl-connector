@@ -728,12 +728,12 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
     client.queryJSONEachRow(
       `${shiftFactsCte()}
       SELECT
-        countIf(status = 'confirmed') AS worked_shifts,
+        countIf(is_successful_confirmed_shift = 1) AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
-        countDistinctIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-        countDistinctIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+        countDistinctIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+        countDistinctIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
         countIf(status = 'cancelled') AS cancelled_shifts,
-        countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts
+        countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts
       FROM shift_enriched
       FORMAT JSONEachRow`,
       params,
@@ -755,7 +755,7 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       `${shiftFactsCte()}
       SELECT
         ${periodShifts} AS period,
-        countIf(status = 'confirmed') AS worked_shifts,
+        countIf(is_successful_confirmed_shift = 1) AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
         countIf(status = 'cancelled') AS cancelled_shifts
       FROM shift_enriched
@@ -785,12 +785,12 @@ async function loadSalesByProjectDashboard(client, input = {}, now = new Date())
       `${shiftFactsCte()}
       SELECT
         ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
-        countIf(status = 'confirmed') AS worked_shifts,
+        countIf(is_successful_confirmed_shift = 1) AS worked_shifts,
         sum(${revenue}) AS revenue_rub,
-        countDistinctIf(worker, status = 'confirmed' AND worker != '') AS unique_workers,
-        countDistinctIf(workplace, status = 'confirmed' AND workplace != '') AS workplaces_with_worked_shifts,
+        countDistinctIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+        countDistinctIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
         countIf(status = 'cancelled') AS cancelled_shifts,
-        countIf(status = 'confirmed' AND is_self_booked = 1) AS self_booked_confirmed_shifts
+        countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts
       FROM shift_enriched
       LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
       GROUP BY brand

@@ -20,7 +20,24 @@ WITH shift_facts AS (
     j._id AS job,
     j.worker AS worker_id,
     j.start AS start,
-    ifNull(j.status, '') AS status
+    ifNull(j.status, '') AS status,
+    if(
+      ifNull(j.status, '') = 'confirmed'
+      AND (
+        ifNull(j.hours, 0) > 0
+        OR ifNull(j.payment, 0) > 0
+        OR ifNull(j.salary_per_job, 0) > 0
+        OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+        OR (
+          j.start_fact IS NOT NULL
+          AND j.finish_fact IS NOT NULL
+          AND j.finish_fact > j.start_fact
+          AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+        )
+      ),
+      1,
+      0
+    ) AS is_successful_confirmed_shift
   FROM mg_jobs AS j
   WHERE j.start >= {from:DateTime}
     AND j.start < {to:DateTime}
@@ -55,7 +72,7 @@ cancellation_flags AS (
 worker_metrics AS (
   SELECT
     sf.worker_id AS worker_id,
-    uniqExactIf(sf.job, status = 'confirmed') AS confirmed_shifts,
+    uniqExactIf(sf.job, is_successful_confirmed_shift = 1) AS confirmed_shifts,
     uniqExactIf(sf.job, status = 'cancelled' AND ifNull(cf.is_worker_cancelled, 0) = 1) AS worker_cancellations,
     uniqExactIf(sf.job, status = 'cancelled' AND ifNull(cf.is_worker_cancelled_24h, 0) = 1) AS worker_cancellations_24h,
     uniqExactIf(sf.job, status = 'cancelled' AND ifNull(cf.is_post_start_cancelled, 0) = 1) AS post_start_cancellations,
@@ -151,7 +168,7 @@ FORMAT JSONEachRow
 Для клика по метрике используется `{worker_id:String}` и `{limit:UInt64}`. Условие в `WHERE` зависит от выбранной метрики:
 
 ```sql
-confirmedShifts: sf.status = 'confirmed'
+confirmedShifts: sf.is_successful_confirmed_shift = 1
 workerCancellations: sf.status = 'cancelled' AND ifNull(cf.is_worker_cancelled, 0) = 1
 workerCancellations24h: sf.status = 'cancelled' AND ifNull(cf.is_worker_cancelled_24h, 0) = 1
 postStartCancellations: sf.status = 'cancelled' AND ifNull(cf.is_post_start_cancelled, 0) = 1
@@ -167,6 +184,23 @@ WITH shift_facts AS (
     j.worker AS worker_id,
     j.start AS start,
     ifNull(j.status, '') AS status,
+    if(
+      ifNull(j.status, '') = 'confirmed'
+      AND (
+        ifNull(j.hours, 0) > 0
+        OR ifNull(j.payment, 0) > 0
+        OR ifNull(j.salary_per_job, 0) > 0
+        OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+        OR (
+          j.start_fact IS NOT NULL
+          AND j.finish_fact IS NOT NULL
+          AND j.finish_fact > j.start_fact
+          AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+        )
+      ),
+      1,
+      0
+    ) AS is_successful_confirmed_shift,
     ifNull(j.client, '') AS client_id,
     ifNull(j.workplace, '') AS workplace_id
   FROM mg_jobs AS j
@@ -250,7 +284,7 @@ FORMAT JSONEachRow
 
 ## Метрики
 
-- `confirmedShifts`: уникальные смены исполнителя с `mg_jobs.status = 'confirmed'`.
+- `confirmedShifts`: уникальные успешные `confirmed`-смены исполнителя; нулевые `confirmed` с длительностью `0:00` и нулевым начислением/выплатой исключаются как прогул.
 - `workerCancellations`: уникальные отмененные смены, где в истории есть событие `cancelled` с `initiator = 'worker'`.
 - `workerCancellations24h`: подмножество `workerCancellations`, где событие отмены исполнителем произошло от `start - 24 HOUR` до `start`.
 - `postStartCancellations`: отмененные смены, где событие `cancelled` произошло после планового старта смены. В текущем SQL инициатор не ограничивается исполнителем.

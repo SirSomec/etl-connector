@@ -195,7 +195,10 @@ function ensureColumn(db, tableName, columnName, definition) {
 
   if (!exists) {
     db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+    return true;
   }
+
+  return false;
 }
 
 function initializeSchema(db, now) {
@@ -267,6 +270,7 @@ CREATE TABLE IF NOT EXISTS sales_by_project_shift_facts (
   worker_id TEXT NOT NULL,
   workplace_id TEXT NOT NULL,
   status TEXT NOT NULL,
+  is_successful_confirmed_shift REAL NOT NULL DEFAULT 0,
   revenue_rub REAL NOT NULL DEFAULT 0,
   cancelled_shifts REAL NOT NULL DEFAULT 0,
   self_booked_confirmed_shift REAL NOT NULL DEFAULT 0,
@@ -294,6 +298,16 @@ CREATE INDEX IF NOT EXISTS idx_sales_shift_facts_status ON sales_by_project_shif
   ensureColumn(db, 'sales_by_project_daily', 'worked_shifts', 'REAL NOT NULL DEFAULT 0');
   ensureColumn(db, 'sales_by_project_daily', 'unique_workers', 'REAL NOT NULL DEFAULT 0');
   ensureColumn(db, 'sales_by_project_daily', 'workplaces_with_worked_shifts', 'REAL NOT NULL DEFAULT 0');
+  const addedSuccessfulConfirmedShiftColumn = ensureColumn(
+    db,
+    'sales_by_project_shift_facts',
+    'is_successful_confirmed_shift',
+    'REAL NOT NULL DEFAULT 0'
+  );
+
+  if (addedSuccessfulConfirmedShiftColumn) {
+    db.exec('DELETE FROM sales_by_project_coverage');
+  }
 
   const timestamp = toIsoString(now);
 
@@ -482,12 +496,13 @@ INSERT INTO sales_by_project_shift_facts (
   worker_id,
   workplace_id,
   status,
+  is_successful_confirmed_shift,
   revenue_rub,
   cancelled_shifts,
   self_booked_confirmed_shift,
   worker_rate_hour,
   refreshed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
     db.exec('BEGIN IMMEDIATE');
@@ -547,6 +562,9 @@ INSERT INTO sales_by_project_shift_facts (
           row.worker_id || '',
           row.workplace_id || '',
           row.status || '',
+          Object.prototype.hasOwnProperty.call(row, 'is_successful_confirmed_shift')
+            ? finiteNumber(row.is_successful_confirmed_shift)
+            : (row.status === 'confirmed' ? 1 : 0),
           finiteNumber(row.revenue_rub),
           finiteNumber(row.cancelled_shifts),
           finiteNumber(row.self_booked_confirmed_shift),
@@ -582,13 +600,13 @@ WHERE period_date >= ? AND period_date < ?
 `).all(fromDate, toDate)),
         shiftSummaryRows: normalizeRows(db.prepare(`
 SELECT
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND job_id != '' THEN job_id END) AS worked_shifts,
-  COALESCE(SUM(CASE WHEN status = 'confirmed' THEN revenue_rub ELSE 0 END), 0) AS revenue_rub,
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND worker_id != '' THEN worker_id END) AS unique_workers,
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND workplace_id != '' THEN workplace_id END) AS workplaces_with_worked_shifts,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND job_id != '' THEN job_id END) AS worked_shifts,
+  COALESCE(SUM(CASE WHEN is_successful_confirmed_shift = 1 THEN revenue_rub ELSE 0 END), 0) AS revenue_rub,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND worker_id != '' THEN worker_id END) AS unique_workers,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND workplace_id != '' THEN workplace_id END) AS workplaces_with_worked_shifts,
   COALESCE(SUM(cancelled_shifts), 0) AS cancelled_shifts,
-  COALESCE(SUM(CASE WHEN status = 'confirmed' THEN self_booked_confirmed_shift ELSE 0 END), 0) AS self_booked_confirmed_shifts,
-  COALESCE(AVG(CASE WHEN status = 'confirmed' AND worker_rate_hour > 0 THEN worker_rate_hour END), 0) AS avg_worker_rate_hour
+  COALESCE(SUM(CASE WHEN is_successful_confirmed_shift = 1 THEN self_booked_confirmed_shift ELSE 0 END), 0) AS self_booked_confirmed_shifts,
+  COALESCE(AVG(CASE WHEN is_successful_confirmed_shift = 1 AND worker_rate_hour > 0 THEN worker_rate_hour END), 0) AS avg_worker_rate_hour
 FROM sales_by_project_shift_facts
 WHERE period_date >= ? AND period_date < ?
 `).all(fromDate, toDate))
@@ -611,8 +629,8 @@ ORDER BY period
         shiftTrendRows: normalizeRows(db.prepare(`
 SELECT
   ${periodExpression} AS period,
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND job_id != '' THEN job_id END) AS worked_shifts,
-  COALESCE(SUM(CASE WHEN status = 'confirmed' THEN revenue_rub ELSE 0 END), 0) AS revenue_rub,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND job_id != '' THEN job_id END) AS worked_shifts,
+  COALESCE(SUM(CASE WHEN is_successful_confirmed_shift = 1 THEN revenue_rub ELSE 0 END), 0) AS revenue_rub,
   COALESCE(SUM(cancelled_shifts), 0) AS cancelled_shifts
 FROM sales_by_project_shift_facts
 WHERE period_date >= ? AND period_date < ?
@@ -637,13 +655,13 @@ ORDER BY ordered_shifts DESC
         brandShiftRows: normalizeRows(db.prepare(`
 SELECT
   brand,
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND job_id != '' THEN job_id END) AS worked_shifts,
-  COALESCE(SUM(CASE WHEN status = 'confirmed' THEN revenue_rub ELSE 0 END), 0) AS revenue_rub,
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND worker_id != '' THEN worker_id END) AS unique_workers,
-  COUNT(DISTINCT CASE WHEN status = 'confirmed' AND workplace_id != '' THEN workplace_id END) AS workplaces_with_worked_shifts,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND job_id != '' THEN job_id END) AS worked_shifts,
+  COALESCE(SUM(CASE WHEN is_successful_confirmed_shift = 1 THEN revenue_rub ELSE 0 END), 0) AS revenue_rub,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND worker_id != '' THEN worker_id END) AS unique_workers,
+  COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 AND workplace_id != '' THEN workplace_id END) AS workplaces_with_worked_shifts,
   COALESCE(SUM(cancelled_shifts), 0) AS cancelled_shifts,
-  COALESCE(SUM(CASE WHEN status = 'confirmed' THEN self_booked_confirmed_shift ELSE 0 END), 0) AS self_booked_confirmed_shifts,
-  COALESCE(AVG(CASE WHEN status = 'confirmed' AND worker_rate_hour > 0 THEN worker_rate_hour END), 0) AS avg_worker_rate_hour
+  COALESCE(SUM(CASE WHEN is_successful_confirmed_shift = 1 THEN self_booked_confirmed_shift ELSE 0 END), 0) AS self_booked_confirmed_shifts,
+  COALESCE(AVG(CASE WHEN is_successful_confirmed_shift = 1 AND worker_rate_hour > 0 THEN worker_rate_hour END), 0) AS avg_worker_rate_hour
 FROM sales_by_project_shift_facts
 WHERE period_date >= ? AND period_date < ?
 GROUP BY brand

@@ -411,6 +411,8 @@ test('loadWorkerCancellationsDashboardSection queries workers with safe params a
   assert.equal(workersCall.query.includes('INTERVAL 24 HOUR'), true);
   assert.equal(workersCall.query.includes("status = 'failed'"), true);
   assert.equal(workersCall.query.includes('LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job'), true);
+  assert.equal(workersCall.query.includes('AS is_successful_confirmed_shift'), true);
+  assert.equal(workersCall.query.includes('uniqExactIf(sf.job, is_successful_confirmed_shift = 1) AS confirmed_shifts'), true);
   assert.equal(workersCall.query.includes('LEFT JOIN worker_cancel_events AS worker_event'), false);
   assert.equal(workersCall.query.includes('LEFT JOIN cancel_events AS cancel_event'), false);
   assert.equal(workersCall.query.includes('LEFT JOIN mg_workers AS w'), true);

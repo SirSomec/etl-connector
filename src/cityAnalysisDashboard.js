@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const { writeFileAtomically } = require('./atomicFile');
+const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
@@ -827,11 +828,17 @@ function bookedUsersCte() {
 function completedUsersCte() {
   return `completed_users AS (
     SELECT DISTINCT worker.user AS user_id
-    FROM mg_jobs AS job
+    FROM (
+      SELECT
+        job.source AS source,
+        job.worker AS worker,
+        ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+      FROM mg_jobs AS job
+      WHERE ifNull(job.deleted, 0) = 0
+    ) AS job
     INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
-    WHERE ifNull(job.deleted, 0) = 0
-      AND ifNull(job.status, '') = 'confirmed'
+    WHERE job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''
   )`;
 }
@@ -1048,11 +1055,17 @@ function dynamicsQuery(whereSql) {
     SELECT
       fo.period AS period,
       uniqExact(worker.user) AS completed_users
-    FROM mg_jobs AS job
+    FROM (
+      SELECT
+        job.source AS source,
+        job.worker AS worker,
+        ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+      FROM mg_jobs AS job
+      WHERE ifNull(job.deleted, 0) = 0
+    ) AS job
     INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
-    WHERE ifNull(job.deleted, 0) = 0
-      AND ifNull(job.status, '') = 'confirmed'
+    WHERE job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''
     GROUP BY period
   )

@@ -747,7 +747,8 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   assert.equal(summaryCall.query.includes('located.is_booked_status'), true);
   assert.equal(summaryCall.query.includes('located.is_worked_status'), true);
   assert.equal(summaryCall.query.includes("ifNull(history.status, '') = 'booked'"), true);
-  assert.equal(summaryCall.query.includes("ifNull(job.status, '') = 'confirmed'"), true);
+  assert.equal(summaryCall.query.includes('AS is_successful_confirmed_shift'), true);
+  assert.equal(summaryCall.query.includes('is_successful_confirmed_shift = 1'), true);
   assert.equal(summaryCall.query.includes('uniqExactIf(located.user_id'), true);
 });
 

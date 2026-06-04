@@ -202,7 +202,7 @@ test('loadWorkplacePointDayDetails queries one selected day with safe parameters
   assert.equal(calls[0].query.includes('LEFT JOIN mg_jobs AS j'), true);
   assert.equal(calls[0].query.includes('mg_job_history'), true);
   assert.equal(calls[0].query.includes('mg_payments'), true);
-  assert.equal(calls[0].query.includes("j.status = 'confirmed'"), true);
+  assert.equal(calls[0].query.includes('is_successful_confirmed_shift'), true);
   assert.equal(calls[0].query.includes("j.status = 'cancelled'"), true);
   assert.equal(calls[0].query.includes("payment_status, '') IN ('done', 'bank_done')"), true);
 });

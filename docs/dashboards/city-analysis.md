@@ -208,11 +208,33 @@ booked_users AS (
 ),
 completed_users AS (
   SELECT DISTINCT worker.user AS user_id
-  FROM mg_jobs AS job
+  FROM (
+    SELECT
+      job.source AS source,
+      job.worker AS worker,
+      if(
+        ifNull(job.status, '') = 'confirmed'
+        AND (
+          ifNull(job.hours, 0) > 0
+          OR ifNull(job.payment, 0) > 0
+          OR ifNull(job.salary_per_job, 0) > 0
+          OR ifNull(job.salary_per_hour, 0) * ifNull(job.hours, 0) > 0
+          OR (
+            job.start_fact IS NOT NULL
+            AND job.finish_fact IS NOT NULL
+            AND job.finish_fact > job.start_fact
+            AND dateDiff('minute', job.start_fact, job.finish_fact) > 0
+          )
+        ),
+        1,
+        0
+      ) AS is_successful_confirmed_shift
+    FROM mg_jobs AS job
+    WHERE ifNull(job.deleted, 0) = 0
+  ) AS job
   INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON job.worker = worker._id
-  WHERE ifNull(job.deleted, 0) = 0
-    AND ifNull(job.status, '') = 'confirmed'
+  WHERE job.is_successful_confirmed_shift = 1
     AND ifNull(worker.user, '') != ''
 )
 ```
@@ -405,11 +427,33 @@ daily_completed AS (
   SELECT
     fo.period AS period,
     uniqExact(worker.user) AS completed_users
-  FROM mg_jobs AS job
+  FROM (
+    SELECT
+      job.source AS source,
+      job.worker AS worker,
+      if(
+        ifNull(job.status, '') = 'confirmed'
+        AND (
+          ifNull(job.hours, 0) > 0
+          OR ifNull(job.payment, 0) > 0
+          OR ifNull(job.salary_per_job, 0) > 0
+          OR ifNull(job.salary_per_hour, 0) * ifNull(job.hours, 0) > 0
+          OR (
+            job.start_fact IS NOT NULL
+            AND job.finish_fact IS NOT NULL
+            AND job.finish_fact > job.start_fact
+            AND dateDiff('minute', job.start_fact, job.finish_fact) > 0
+          )
+        ),
+        1,
+        0
+      ) AS is_successful_confirmed_shift
+    FROM mg_jobs AS job
+    WHERE ifNull(job.deleted, 0) = 0
+  ) AS job
   INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON job.worker = worker._id
-  WHERE ifNull(job.deleted, 0) = 0
-    AND ifNull(job.status, '') = 'confirmed'
+  WHERE job.is_successful_confirmed_shift = 1
     AND ifNull(worker.user, '') != ''
   GROUP BY period
 )
@@ -439,7 +483,7 @@ FORMAT JSONEachRow
 - `app30dActiveUsers`: такие же пользователи за последние 30 дней.
 - `app30dReadyStatusUsers`, `app30dBookedStatusUsers`, `app30dWorkedStatusUsers`: 30-дневная активная база по последнему статусу.
 - `bookedUsers`: уникальные пользователи, у которых в истории заказа выбранного города был `status = 'booked'`.
-- `completedUsers`: уникальные пользователи с подтвержденными сменами `mg_jobs.status = 'confirmed'`.
+- `completedUsers`: уникальные пользователи с успешными подтвержденными сменами; нулевые `confirmed` с длительностью `0:00` и нулевым начислением/выплатой исключаются как прогул.
 - `avgDaily30dActiveUsersPerRequest`: среднее по дням значение `active_users / active_requests`, дни без активных заявок исключаются.
 - `composition.sharePercent`: доля спроса строки в сумме спроса соответствующего блока.
 - `avgSalaryPerHour`: средняя положительная ставка `salary_per_hour` внутри корзины.

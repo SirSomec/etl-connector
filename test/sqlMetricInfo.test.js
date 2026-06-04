@@ -206,6 +206,7 @@ test('geo and cancellation metrics show the specialized SQL used for those value
   assert.match(heatmap.sql, /appmetrica_sessions/);
   assert.match(cancellations.sql, /is_worker_cancelled_24h/);
   assert.match(cancellations.sql, /INTERVAL 24 HOUR/);
+  assert.match(cancellations.sql, /is_successful_confirmed_shift/);
 });
 
 test('workplace attention metrics show 15km base and closing statuses SQL', () => {

@@ -724,7 +724,9 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
 
   assert.ok(attentionCall);
   assert.equal(attentionCall[2].param_clients, "['Brand']");
-  assert.equal(attentionCall[3].includes("ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'confirmed', 'delayed', 'waiting')"), true);
+  assert.equal(attentionCall[3].includes("ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')"), true);
+  assert.equal(attentionCall[3].includes("ifNull(j.status, '') = 'confirmed'"), true);
+  assert.equal(attentionCall[3].includes("dateDiff('minute', j.start_fact, j.finish_fact) > 0"), true);
 });
 
 test('GET /dashboards/workplace-analysis/point renders point detail page', async () => {

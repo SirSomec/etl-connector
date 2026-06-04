@@ -824,7 +824,7 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   assert.equal(summaryCall.query.includes('appmetrica_sessions'), true);
   assert.equal(summaryCall.query.includes("ifNull(worker.status, '') IN ('ready', 'booked', 'worked')"), true);
   assert.equal(summaryCall.query.includes("ifNull(history.status, '') = 'booked'"), true);
-  assert.equal(summaryCall.query.includes("ifNull(job.status, '') = 'confirmed'"), true);
+  assert.equal(summaryCall.query.includes('is_successful_confirmed_shift = 1'), true);
   assert.equal(summaryCall.query.includes('uniqExactIf(located.user_id'), true);
 });
 
@@ -1107,11 +1107,17 @@ function bookedUsersCte() {
 function completedUsersCte() {
   return `completed_users AS (
     SELECT DISTINCT worker.user AS user_id
-    FROM mg_jobs AS job
+    FROM (
+      SELECT
+        job.source AS source,
+        job.worker AS worker,
+        <successful_confirmed_shift_condition> AS is_successful_confirmed_shift
+      FROM mg_jobs AS job
+      WHERE ifNull(job.deleted, 0) = 0
+    ) AS job
     INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
-    WHERE ifNull(job.deleted, 0) = 0
-      AND ifNull(job.status, '') = 'confirmed'
+    WHERE job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''
   )`;
 }
@@ -1235,7 +1241,7 @@ function dynamicsQuery(whereSql) {
     INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
     WHERE ifNull(job.deleted, 0) = 0
-      AND ifNull(job.status, '') = 'confirmed'
+      AND job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''
     GROUP BY period
   )
@@ -2102,7 +2108,7 @@ Spec coverage:
 - Active base `ready/booked/worked`: Task 2 `locatedUsersCte` and summary query.
 - App activity via `appmetrica_sessions`: Task 2 `appActiveUsersCte`, dynamics query, and tests.
 - Responded users via `mg_job_history.status = 'booked'`: Task 2 `bookedUsersCte` and tests.
-- Completed users via `mg_jobs.status = 'confirmed'`: Task 2 `completedUsersCte` and tests.
+- Completed users via successful `mg_jobs.status = 'confirmed'`, excluding zero no-shows: Task 2 `completedUsersCte` and tests.
 - 30-day active users per request: Task 2 `daily30dRatioCte` and denominator tests.
 - Composition by brands, professions, rates: Task 2 composition queries, Task 3 render panels.
 - One-screen balance-centered UI: Task 3 `renderCityAnalysisDashboard`.

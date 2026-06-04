@@ -68,18 +68,20 @@
 Закрывающие статусы `mg_jobs.status`:
 
 ```text
-booked, going, inprogress, checkingin, checkingout, completed, confirmed, delayed, waiting
+booked, going, inprogress, checkingin, checkingout, completed, delayed, waiting
 ```
 
 `doccheck` не закрывает заказ, потому что такая смена может быть перехвачена исполнителем с подтвержденными документами.
 
 `completed` закрывает заказ, потому что это успешно завершенная смена.
 
+`confirmed` закрывает заказ только если смена не является нулевым прогулом: есть положительная длительность, начисление/выплата или положительный фактический интервал.
+
 Расчет:
 
 ```text
 ordered = sum(mg_orders.amount)
-covered = count(mg_jobs where status in closing statuses and deleted = 0)
+covered = count(mg_jobs where deleted = 0 and (status in closing statuses or successful confirmed))
 free = greatest(ordered - covered, 0)
 ```
 
@@ -214,16 +216,32 @@ covered_jobs AS (
   FROM mg_jobs AS j
   INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
   WHERE ifNull(j.deleted, 0) = 0
-    AND ifNull(j.status, '') IN (
-      'booked',
-      'going',
-      'inprogress',
-      'checkingin',
-      'checkingout',
-      'completed',
-      'confirmed',
-      'delayed',
-      'waiting'
+    AND (
+      ifNull(j.status, '') IN (
+        'booked',
+        'going',
+        'inprogress',
+        'checkingin',
+        'checkingout',
+        'completed',
+        'delayed',
+        'waiting'
+      )
+      OR (
+        ifNull(j.status, '') = 'confirmed'
+        AND (
+          ifNull(j.hours, 0) > 0
+          OR ifNull(j.payment, 0) > 0
+          OR ifNull(j.salary_per_job, 0) > 0
+          OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+          OR (
+            j.start_fact IS NOT NULL
+            AND j.finish_fact IS NOT NULL
+            AND j.finish_fact > j.start_fact
+            AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+          )
+        )
+      )
     )
   GROUP BY order_id
 ),
@@ -287,4 +305,3 @@ SELECT ...
 - убедиться, что таблица показывает топ-точки с незакрытым заказом;
 - проверить ссылку в детализацию точки;
 - проверить отсутствие телефонов, email, ФИО и других PII.
-

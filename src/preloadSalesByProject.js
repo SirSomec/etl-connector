@@ -1,3 +1,5 @@
+const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+
 function toDateTimeParam(dateOnly) {
   return `${dateOnly} 00:00:00`;
 }
@@ -37,7 +39,10 @@ FORMAT JSONEachRow`,
     j.salary_per_job AS salary_per_job,
     j.payment_per_hour AS payment_per_hour,
     j.payment_per_job AS payment_per_job,
-    j.hours AS hours
+    j.hours AS hours,
+    j.payment AS payment,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact
   FROM mg_jobs AS j
   WHERE ifNull(j._id, '') != ''
     AND j.deleted = 0
@@ -71,6 +76,10 @@ shift_enriched AS (
     sf.worker AS worker,
     sf.cancellation_reason AS cancellation_reason,
     sf.salary_per_hour AS salary_per_hour,
+    sf.hours AS hours,
+    sf.payment AS payment,
+    sf.start_fact AS start_fact,
+    sf.finish_fact AS finish_fact,
     coalesce(nullIf(sf.client, ''), o.client) AS client,
     coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
     ifNull(sb.is_self_booked, 0) AS is_self_booked,
@@ -78,7 +87,8 @@ shift_enriched AS (
     ifNull(ct.comission, 0) AS commission_percent,
     if(ifNull(sf.salary_per_job, 0) > 0, ifNull(sf.salary_per_job, 0), ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0)) AS worker_shift_amount,
     if(ifNull(sf.payment_per_job, 0) > 0, ifNull(sf.payment_per_job, 0), ifNull(sf.payment_per_hour, 0) * ifNull(sf.hours, 0)) AS customer_shift_amount,
-    ifNull(s.surcharge_amount, 0) AS surcharge_amount
+    ifNull(s.surcharge_amount, 0) AS surcharge_amount,
+    ${successfulConfirmedShiftFlagExpression('sf')} AS is_successful_confirmed_shift
   FROM shift_facts AS sf
   LEFT JOIN mg_orders AS o ON sf.source = o._id
   LEFT JOIN mg_workplaces AS w ON coalesce(nullIf(sf.workplace, ''), o.workplace) = w._id
@@ -93,7 +103,7 @@ SELECT
   ifNull(worker, '') AS worker_id,
   ifNull(workplace, '') AS workplace_id,
   status,
-  if(status = 'confirmed',
+  if(is_successful_confirmed_shift = 1,
     if(contract_type = 'saas',
       worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount,
       customer_shift_amount + surcharge_amount
@@ -101,8 +111,9 @@ SELECT
     0
   ) AS revenue_rub,
   if(ifNull(cancellation_reason, '') != '' OR status = 'failed', 1, 0) AS cancelled_shifts,
-  if(status = 'confirmed' AND is_self_booked = 1, 1, 0) AS self_booked_confirmed_shift,
-  if(status = 'confirmed' AND salary_per_hour > 0, salary_per_hour, 0) AS worker_rate_hour
+  is_successful_confirmed_shift,
+  if(is_successful_confirmed_shift = 1 AND is_self_booked = 1, 1, 0) AS self_booked_confirmed_shift,
+  if(is_successful_confirmed_shift = 1 AND salary_per_hour > 0, salary_per_hour, 0) AS worker_rate_hour
 FROM shift_enriched
 LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
 FORMAT JSONEachRow`
@@ -166,6 +177,14 @@ function createBrandAccumulator(periodDate, brand) {
   };
 }
 
+function isSuccessfulConfirmedFact(fact) {
+  if (Object.prototype.hasOwnProperty.call(fact, 'is_successful_confirmed_shift')) {
+    return numberValue(fact.is_successful_confirmed_shift) === 1;
+  }
+
+  return stringValue(fact.status) === 'confirmed';
+}
+
 function createStatusRow(periodDate, status) {
   return {
     period_date: periodDate,
@@ -220,7 +239,7 @@ function rollupDailyRows({ orderFacts, shiftFacts }) {
     statusRow.shifts += 1;
     accumulator.row.cancelled_shifts += numberValue(fact.cancelled_shifts);
 
-    if (status === 'confirmed') {
+    if (isSuccessfulConfirmedFact(fact)) {
       accumulator.row.worked_shifts += 1;
       accumulator.row.revenue_rub += numberValue(fact.revenue_rub);
       accumulator.row.self_booked_confirmed_shifts += numberValue(fact.self_booked_confirmed_shift);

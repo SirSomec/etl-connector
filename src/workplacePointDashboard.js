@@ -1,3 +1,5 @@
+const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const FILTER_OPTION_KEYS = ['profession', 'orderType', 'jobStatus'];
@@ -411,8 +413,17 @@ function isFactualDayJob(row) {
   return numberValue(row.is_factual) === 1;
 }
 
-function isCompletedDayJob(row) {
+function isCompletedDayJobCandidate(row) {
   return DAY_DETAIL_COMPLETED_JOB_STATUSES.has(textValue(row.status)) || isFactualDayJob(row);
+}
+
+function isCompletedDayJob(row, paymentRow = {}) {
+  return isCompletedDayJobCandidate(row)
+    && (
+      isFactualDayJob(row)
+      || numberValue(row.actual_hours) > 0
+      || numberValue(paymentRow.payment_amount) > 0
+    );
 }
 
 function latestTextValue(values) {
@@ -473,9 +484,11 @@ function mergeWorkplacePointDayDetailDatasets(detailInput, datasets) {
   for (const order of datasets.orderRows || []) {
     const orderId = textValue(order.order_id);
     const jobs = jobsByOrderId.get(orderId) || [];
-    const completedJobs = jobs.filter(isCompletedDayJob);
     const cancelledJobs = jobs.filter((job) => textValue(job.status) === 'cancelled');
     const cancelledShifts = cancelledJobs.length;
+    const completedJobs = jobs.filter((job) =>
+      isCompletedDayJob(job, paymentsByJobId.get(textValue(job.job_id)) || {})
+    );
 
     if (completedJobs.length > 0) {
       for (const job of completedJobs) {
@@ -673,6 +686,13 @@ function shiftFactsCte() {
       j.worker AS worker,
       j.status AS status,
       j.start AS start,
+      j.hours AS hours,
+      j.payment AS payment,
+      j.salary_per_hour AS salary_per_hour,
+      j.salary_per_job AS salary_per_job,
+      j.start_fact AS start_fact,
+      j.finish_fact AS finish_fact,
+      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
       ifNull(j.cancellation_reason, '') AS cancellation_reason,
       ifNull(j.failure_reason, '') AS failure_reason
     FROM mg_jobs AS j
@@ -728,8 +748,8 @@ function summaryQuery(whereSql) {
   ),
   shift_summary AS (
     SELECT
-      countIf(status = 'confirmed') AS completed_shifts,
-      uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_completed_workers,
+      countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
+      uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_completed_workers,
       uniqExactIf(
         sf.job_id,
         de.drop_at IS NOT NULL
@@ -769,7 +789,7 @@ function dailyQuery(whereSql) {
   shift_daily AS (
     SELECT
       toString(toDate(sf.start)) AS period,
-      countIf(sf.status = 'confirmed') AS completed_shifts,
+      countIf(sf.is_successful_confirmed_shift = 1) AS completed_shifts,
       uniqExactIf(
         sf.job_id,
         de.drop_at IS NOT NULL
@@ -1096,9 +1116,9 @@ async function loadWorkplacePointDayDetails(client, input = {}, now = new Date()
     jobParams,
     'workplace point day jobs'
   );
-  const completedJobs = jobRows.filter(isCompletedDayJob);
-  const completedJobIds = uniqueTextValues(completedJobs.map((row) => row.job_id));
-  const workerIds = uniqueTextValues(completedJobs.map((row) => row.worker_id));
+  const completedJobCandidates = jobRows.filter(isCompletedDayJobCandidate);
+  const completedJobIds = uniqueTextValues(completedJobCandidates.map((row) => row.job_id));
+  const workerIds = uniqueTextValues(completedJobCandidates.map((row) => row.worker_id));
   const cancelledJobIds = uniqueTextValues(
     jobRows
       .filter((row) => textValue(row.status) === 'cancelled')

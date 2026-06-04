@@ -115,6 +115,29 @@ shift_facts AS (
     j.worker AS worker,
     j.status AS status,
     j.start AS start,
+    j.hours AS hours,
+    j.payment AS payment,
+    j.salary_per_hour AS salary_per_hour,
+    j.salary_per_job AS salary_per_job,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact,
+    if(
+      ifNull(j.status, '') = 'confirmed'
+      AND (
+        ifNull(j.hours, 0) > 0
+        OR ifNull(j.payment, 0) > 0
+        OR ifNull(j.salary_per_job, 0) > 0
+        OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+        OR (
+          j.start_fact IS NOT NULL
+          AND j.finish_fact IS NOT NULL
+          AND j.finish_fact > j.start_fact
+          AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+        )
+      ),
+      1,
+      0
+    ) AS is_successful_confirmed_shift,
     ifNull(j.cancellation_reason, '') AS cancellation_reason,
     ifNull(j.failure_reason, '') AS failure_reason
   FROM mg_jobs AS j
@@ -163,8 +186,8 @@ order_summary AS (
 ),
 shift_summary AS (
   SELECT
-    countIf(status = 'confirmed') AS completed_shifts,
-    uniqExactIf(worker, status = 'confirmed' AND worker != '') AS unique_completed_workers,
+    countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
+    uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_completed_workers,
     uniqExactIf(
       sf.job_id,
       de.drop_at IS NOT NULL
@@ -204,7 +227,7 @@ order_daily AS (
 shift_daily AS (
   SELECT
     toString(toDate(sf.start)) AS period,
-    countIf(sf.status = 'confirmed') AS completed_shifts,
+    countIf(sf.is_successful_confirmed_shift = 1) AS completed_shifts,
     uniqExactIf(
       sf.job_id,
       de.drop_at IS NOT NULL
@@ -287,7 +310,7 @@ FORMAT JSONEachRow
 
 ## SQL: детализация дня
 
-Детализация использует тот же `whereSql`, но даты заменяются на выбранный день. Фактическими считаются статусы `confirmed` и `completed` с непустыми `start_fact`/`finish_fact`.
+Детализация использует тот же `whereSql`, но даты заменяются на выбранный день. Кандидатами факта считаются статусы `confirmed` и `completed` либо смены с непустыми `start_fact`/`finish_fact`. В итоговую выполненную строку попадают только кандидаты с положительным фактическим интервалом, положительными `actual_hours` или успешной выплатой; нулевая `confirmed`-смена без выплаты остается свободной строкой заказа.
 
 ```sql
 WITH filtered_orders AS (
@@ -314,16 +337,29 @@ confirmed_jobs AS (
   LEFT JOIN mg_jobs AS j ON j.source = fo.order_id
     AND ifNull(j.deleted, 0) = 0
   WHERE ifNull(j.status, '') IN ('confirmed', 'completed')
-    AND j.start_fact IS NOT NULL
-    AND j.finish_fact IS NOT NULL
-    AND j.finish_fact > j.start_fact
-    AND dateDiff('second', j.start_fact, j.finish_fact) != 0
+    OR (
+      j.start_fact IS NOT NULL
+      AND j.finish_fact IS NOT NULL
+      AND j.finish_fact > j.start_fact
+      AND dateDiff('second', j.start_fact, j.finish_fact) != 0
+    )
 ),
 job_rollup AS (
   SELECT
     fo.order_id AS order_id,
     countIf(j.status = 'cancelled') AS cancelled_shifts,
-    countIf(ifNull(j.status, '') IN ('confirmed', 'completed') AND j.start_fact IS NOT NULL AND j.finish_fact IS NOT NULL AND j.finish_fact > j.start_fact AND dateDiff('second', j.start_fact, j.finish_fact) != 0) AS confirmed_fact_shifts
+    countIf(
+      ifNull(j.status, '') IN ('confirmed', 'completed')
+      AND (
+        ifNull(j.hours, 0) > 0
+        OR (
+          j.start_fact IS NOT NULL
+          AND j.finish_fact IS NOT NULL
+          AND j.finish_fact > j.start_fact
+          AND dateDiff('second', j.start_fact, j.finish_fact) != 0
+        )
+      )
+    ) AS confirmed_fact_shifts
   FROM filtered_orders AS fo
   LEFT JOIN mg_jobs AS j ON j.source = fo.order_id
     AND ifNull(j.deleted, 0) = 0
@@ -416,15 +452,15 @@ if(
 ## Метрики
 
 - `orderedShifts`: сумма `amount` заказов точки.
-- `completedShifts`: число смен со статусом `confirmed`.
+- `completedShifts`: число успешных `confirmed`-смен; `confirmed` с длительностью `0:00` и нулевым начислением/выплатой исключаются как прогул.
 - `slaPercent`: `completedShifts / orderedShifts * 100`.
 - `stabilityPercent`: `activeDays / rangeDays * 100`.
 - `activeDays`: число дней с заказом.
-- `uniqueCompletedWorkers`: уникальные исполнители подтвержденных смен.
+- `uniqueCompletedWorkers`: уникальные исполнители успешных подтвержденных смен.
 - `uniqueBookedWorkers`: уникальные исполнители, у которых в истории был `status = 'booked'`.
 - `dropoffs24h`: уникальные смены с отменой/провалом от исполнителя в интервале `[start - 24h; start]`.
 - `orderLeadAvgMinutes`, `orderLeadMinMinutes`: среднее и минимальное время от создания заказа до старта.
 - `professionRows.sharePercent`: доля спроса специальности от всего спроса точки.
 - `radiusWorkers`: исполнители со статусом `ready`, `worked`, `booked` в радиусах 5/10/15/20 км.
 - `radiusActiveSessionWorkers`: такие же исполнители, но только с AppMetrica-сессией за последние 30 дней.
-- `paymentAmount` в детализации дня: сумма успешных платежей `payment_status IN ('done', 'bank_done')` по фактической смене.
+- `paymentAmount` в детализации дня: сумма успешных платежей `payment_status IN ('done', 'bank_done')` по фактической смене; платеж также помогает отличить выполненную смену от нулевого прогула.

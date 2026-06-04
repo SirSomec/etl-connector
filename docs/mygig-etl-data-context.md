@@ -173,7 +173,7 @@ ObjectId в ClickHouse хранится как строка.
 - `checkingout`, `going`, `inprogress`, `checkingin` - промежуточные статусы выполнения;
 - редкие: `doccheck`, `toolate`, `delayed`, `revoked`.
 
-Для факта выполненной смены в большинстве отчетов использовать `status = 'confirmed'`. Для операционной воронки использовать также `booked`, `going`, `inprogress`, `checkingout`, `completed`, `cancelled`, `failed`.
+Для факта успешно выполненной смены в большинстве отчетов использовать не только `status = 'confirmed'`, но и проверку, что смена не является прогулом. `confirmed`-смена с длительностью `0:00` и нулевым начислением/выплатой считается прогулом и не участвует в SLA, выручке, выполненных сменах и метриках успешного выполнения. Практическое условие: `status = 'confirmed'` и есть хотя бы один положительный признак факта - `hours`, `payment`, `salary_per_job`, `salary_per_hour * hours` или интервал `start_fact < finish_fact` с `dateDiff('minute', start_fact, finish_fact) > 0`. Для операционной воронки использовать также `booked`, `going`, `inprogress`, `checkingout`, `completed`, `cancelled`, `failed`.
 
 Расшифровка статусов смен из продуктового справочника:
 
@@ -194,7 +194,7 @@ ObjectId в ClickHouse хранится как строка.
 | `cancelled` | Смена отменена. | Отменена | Отменена |
 | `expired` | Смена просрочена. | Просрочена | Просрочена |
 
-Для операционного расчета незакрытого заказа считать закрывающими заявку статусы `booked`, `going`, `inprogress`, `checkingin`, `checkingout`, `completed`, `confirmed`, `delayed`, `waiting`. Заказ без смен в этих статусах считается незабронированным для ручного закрытия. `completed` включается, потому что это успешно завершенная смена и выполненный заказ. `doccheck` не включать в закрывающие статусы, потому что такая смена может быть перехвачена исполнителем с подтвержденными документами.
+Для операционного расчета незакрытого заказа считать закрывающими заявку статусы `booked`, `going`, `inprogress`, `checkingin`, `checkingout`, `completed`, `delayed`, `waiting`, а также только успешные `confirmed`-смены без признака прогула. Заказ без смен в этих статусах считается незабронированным для ручного закрытия. `completed` включается, потому что это завершенная смена и выполненный заказ. `doccheck` не включать в закрывающие статусы, потому что такая смена может быть перехвачена исполнителем с подтвержденными документами.
 
 ### История смен `mg_job_history.status`
 
@@ -270,7 +270,7 @@ ObjectId в ClickHouse хранится как строка.
 
 - созданные заказы и запрошенное количество исполнителей (`mg_orders.amount`);
 - созданные смены (`mg_jobs`);
-- выполненные смены (`mg_jobs.status = 'confirmed'`);
+- выполненные смены: успешные `confirmed` из `mg_jobs`, без смен с длительностью `0:00` и нулевым начислением/выплатой;
 - отмены и провалы (`cancelled`, `failed`);
 - fill rate: выполненные или назначенные смены относительно планового спроса;
 - динамика по клиентам, рабочим местам, городам, специальностям.
@@ -322,7 +322,21 @@ SELECT
   w.address__city AS city,
   p.caption AS profession,
   count() AS jobs,
-  countIf(j.status = 'confirmed') AS confirmed_jobs
+  countIf(
+    ifNull(j.status, '') = 'confirmed'
+    AND (
+      ifNull(j.hours, 0) > 0
+      OR ifNull(j.payment, 0) > 0
+      OR ifNull(j.salary_per_job, 0) > 0
+      OR ifNull(j.salary_per_hour, 0) * ifNull(j.hours, 0) > 0
+      OR (
+        j.start_fact IS NOT NULL
+        AND j.finish_fact IS NOT NULL
+        AND j.finish_fact > j.start_fact
+        AND dateDiff('minute', j.start_fact, j.finish_fact) > 0
+      )
+    )
+  ) AS confirmed_jobs
 FROM mg_jobs AS j
 LEFT JOIN mg_clients AS c ON j.client = c._id
 LEFT JOIN mg_workplaces AS w ON j.workplace = w._id

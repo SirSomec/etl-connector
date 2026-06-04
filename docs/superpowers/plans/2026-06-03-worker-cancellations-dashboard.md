@@ -517,7 +517,7 @@ function workerMetricsCte() {
   return `worker_metrics AS (
     SELECT
       sf.worker_id AS worker_id,
-      countDistinctIf(sf.job_id, sf.status = 'confirmed') AS confirmed_shifts,
+      countDistinctIf(sf.job_id, sf.is_successful_confirmed_shift = 1) AS confirmed_shifts,
       countDistinctIf(
         sf.job_id,
         sf.status = 'cancelled' AND ifNull(ce.is_worker_cancelled, 0) = 1

@@ -111,7 +111,10 @@
 
 ```sql
 mg_jobs.status = 'confirmed'
+AND <successful_confirmed_shift_condition>
 ```
+
+Нулевой прогул - это `confirmed`-смена с длительностью `0:00` и нулевым начислением/выплатой. Такие смены не входят в метрику "Выполнено".
 
 ### Отмены worker
 

@@ -1,3 +1,8 @@
+const {
+  successfulConfirmedShiftCondition,
+  successfulConfirmedShiftFlagExpression
+} = require('./successfulConfirmedShift');
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
 const DEFAULT_ATTENTION_LIMIT = 150;
@@ -907,6 +912,22 @@ function baseParamsForFilters(filters) {
   };
 }
 
+function successfulConfirmedJobsSubquery(alias) {
+  return `(SELECT
+      j.source AS source,
+      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+    FROM mg_jobs AS j
+    WHERE ifNull(j.deleted, 0) = 0
+  ) AS ${alias}`;
+}
+
+function closingJobStatusCondition(alias = 'j') {
+  return `(
+        ifNull(${alias}.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')
+        OR (${successfulConfirmedShiftCondition(alias)})
+      )`;
+}
+
 function attentionParamsForFilters(filters) {
   const attentionFilters = {
     ...filters,
@@ -1089,10 +1110,9 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
       LEFT JOIN mg_clients AS c ON o.client = c._id
       LEFT JOIN mg_professions AS p ON o.spec = p.spec
       LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
-      INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
-      WHERE ${whereSql}
-        AND completed_job.deleted = 0
-        AND ifNull(completed_job.status, '') = 'confirmed'
+    INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
+    WHERE ${whereSql}
+        AND completed_job.is_successful_confirmed_shift = 1
       GROUP BY workplace_id
     ) AS sc ON os.workplace_id = sc.workplace_id
   ) AS metrics
@@ -1167,10 +1187,9 @@ function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
     LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
     INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
-    INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
+    INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
     WHERE ${whereSql}
-      AND completed_job.deleted = 0
-      AND ifNull(completed_job.status, '') = 'confirmed'
+      AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id, order_date
   )
   SELECT
@@ -1215,11 +1234,10 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
     LEFT JOIN mg_clients AS c ON o.client = c._id
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
     LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
-    INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id
+    INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
-      AND completed_job.deleted = 0
-      AND ifNull(completed_job.status, '') = 'confirmed'
+      AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id, order_date
   )
   SELECT
@@ -1271,7 +1289,7 @@ function attentionPointsQuery(whereSql) {
     FROM mg_jobs AS j
     INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
     WHERE ifNull(j.deleted, 0) = 0
-      AND ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'confirmed', 'delayed', 'waiting')
+      AND ${closingJobStatusCondition('j')}
     GROUP BY order_id
   ),
   daily_point AS (

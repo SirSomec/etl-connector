@@ -16,6 +16,8 @@ const {
   createWorkplaceDirectoryCache,
   workplaceDirectoryCachePathFromEnv
 } = require('./workplaceDirectoryCache');
+const { createPreloadService } = require('./preloadService');
+const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
 const {
   CITY_ANALYSIS_SECTIONS,
   cityAnalysisCachePathFromEnv,
@@ -62,6 +64,7 @@ const {
   renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
+  renderPreloadManagement,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
@@ -110,6 +113,7 @@ function normalizePathForNav(path) {
 function activeNavForPath(path) {
   const normalized = normalizePathForNav(path);
   const navByPath = {
+    '/admin/preload': 'preload-admin',
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
     '/dashboards/heatmap': 'heatmap',
@@ -120,6 +124,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/admin/users/')) {
     return 'users';
+  }
+
+  if (normalized.startsWith('/admin/preload/')) {
+    return 'preload-admin';
   }
 
   if (normalized.startsWith('/dashboards/workplace-analysis/')) {
@@ -145,6 +153,65 @@ function activeNavForPath(path) {
   return navByPath[normalized] || 'tables';
 }
 
+function preloadMessage(code) {
+  const messages = {
+    'schedule-saved': 'Расписание сохранено',
+    'run-started': 'Обновление запущено',
+    'already-running': 'Обновление уже выполняется'
+  };
+
+  return messages[String(code || '')] || '';
+}
+
+function formatDateUTC(date) {
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function createManualRangeError() {
+  const error = new Error('Неверный диапазон дат');
+
+  error.status = 400;
+  return error;
+}
+
+function parseManualDate(value) {
+  const text = String(value || '').trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw createManualRangeError();
+  }
+
+  const date = new Date(`${text}T00:00:00.000Z`);
+
+  if (Number.isNaN(date.getTime()) || formatDateUTC(date) !== text) {
+    throw createManualRangeError();
+  }
+
+  return { text, date };
+}
+
+function normalizeManualPreloadRange(body) {
+  const from = parseManualDate(body && body.from);
+  const to = parseManualDate(body && body.to);
+
+  if (from.date.getTime() > to.date.getTime()) {
+    throw createManualRangeError();
+  }
+
+  const exclusiveTo = new Date(to.date.getTime());
+
+  exclusiveTo.setUTCDate(exclusiveTo.getUTCDate() + 1);
+
+  return {
+    fromDate: from.text,
+    toDate: formatDateUTC(exclusiveTo)
+  };
+}
+
 function createApp({
   config,
   client,
@@ -152,11 +219,13 @@ function createApp({
   cityAnalysisCache = createCityAnalysisCache(),
   dashboardSectionCache = createDashboardSectionCache(),
   workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null }),
+  preloadService = null,
   userStore = null,
   sessionManager = null
 }) {
   const app = express();
   const database = config.clickhouse.database;
+  const preloads = preloadService;
   const authConfig = config.auth || { enabled: false };
   const authEnabled = authConfig.enabled === true;
   const accounts = userStore || (authEnabled
@@ -317,6 +386,16 @@ function createApp({
     return [];
   }
 
+  function preloadScheduleFromBody(body) {
+    const enabledValue = body && body.enabled;
+
+    return {
+      enabled: enabledValue === '1' || enabledValue === 'on' || enabledValue === 'true',
+      scheduleTime: body && body.scheduleTime,
+      refreshDays: Number(body && body.refreshDays)
+    };
+  }
+
   function accountMessage(code) {
     const messages = {
       created: 'Учетная запись создана',
@@ -339,6 +418,39 @@ function createApp({
           users,
           message: options.message || '',
           error: options.error || '',
+          ...viewContext(req)
+        })
+      );
+  }
+
+  function sendPreloadUnavailable(req, res) {
+    sendError(
+      res,
+      503,
+      'Service Unavailable',
+      'Сервис предзагрузки недоступен',
+      'preload-admin',
+      viewContext(req)
+    );
+  }
+
+  async function sendPreloadManagement(req, res, statusCode = 200, options = {}) {
+    if (!preloads) {
+      sendPreloadUnavailable(req, res);
+      return;
+    }
+
+    res
+      .status(statusCode)
+      .type('html')
+      .send(
+        renderPreloadManagement({
+          database,
+          message: options.message || '',
+          error: options.error || '',
+          job: preloads.getJob(SALES_PRELOAD_JOB_ID),
+          overview: preloads.getOverview(),
+          runs: preloads.listRuns(SALES_PRELOAD_JOB_ID, 20),
           ...viewContext(req)
         })
       );
@@ -526,6 +638,57 @@ function createApp({
           error: error && error.message
         });
       }
+    })
+  );
+
+  app.get(
+    '/admin/preload',
+    requireAuth('preload-admin'),
+    asyncRoute(async (req, res) => {
+      await sendPreloadManagement(req, res, 200, {
+        message: preloadMessage(req.query.message)
+      });
+    })
+  );
+
+  app.post(
+    '/admin/preload/schedule',
+    requireAuth('preload-admin'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'preload-admin')) {
+        return;
+      }
+
+      if (!preloads) {
+        sendPreloadUnavailable(req, res);
+        return;
+      }
+
+      preloads.saveSchedule(preloadScheduleFromBody(req.body));
+
+      res.redirect(303, '/admin/preload?message=schedule-saved');
+    })
+  );
+
+  app.post(
+    '/admin/preload/run',
+    requireAuth('preload-admin'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'preload-admin')) {
+        return;
+      }
+
+      if (!preloads) {
+        sendPreloadUnavailable(req, res);
+        return;
+      }
+
+      const result = await preloads.runSalesByProject(normalizeManualPreloadRange(req.body));
+      const message = result && (result.status === 'already-running' || result.alreadyRunning)
+        ? 'already-running'
+        : 'run-started';
+
+      res.redirect(303, `/admin/preload?message=${message}`);
     })
   );
 
@@ -964,6 +1127,7 @@ function start(options = {}) {
     loadConfigFn = loadConfig,
     ClientClass = ClickHouseClient,
     createAppFn = createApp,
+    createPreloadServiceFn = createPreloadService,
     logger = console
   } = options;
   const config = loadConfigFn(env);
@@ -978,13 +1142,19 @@ function start(options = {}) {
   const workplaceDirectoryCache = createWorkplaceDirectoryCache({
     filePath: workplaceDirectoryCachePathFromEnv(env)
   });
+  const preloadService = createPreloadServiceFn({
+    client,
+    storePath: config.preload.storePath,
+    sanitizeError: (error) => sanitizeForResponse(error && error.message, config)
+  });
   const app = createAppFn({
     config,
     client,
     activeGigersCache,
     cityAnalysisCache,
     dashboardSectionCache,
-    workplaceDirectoryCache
+    workplaceDirectoryCache,
+    preloadService
   });
   const server = app.listen(config.port, () => {
     const address = server.address();
@@ -996,6 +1166,7 @@ function start(options = {}) {
 
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
+    preloadService.close();
   });
 
   return server;

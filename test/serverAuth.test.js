@@ -48,6 +48,38 @@ function createFakeClient() {
   };
 }
 
+function createFakePreloadService() {
+  return {
+    getOverview() {
+      return {
+        coveredFrom: '2026-05-01',
+        coveredTo: '2026-06-04',
+        lastSuccessAt: '',
+        lastError: ''
+      };
+    },
+    getJob() {
+      return {
+        id: 'sales-by-project',
+        enabled: true,
+        scheduleTime: '03:00',
+        timezone: 'Europe/Moscow',
+        refreshDays: 45
+      };
+    },
+    listRuns() {
+      return [];
+    },
+    saveSchedule(input) {
+      return { id: 'sales-by-project', ...input };
+    },
+    async runSalesByProject() {
+      return { status: 'success', rowsWritten: 1 };
+    },
+    close() {}
+  };
+}
+
 function authConfig(filePath) {
   return {
     port: 0,
@@ -111,7 +143,13 @@ async function withAuthServer(callback) {
     ttlMs: config.auth.sessionTtlMs,
     secret: config.auth.sessionSecret
   });
-  const app = createApp({ config, client, userStore, sessionManager });
+  const app = createApp({
+    config,
+    client,
+    userStore,
+    sessionManager,
+    preloadService: createFakePreloadService()
+  });
   const server = http.createServer(app);
 
   try {
@@ -319,6 +357,13 @@ test('managed users only access granted sections', async () => {
       permissions: ['tables'],
       password: 'AnalystPass123'
     });
+    await userStore.createUser({
+      email: 'preload@example.test',
+      name: 'Preload Analyst',
+      role: 'analyst',
+      permissions: ['preload-admin'],
+      password: 'PreloadPass123'
+    });
 
     const analystLogin = await login(baseUrl, 'analyst@example.test', 'AnalystPass123');
     const analystCookie = cookieFrom(analystLogin);
@@ -332,12 +377,27 @@ test('managed users only access granted sections', async () => {
         cookie: analystCookie
       }
     });
+    const preloadDenied = await fetchText(baseUrl, '/admin/preload', {
+      headers: {
+        cookie: analystCookie
+      }
+    });
+    const preloadLogin = await login(baseUrl, 'preload@example.test', 'PreloadPass123');
+    const preloadAllowed = await fetchText(baseUrl, '/admin/preload', {
+      headers: {
+        cookie: cookieFrom(preloadLogin)
+      }
+    });
 
     assert.equal(home.response.status, 200);
     assert.match(home.text, /mg_orders/);
     assert.doesNotMatch(home.text, /href="\/admin\/users"/);
     assert.equal(users.response.status, 403);
     assert.match(users.text, /Недостаточно прав/);
+    assert.equal(preloadDenied.response.status, 403);
+    assert.match(preloadDenied.text, /Недостаточно прав/);
+    assert.equal(preloadAllowed.response.status, 200);
+    assert.match(preloadAllowed.text, /Предзагрузка витрин/);
   });
 });
 

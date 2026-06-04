@@ -305,8 +305,49 @@ function createFakeClient(overrides = {}) {
   return Object.assign(client, overrides);
 }
 
-async function withServer(client, callback, config = baseConfig()) {
-  const app = createApp({ config, client });
+function createFakePreloadService(overrides = {}) {
+  const calls = [];
+  const service = {
+    calls,
+    getOverview() {
+      calls.push(['getOverview']);
+      return {
+        coveredFrom: '2026-05-01',
+        coveredTo: '2026-06-04',
+        lastSuccessAt: '',
+        lastError: ''
+      };
+    },
+    getJob() {
+      calls.push(['getJob']);
+      return {
+        id: 'sales-by-project',
+        enabled: true,
+        scheduleTime: '03:00',
+        timezone: 'Europe/Moscow',
+        refreshDays: 45
+      };
+    },
+    listRuns() {
+      calls.push(['listRuns']);
+      return [];
+    },
+    saveSchedule(input) {
+      calls.push(['saveSchedule', input]);
+      return { id: 'sales-by-project', ...input };
+    },
+    async runSalesByProject(input) {
+      calls.push(['runSalesByProject', input]);
+      return { status: 'success', rowsWritten: 1 };
+    },
+    close() {}
+  };
+
+  return Object.assign(service, overrides);
+}
+
+async function withServer(client, callback, config = baseConfig(), options = {}) {
+  const app = createApp({ config, client, ...options });
   const server = app.listen(0);
 
   try {
@@ -348,6 +389,20 @@ async function fetchText(baseUrl, path, options) {
   const text = await response.text();
 
   return { response, text };
+}
+
+function formBody(values) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(values)) {
+    const valuesList = Array.isArray(value) ? value : [value];
+
+    for (const item of valuesList) {
+      params.append(key, item);
+    }
+  }
+
+  return params.toString();
 }
 
 function countOccurrences(text, needle) {
@@ -1222,6 +1277,8 @@ test('GET /dashboards/worker-cancellations keeps navigation active and redacts u
 });
 
 test('activeNavForPath normalizes dashboard trailing slashes', () => {
+  assert.equal(activeNavForPath('/admin/preload'), 'preload-admin');
+  assert.equal(activeNavForPath('/admin/preload/run'), 'preload-admin');
   assert.equal(activeNavForPath('/dashboards/workplace-analysis/'), 'workplace-analysis');
   assert.equal(activeNavForPath('/dashboards/sales-by-project/'), 'sales-by-project');
   assert.equal(activeNavForPath('/dashboards/city-analysis'), 'city-analysis');
@@ -1368,6 +1425,154 @@ test('GET /healthz returns ok as plain text', async () => {
   assert.deepEqual(client.calls, []);
 });
 
+test('preload admin routes render, save schedule, and run manual refresh', async () => {
+  const client = createFakeClient();
+  const preloadService = createFakePreloadService();
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const page = await fetchText(baseUrl, '/admin/preload');
+
+      assert.equal(page.response.status, 200);
+      assert.match(page.text, /Предзагрузка витрин/);
+
+      const messagePage = await fetchText(baseUrl, '/admin/preload?message=run-started');
+
+      assert.equal(messagePage.response.status, 200);
+      assert.match(messagePage.text, /Обновление запущено/);
+
+      const saved = await fetchText(baseUrl, '/admin/preload/schedule', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          enabled: '1',
+          scheduleTime: '04:30',
+          refreshDays: '30'
+        })
+      });
+
+      assert.equal(saved.response.status, 303);
+      assert.equal(saved.response.headers.get('location'), '/admin/preload?message=schedule-saved');
+
+      const run = await fetchText(baseUrl, '/admin/preload/run', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          from: '2026-05-01',
+          to: '2026-05-31'
+        })
+      });
+
+      assert.equal(run.response.status, 303);
+      assert.equal(run.response.headers.get('location'), '/admin/preload?message=run-started');
+    },
+    baseConfig(),
+    { preloadService }
+  );
+
+  assert.deepEqual(preloadService.calls, [
+    ['getJob'],
+    ['getOverview'],
+    ['listRuns'],
+    ['getJob'],
+    ['getOverview'],
+    ['listRuns'],
+    [
+      'saveSchedule',
+      {
+        enabled: true,
+        scheduleTime: '04:30',
+        refreshDays: 30
+      }
+    ],
+    [
+      'runSalesByProject',
+      {
+        fromDate: '2026-05-01',
+        toDate: '2026-06-01'
+      }
+    ]
+  ]);
+});
+
+test('POST /admin/preload/run redirects when refresh is already running', async () => {
+  const client = createFakeClient();
+  const preloadService = createFakePreloadService();
+
+  preloadService.runSalesByProject = async (input) => {
+    preloadService.calls.push(['runSalesByProject', input]);
+    return { status: 'already-running' };
+  };
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const run = await fetchText(baseUrl, '/admin/preload/run', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          from: '2026-05-01',
+          to: '2026-05-31'
+        })
+      });
+
+      assert.equal(run.response.status, 303);
+      assert.equal(run.response.headers.get('location'), '/admin/preload?message=already-running');
+    },
+    baseConfig(),
+    { preloadService }
+  );
+
+  assert.deepEqual(preloadService.calls, [
+    [
+      'runSalesByProject',
+      {
+        fromDate: '2026-05-01',
+        toDate: '2026-06-01'
+      }
+    ]
+  ]);
+});
+
+test('POST /admin/preload/run rejects invalid manual date ranges', async () => {
+  const client = createFakeClient();
+  const preloadService = createFakePreloadService();
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const response = await fetchText(baseUrl, '/admin/preload/run', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          from: '2026-02-31',
+          to: '2026-03-01'
+        })
+      });
+
+      assert.equal(response.response.status, 400);
+      assert.match(response.text, /Неверный диапазон дат/);
+    },
+    baseConfig(),
+    { preloadService }
+  );
+
+  assert.deepEqual(preloadService.calls, []);
+});
+
 test('start uses injectable dependencies and logs the listening port without secrets', async () => {
   const config = {
     port: 0,
@@ -1376,11 +1581,17 @@ test('start uses injectable dependencies and logs the listening port without sec
       database: 'etl',
       user: 'rouser',
       password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
     }
   };
   const clientConfigs = [];
   const logMessages = [];
   let createAppArgs;
+  let preloadServiceArgs;
+  let fakePreloadService;
+  let preloadServiceClosed = false;
 
   class FakeClient {
     constructor(clickhouseConfig) {
@@ -1392,6 +1603,17 @@ test('start uses injectable dependencies and logs the listening port without sec
   const server = start({
     loadConfigFn: () => config,
     ClientClass: FakeClient,
+    createPreloadServiceFn: (args) => {
+      preloadServiceArgs = args;
+
+      fakePreloadService = {
+        close() {
+          preloadServiceClosed = true;
+        }
+      };
+
+      return fakePreloadService;
+    },
     createAppFn: (args) => {
       createAppArgs = args;
 
@@ -1418,6 +1640,9 @@ test('start uses injectable dependencies and logs the listening port without sec
     assert.deepEqual(clientConfigs, [config.clickhouse]);
     assert.equal(createAppArgs.config, config);
     assert.ok(createAppArgs.client instanceof FakeClient);
+    assert.equal(createAppArgs.preloadService, fakePreloadService);
+    assert.equal(preloadServiceArgs.client, createAppArgs.client);
+    assert.equal(preloadServiceArgs.storePath, config.preload.storePath);
     assert.equal(typeof createAppArgs.cityAnalysisCache.getOrLoad, 'function');
     assert.equal(logMessages.length, 1);
     assert.match(logMessages[0], new RegExp(`port ${port}`));
@@ -1425,6 +1650,8 @@ test('start uses injectable dependencies and logs the listening port without sec
   } finally {
     await closeServer(server);
   }
+
+  assert.equal(preloadServiceClosed, true);
 });
 
 test('unknown routes return 404', async () => {

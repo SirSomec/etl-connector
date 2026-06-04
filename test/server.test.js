@@ -597,7 +597,7 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
     assert.doesNotMatch(text, /<html/);
     assert.match(text, /Точки, требующие внимания/);
     assert.match(text, /Attention point/);
-    assert.match(text, /Свободно 7 дней/);
+    assert.match(text, /Своб\. 7д/);
     assert.match(text, /ready 4 · booked 1 · worked 1/);
   });
 

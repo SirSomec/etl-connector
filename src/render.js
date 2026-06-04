@@ -1043,30 +1043,47 @@ function layout({
     }
 
     .attention-table {
-      min-width: 1280px;
-      table-layout: auto;
+      width: 100%;
+      min-width: 0;
+      table-layout: fixed;
+    }
+
+    .attention-table-wrap {
+      max-width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
     }
 
     .attention-table th,
     .attention-table td {
-      overflow-wrap: normal;
+      padding: 8px 7px;
+      font-size: 12px;
+      overflow-wrap: anywhere;
       word-break: normal;
     }
 
-    .attention-table th {
-      white-space: nowrap;
+    .attention-table .sortable-header {
+      align-items: flex-start;
+      white-space: normal;
     }
 
     .attention-point-cell {
-      min-width: 220px;
+      width: 20%;
     }
 
-    .attention-status-cell {
-      min-width: 220px;
+    .attention-stack-cell {
+      width: 13%;
     }
 
     .attention-reason-cell {
-      min-width: 140px;
+      width: 12%;
+    }
+
+    .attention-table .muted {
+      margin-top: 3px;
+      font-size: 11px;
+      line-height: 1.25;
     }
 
     .phone-cell,
@@ -2463,6 +2480,34 @@ function renderDashboardProgressiveScript() {
         var message = error && error.message ? error.message : 'Не удалось загрузить блок.';
 
         renderError(root, message);
+      });
+  });
+
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest('[data-dashboard-fragment-link]');
+
+    if (!link) {
+      return;
+    }
+
+    var section = link.closest('section.section');
+
+    if (!section) {
+      return;
+    }
+
+    event.preventDefault();
+
+    fetch(link.getAttribute('href'))
+      .then(function (response) {
+        return response.text().then(function (html) {
+          replaceWithHtml(section, html);
+        });
+      })
+      .catch(function (error) {
+        var message = error && error.message ? error.message : 'Не удалось загрузить блок.';
+
+        renderError(section, message);
       });
   });
 })();
@@ -3924,6 +3969,14 @@ function renderPaginationLink({ href, label, disabled }) {
   return `<a class="pagination-link" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
 }
 
+function renderFragmentPaginationLink({ href, label, disabled }) {
+  if (disabled) {
+    return `<span class="pagination-link disabled" aria-disabled="true">${escapeHtml(label)}</span>`;
+  }
+
+  return `<a class="pagination-link" href="${escapeHtml(href)}" data-dashboard-fragment-link="1">${escapeHtml(label)}</a>`;
+}
+
 function paginationPageNumbers(currentPage, totalPages) {
   const pages = new Set([1, totalPages]);
 
@@ -4017,18 +4070,123 @@ function renderWorkplaceAnalysisPointsSection(dashboard, currentUser) {
 </section>`;
 }
 
+function workplaceAttentionSectionUrl(filters, overrides = {}) {
+  const href = workplaceAnalysisPageHref(filters, filters.page || 1);
+  const query = href.includes('?') ? href.slice(href.indexOf('?') + 1) : '';
+  const params = new URLSearchParams(query);
+  const nextFilters = { ...filters, ...overrides };
+  const page = Number(nextFilters.attentionPage) || 1;
+
+  for (const key of ['from', 'to', 'limit']) {
+    if (params.get(key) === 'undefined' || params.get(key) === '') {
+      params.delete(key);
+    }
+  }
+
+  if (page > 1) {
+    params.set('attentionPage', String(page));
+  } else {
+    params.delete('attentionPage');
+  }
+
+  params.set('attentionSort', String(nextFilters.attentionSort || 'attentionScore'));
+  params.set('attentionDirection', String(nextFilters.attentionDirection || 'desc'));
+
+  return `/dashboards/workplace-analysis/section?section=attention&${params.toString()}`;
+}
+
+const WORKPLACE_ATTENTION_COLUMNS = [
+  { key: 'title', label: 'Точка', className: 'attention-point-cell' },
+  { key: 'free7d', label: 'Своб. 7д', className: 'number-cell' },
+  { key: 'nearestFreeDate', label: 'Ближ.', className: 'nowrap-cell' },
+  { key: 'maxDailyFree', label: 'Пик', className: 'number-cell' },
+  { key: 'coveragePercent', label: 'Покр.', className: 'number-cell' },
+  { key: 'totalWorkers15km', label: 'База 15км', className: 'number-cell attention-stack-cell' },
+  { key: 'activeWorkers30d15km', label: 'Актив 30д', className: 'number-cell attention-stack-cell' },
+  { key: 'activeWorkersPerFreeShift', label: 'Акт/своб.', className: 'number-cell' },
+  { key: 'priorityReason', label: 'Причина', className: 'attention-reason-cell' }
+];
+
+function renderAttentionSortableHeader(filters, column) {
+  const currentSort = String(filters.attentionSort || 'attentionScore');
+  const currentDirection = String(filters.attentionDirection || 'desc');
+  const isActive = currentSort === column.key;
+  const nextDirection = isActive && currentDirection === 'asc' ? 'desc' : 'asc';
+  const indicator = isActive
+    ? `<span class="sort-indicator" aria-hidden="true">${escapeHtml(currentDirection === 'asc' ? '↑' : '↓')}</span>`
+    : '';
+  const href = workplaceAttentionSectionUrl(filters, {
+    attentionPage: 1,
+    attentionSort: column.key,
+    attentionDirection: nextDirection
+  });
+
+  return `<th class="${escapeHtml(column.className)}"><a class="sortable-header" href="${escapeHtml(href)}" data-dashboard-fragment-link="1"><span>${escapeHtml(column.label)}</span>${indicator}</a></th>`;
+}
+
 function renderWorkerStatusBreakdown(statuses = {}) {
   return `ready ${formatNumber(statuses.ready)} · booked ${formatNumber(statuses.booked)} · worked ${formatNumber(statuses.worked)} · прочие ${formatNumber(statuses.other)}`;
 }
 
-function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '') {
+function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '', className = 'number-cell') {
   return renderMetricInfoScope({
     tag: 'td',
-    className: 'number-cell',
+    className,
     metricId,
     currentUser,
     content: `${escapeHtml(formatNumber(value, digits))}${extraContent}`
   });
+}
+
+function renderAttentionPaginationPages({ filters, page, totalPages }) {
+  const pageNumbers = paginationPageNumbers(page, totalPages);
+  let previousPage = 0;
+  const items = [];
+
+  for (const pageNumber of pageNumbers) {
+    if (previousPage > 0 && pageNumber - previousPage > 1) {
+      items.push('<span class="pagination-ellipsis" aria-hidden="true">...</span>');
+    }
+
+    if (pageNumber === page) {
+      items.push(`<span class="pagination-link pagination-page pagination-current" aria-current="page">${escapeHtml(pageNumber)}</span>`);
+    } else {
+      items.push(`<a class="pagination-link pagination-page" href="${escapeHtml(workplaceAttentionSectionUrl(filters, { attentionPage: pageNumber }))}" data-dashboard-fragment-link="1">${escapeHtml(pageNumber)}</a>`);
+    }
+
+    previousPage = pageNumber;
+  }
+
+  return `<div class="pagination-pages" aria-label="Страницы">${items.join('')}</div>`;
+}
+
+function renderAttentionPagination({ filters, pagination }) {
+  if (!pagination || (!pagination.hasPrevious && !pagination.hasNext)) {
+    return '';
+  }
+
+  const page = Number(pagination.page) || 1;
+  const totalPages = Math.max(page, Number(pagination.totalPages) || page);
+  const previousPage = Math.max(1, page - 1);
+  const nextPage = Math.min(totalPages, page + 1);
+  const totalLabel = Number(pagination.totalWorkplaces) || 0;
+
+  return `<nav class="pagination" aria-label="Пагинация точек внимания">
+  <div class="pagination-meta">Страница ${escapeHtml(page)} из ${escapeHtml(totalPages)} · точек: ${escapeHtml(formatNumber(totalLabel))}</div>
+  <div class="pagination-actions">
+    ${renderFragmentPaginationLink({
+      href: workplaceAttentionSectionUrl(filters, { attentionPage: previousPage }),
+      label: 'Назад',
+      disabled: !pagination.hasPrevious
+    })}
+    ${renderFragmentPaginationLink({
+      href: workplaceAttentionSectionUrl(filters, { attentionPage: nextPage }),
+      label: 'Вперед',
+      disabled: !pagination.hasNext
+    })}
+  </div>
+  ${renderAttentionPaginationPages({ filters, page, totalPages })}
+</nav>`;
 }
 
 function renderWorkplaceAttentionRows(points, filters, currentUser) {
@@ -4036,20 +4194,11 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
     return '<p class="empty">Нет точек с незакрытым заказом на ближайшие 7 дней.</p>';
   }
 
-  return `<div class="table-scroll">
+  return `<div class="attention-table-wrap">
   <table class="attention-table">
     <thead>
       <tr>
-        <th class="attention-point-cell">Точка</th>
-        <th class="number-cell">Свободно 7 дней</th>
-        <th>Ближайший день</th>
-        <th class="number-cell">Пик дня</th>
-        <th class="number-cell">Покрытие</th>
-        <th class="number-cell">Вся база 15 км</th>
-        <th class="number-cell">Активная база 30 дней 15 км</th>
-        <th class="number-cell">Актив / свободная</th>
-        <th class="attention-status-cell">Статусы активной базы</th>
-        <th class="attention-reason-cell">Причина</th>
+        ${WORKPLACE_ATTENTION_COLUMNS.map((column) => renderAttentionSortableHeader(filters, column)).join('')}
       </tr>
     </thead>
     <tbody>
@@ -4067,11 +4216,18 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
           'workplace-analysis.attention.total-workers-15km',
           currentUser,
           0,
-          `<div class="muted">${escapeHtml(renderWorkerStatusBreakdown(point.totalWorkersByStatus15km))}</div>`
+          `<div class="muted">${escapeHtml(renderWorkerStatusBreakdown(point.totalWorkersByStatus15km))}</div>`,
+          'number-cell attention-stack-cell'
         )}
-        ${renderAttentionNumberCell(point.activeWorkers30d15km, 'workplace-analysis.attention.active-workers-30d-15km', currentUser)}
+        ${renderAttentionNumberCell(
+          point.activeWorkers30d15km,
+          'workplace-analysis.attention.active-workers-30d-15km',
+          currentUser,
+          0,
+          `<div class="muted">${escapeHtml(renderWorkerStatusBreakdown(point.activeWorkers30dByStatus15km))}</div>`,
+          'number-cell attention-stack-cell'
+        )}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
-        <td class="attention-status-cell">${escapeHtml(renderWorkerStatusBreakdown(point.activeWorkers30dByStatus15km))}</td>
         <td class="attention-reason-cell">${escapeHtml(point.priorityReason)}</td>
       </tr>`;
       }).join('')}
@@ -4087,6 +4243,7 @@ function renderWorkplaceAttentionSection(dashboard, currentUser) {
   ${renderMetricPanelHead('Точки, требующие внимания', 'workplace-analysis.attention', currentUser)}
   <p class="context-line">Период: ${escapeHtml(filters.attentionFrom || '')} - ${escapeHtml(filters.attentionTo || '')} · незакрытый заказ = заказ без смен в закрывающих статусах · база в радиусе 15 км.</p>
   ${renderWorkplaceAttentionRows(dashboard.attentionPoints || [], filters, currentUser)}
+  ${renderAttentionPagination({ filters, pagination: dashboard.attentionPagination })}
 </section>`;
 }
 

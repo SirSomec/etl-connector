@@ -1098,20 +1098,26 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
   });
 
   assert.match(html, /Точки, требующие внимания/);
-  assert.match(html, /Свободно 7 дней/);
+  assert.match(html, /Своб\. 7д/);
   assert.match(html, /&lt;script&gt;Север&lt;\/script&gt;/);
   assert.match(html, /ready 2 · booked 1 · worked 0 · прочие 0/);
   assert.match(html, /пик в ближайшие дни/);
   assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
 });
 
-test('renderWorkplaceAnalysisDashboardSection gives attention table stable horizontal layout', () => {
+test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention table without horizontal scroll', () => {
   const html = renderWorkplaceAnalysisDashboardSection({
     section: 'attention',
     dashboard: {
       filters: {
         attentionFrom: '2026-06-04',
-        attentionTo: '2026-06-11'
+        attentionTo: '2026-06-11',
+        from: '2026-06-01',
+        to: '2026-06-04',
+        attentionPage: 1,
+        attentionPageSize: 15,
+        attentionSort: 'attentionScore',
+        attentionDirection: 'desc'
       },
       attentionPoints: [
         {
@@ -1133,7 +1139,15 @@ test('renderWorkplaceAnalysisDashboardSection gives attention table stable horiz
           totalWorkersByStatus15km: { ready: 3562, booked: 32, worked: 2209, other: 46583 },
           priorityReason: 'пик в ближайшие дни'
         }
-      ]
+      ],
+      attentionPagination: {
+        page: 1,
+        pageSize: 15,
+        totalWorkplaces: 16,
+        totalPages: 2,
+        hasPrevious: false,
+        hasNext: true
+      }
     }
   });
   const pageHtml = renderWorkplaceAnalysisDashboard({
@@ -1173,9 +1187,15 @@ test('renderWorkplaceAnalysisDashboardSection gives attention table stable horiz
 
   assert.match(html, /<table class="attention-table">/);
   assert.match(html, /class="attention-point-cell"/);
-  assert.match(html, /class="attention-status-cell"/);
-  assert.match(pageHtml, /\.attention-table\s*\{[^}]*min-width: 1280px;/);
-  assert.match(pageHtml, /\.table-scroll\s*\{[^}]*overflow-x: auto;/);
+  assert.match(html, /attention-stack-cell/);
+  assert.match(html, /class="sortable-header"/);
+  assert.match(html, /attentionSort=free7d/);
+  assert.match(html, /attentionDirection=asc/);
+  assert.match(html, /attentionPage=2/);
+  assert.match(html, /Страница 1 из 2/);
+  assert.doesNotMatch(html, /table-scroll/);
+  assert.doesNotMatch(pageHtml, /\.attention-table\s*\{[^}]*min-width: 1280px;/);
+  assert.match(pageHtml, /\.attention-table\s*\{[^}]*min-width: 0;/);
 });
 
 test('renderWorkplaceAnalysisDashboard aligns heatmap columns from Monday to Sunday', () => {

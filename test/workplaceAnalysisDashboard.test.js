@@ -60,6 +60,9 @@ test('normalizeWorkplaceAttentionFilters defaults to today plus seven days and k
   const filters = normalizeWorkplaceAttentionFilters(
     {
       attentionLimit: '999',
+      attentionPage: '2',
+      attentionSort: 'activeWorkers30d15km',
+      attentionDirection: 'asc',
       client: ['Бренд', ' '],
       city: 'Москва',
       orderType: ['regular', 'unsafe'],
@@ -74,7 +77,11 @@ test('normalizeWorkplaceAttentionFilters defaults to today plus seven days and k
   assert.equal(filters.attentionFromDateTime, '2026-06-04 00:00:00');
   assert.equal(filters.attentionToExclusiveDateTime, '2026-06-12 00:00:00');
   assert.equal(filters.attentionDays, 8);
-  assert.equal(filters.attentionLimit, 20);
+  assert.equal(filters.attentionLimit, 150);
+  assert.equal(filters.attentionPage, 2);
+  assert.equal(filters.attentionPageSize, 15);
+  assert.equal(filters.attentionSort, 'activeWorkers30d15km');
+  assert.equal(filters.attentionDirection, 'asc');
   assert.deepEqual(filters.client, ['Бренд']);
   assert.deepEqual(filters.city, ['Москва']);
   assert.deepEqual(filters.orderType, ['regular']);
@@ -140,6 +147,50 @@ test('mergeWorkplaceAttentionRows calculates free order, status bases, score and
     worked: 0,
     other: 0
   });
+});
+
+test('mergeWorkplaceAttentionRows sorts attention points and paginates by 15 rows', () => {
+  const filters = normalizeWorkplaceAttentionFilters(
+    {
+      attentionPage: '2',
+      attentionSort: 'free7d',
+      attentionDirection: 'asc'
+    },
+    new Date('2026-06-04T12:00:00.000Z')
+  );
+  const rows = Array.from({ length: 16 }, (_, index) => ({
+    workplace_id: `wp${index + 1}`,
+    workplace_title: `Точка ${String(index + 1).padStart(2, '0')}`,
+    client_title: 'Бренд',
+    city: 'Москва',
+    ordered_7d: index + 1,
+    covered_7d: 0,
+    free_7d: index + 1,
+    max_daily_free: index + 1,
+    days_with_free: 1,
+    nearest_free_date: '2026-06-04',
+    total_workers_15km: 100,
+    active_workers_30d_15km: 10,
+    total_status_ready: 1,
+    total_status_booked: 2,
+    total_status_worked: 3,
+    total_status_other: 4,
+    active_status_ready: 5,
+    active_status_booked: 6,
+    active_status_worked: 7,
+    active_status_other: 8
+  }));
+
+  const dashboard = mergeWorkplaceAttentionRows(filters, rows);
+
+  assert.equal(dashboard.attentionPoints.length, 1);
+  assert.equal(dashboard.attentionPoints[0].workplaceId, 'wp16');
+  assert.equal(dashboard.attentionPagination.page, 2);
+  assert.equal(dashboard.attentionPagination.pageSize, 15);
+  assert.equal(dashboard.attentionPagination.totalWorkplaces, 16);
+  assert.equal(dashboard.attentionPagination.totalPages, 2);
+  assert.equal(dashboard.attentionPagination.hasPrevious, true);
+  assert.equal(dashboard.attentionPagination.hasNext, false);
 });
 
 test('normalizeWorkplaceAnalysisFilters accepts repeated values, valid order types, and whitelisted limit', () => {

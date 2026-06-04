@@ -1,12 +1,28 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
-const DEFAULT_ATTENTION_LIMIT = 20;
+const DEFAULT_ATTENTION_LIMIT = 150;
+const ATTENTION_PAGE_SIZE = 15;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100000;
 const DEFAULT_SORT = 'orders';
+const DEFAULT_ATTENTION_SORT = 'attentionScore';
+const DEFAULT_ATTENTION_DIRECTION = 'desc';
 const ALLOWED_LIMITS = new Set([10, 12, 20, 50]);
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const ALLOWED_SORTS = new Set([DEFAULT_SORT, 'sla', 'stability']);
+const ALLOWED_ATTENTION_SORTS = new Set([
+  DEFAULT_ATTENTION_SORT,
+  'title',
+  'free7d',
+  'nearestFreeDate',
+  'maxDailyFree',
+  'coveragePercent',
+  'totalWorkers15km',
+  'activeWorkers30d15km',
+  'activeWorkersPerFreeShift',
+  'priorityReason'
+]);
+const ALLOWED_DIRECTIONS = new Set(['asc', 'desc']);
 const FILTER_OPTION_KEYS = ['client', 'city', 'region', 'profession', 'orderType', 'jobStatus', 'contractor'];
 const WORKPLACE_ANALYSIS_SECTION_NAMES = ['points', 'attention'];
 const WORKPLACE_ANALYSIS_SECTIONS = new Set(WORKPLACE_ANALYSIS_SECTION_NAMES);
@@ -102,6 +118,18 @@ function normalizeSort(value) {
   const sort = cleanText(value);
 
   return ALLOWED_SORTS.has(sort) ? sort : DEFAULT_SORT;
+}
+
+function normalizeDirection(value, defaultDirection = 'desc') {
+  const direction = cleanText(value).toLowerCase();
+
+  return ALLOWED_DIRECTIONS.has(direction) ? direction : defaultDirection;
+}
+
+function normalizeAttentionSort(value) {
+  const sort = cleanText(value);
+
+  return ALLOWED_ATTENTION_SORTS.has(sort) ? sort : DEFAULT_ATTENTION_SORT;
 }
 
 function firstNonEmptyText(value) {
@@ -222,7 +250,11 @@ function normalizeWorkplaceAttentionFilters(input = {}, now = new Date()) {
     attentionFromDateTime: toDateTimeParam(attentionFrom),
     attentionToExclusiveDateTime: toDateTimeParam(attentionToExclusive),
     attentionDays: buildDateKeys(attentionFrom, attentionTo).length,
-    attentionLimit: normalizeWorkplaceAttentionLimit(input.attentionLimit)
+    attentionLimit: normalizeWorkplaceAttentionLimit(input.attentionLimit),
+    attentionPage: normalizePage(input.attentionPage),
+    attentionPageSize: ATTENTION_PAGE_SIZE,
+    attentionSort: normalizeAttentionSort(input.attentionSort),
+    attentionDirection: normalizeDirection(input.attentionDirection, DEFAULT_ATTENTION_DIRECTION)
   };
 }
 
@@ -324,8 +356,53 @@ function attentionPriorityReason(point) {
   return 'много свободного заказа';
 }
 
+function compareAttentionValues(leftValue, rightValue) {
+  const leftNumber = Number(leftValue);
+  const rightNumber = Number(rightValue);
+
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber - rightNumber;
+  }
+
+  return String(leftValue || '').localeCompare(String(rightValue || ''));
+}
+
+function sortAttentionPoints(points, filters) {
+  const sort = normalizeAttentionSort(filters.attentionSort);
+  const direction = normalizeDirection(filters.attentionDirection, DEFAULT_ATTENTION_DIRECTION);
+  const multiplier = direction === 'asc' ? 1 : -1;
+
+  return [...points].sort((left, right) => {
+    const result = compareAttentionValues(left[sort], right[sort]);
+
+    if (result !== 0) {
+      return result * multiplier;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function paginateAttentionPoints(points, filters) {
+  const pageSize = ATTENTION_PAGE_SIZE;
+  const totalWorkplaces = points.length;
+  const totalPages = Math.max(1, Math.ceil(totalWorkplaces / pageSize));
+  const page = Math.min(normalizePage(filters.attentionPage), totalPages);
+  const offset = (page - 1) * pageSize;
+
+  return {
+    page,
+    pageSize,
+    totalWorkplaces,
+    totalPages,
+    hasPrevious: page > 1,
+    hasNext: page < totalPages,
+    points: points.slice(offset, offset + pageSize)
+  };
+}
+
 function mergeWorkplaceAttentionRows(filters, rows = []) {
-  const attentionPoints = rows
+  const allAttentionPoints = rows
     .map((row) => {
       const free7d = numberValue(row.free_7d);
       const activeWorkers30d15km = numberValue(row.active_workers_30d_15km);
@@ -362,18 +439,21 @@ function mergeWorkplaceAttentionRows(filters, rows = []) {
       delete point.filters;
 
       return point;
-    })
-    .sort((left, right) => {
-      if (right.attentionScore !== left.attentionScore) {
-        return right.attentionScore - left.attentionScore;
-      }
-
-      return left.title.localeCompare(right.title);
     });
+  const sortedAttentionPoints = sortAttentionPoints(allAttentionPoints, filters);
+  const pagination = paginateAttentionPoints(sortedAttentionPoints, filters);
 
   return {
     filters,
-    attentionPoints
+    attentionPoints: pagination.points,
+    attentionPagination: {
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      totalWorkplaces: pagination.totalWorkplaces,
+      totalPages: pagination.totalPages,
+      hasPrevious: pagination.hasPrevious,
+      hasNext: pagination.hasNext
+    }
   };
 }
 
@@ -1421,7 +1501,12 @@ function cacheKeyForWorkplaceAnalysisSection(section, filters) {
       stabilityFrom: filters.stabilityFrom,
       stabilityTo: filters.stabilityTo,
       limit: filters.limit,
-      page: filters.page
+      page: filters.page,
+      attentionPage: filters.attentionPage,
+      attentionPageSize: filters.attentionPageSize,
+      attentionSort: filters.attentionSort,
+      attentionDirection: filters.attentionDirection,
+      attentionLimit: filters.attentionLimit
     }
   });
 }

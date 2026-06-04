@@ -1,5 +1,7 @@
 const path = require('node:path');
 
+const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sqlite');
+
 class ConfigError extends Error {
   constructor(message) {
     super(message);
@@ -75,6 +77,9 @@ function loadConfig(env = process.env) {
       caPath:
         env.CLICKHOUSE_CA_PATH ||
         '/usr/local/share/ca-certificates/Yandex/RootCA.crt'
+    },
+    preload: {
+      storePath: env.PRELOAD_STORE_PATH || DEFAULT_PRELOAD_STORE_PATH
     },
     auth: {
       enabled: authEnabled,

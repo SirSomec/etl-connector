@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
 const { ConfigError, loadConfig } = require('../src/config');
 
@@ -32,8 +33,20 @@ test('loadConfig returns required values and safe defaults', () => {
   assert.equal(config.auth.adminEmail, 'admin@example.test');
   assert.equal(config.auth.adminPassword, 'AdminPass123');
   assert.match(config.auth.userStorePath, /data[\\/]users\.json$/);
+  assert.equal(
+    config.preload.storePath,
+    path.join(process.cwd(), 'data', 'preload.sqlite')
+  );
   assert.equal(config.auth.sessionCookieName, 'etl_analytics_session');
   assert.equal(config.auth.sessionTtlMs, 12 * 60 * 60 * 1000);
+});
+
+test('loadConfig accepts preload store path override', () => {
+  const config = loadConfig(baseEnv({
+    PRELOAD_STORE_PATH: 'C:\\runtime\\preload.sqlite'
+  }));
+
+  assert.equal(config.preload.storePath, 'C:\\runtime\\preload.sqlite');
 });
 
 test('loadConfig reports every missing required variable', () => {

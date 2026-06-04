@@ -1515,6 +1515,53 @@ function layout({
       gap: 12px;
     }
 
+    .dashboard-tabs {
+      display: grid;
+      gap: 12px;
+    }
+
+    .dashboard-tab-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .dashboard-tab-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .dashboard-tab {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: 6px 6px 0 0;
+      background: #f3f5f7;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .dashboard-tab-panel {
+      display: none;
+    }
+
+    #workplace-tab-points:checked ~ .dashboard-tab-list label[for="workplace-tab-points"],
+    #workplace-tab-attention:checked ~ .dashboard-tab-list label[for="workplace-tab-attention"] {
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    #workplace-tab-points:checked ~ .dashboard-tab-panels .dashboard-tab-panel-points,
+    #workplace-tab-attention:checked ~ .dashboard-tab-panels .dashboard-tab-panel-attention {
+      display: block;
+    }
+
     .point-card {
       min-width: 0;
       padding: 12px;
@@ -3935,6 +3982,79 @@ function renderWorkplaceAnalysisPointsSection(dashboard, currentUser) {
 </section>`;
 }
 
+function renderWorkerStatusBreakdown(statuses = {}) {
+  return `ready ${formatNumber(statuses.ready)} · booked ${formatNumber(statuses.booked)} · worked ${formatNumber(statuses.worked)} · прочие ${formatNumber(statuses.other)}`;
+}
+
+function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '') {
+  return renderMetricInfoScope({
+    tag: 'td',
+    className: 'number-cell',
+    metricId,
+    currentUser,
+    content: `${escapeHtml(formatNumber(value, digits))}${extraContent}`
+  });
+}
+
+function renderWorkplaceAttentionRows(points, filters, currentUser) {
+  if (points.length === 0) {
+    return '<p class="empty">Нет точек с незакрытым заказом на ближайшие 7 дней.</p>';
+  }
+
+  return `<div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Точка</th>
+        <th class="number-cell">Свободно 7 дней</th>
+        <th>Ближайший день</th>
+        <th class="number-cell">Пик дня</th>
+        <th class="number-cell">Покрытие</th>
+        <th class="number-cell">Вся база 15 км</th>
+        <th class="number-cell">Активная база 30 дней 15 км</th>
+        <th class="number-cell">Актив / свободная</th>
+        <th>Статусы активной базы</th>
+        <th>Причина</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${points.map((point) => {
+        const detailHref = escapeHtml(workplacePointPageHref(filters || {}, point.workplaceId));
+
+        return `<tr>
+        <td><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
+        ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser)}
+        <td>${escapeHtml(point.nearestFreeDate || '')}</td>
+        <td class="number-cell">${escapeHtml(formatNumber(point.maxDailyFree))}</td>
+        ${percentCell(point.coveragePercent, 'workplace-analysis.attention.coverage', currentUser)}
+        ${renderAttentionNumberCell(
+          point.totalWorkers15km,
+          'workplace-analysis.attention.total-workers-15km',
+          currentUser,
+          0,
+          `<div class="muted">${escapeHtml(renderWorkerStatusBreakdown(point.totalWorkersByStatus15km))}</div>`
+        )}
+        ${renderAttentionNumberCell(point.activeWorkers30d15km, 'workplace-analysis.attention.active-workers-30d-15km', currentUser)}
+        ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
+        <td>${escapeHtml(renderWorkerStatusBreakdown(point.activeWorkers30dByStatus15km))}</td>
+        <td>${escapeHtml(point.priorityReason)}</td>
+      </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+</div>`;
+}
+
+function renderWorkplaceAttentionSection(dashboard, currentUser) {
+  const filters = dashboard.filters || {};
+
+  return `<section class="section">
+  ${renderMetricPanelHead('Точки, требующие внимания', 'workplace-analysis.attention', currentUser)}
+  <p class="context-line">Период: ${escapeHtml(filters.attentionFrom || '')} - ${escapeHtml(filters.attentionTo || '')} · незакрытый заказ = заказ без смен в закрывающих статусах · база в радиусе 15 км.</p>
+  ${renderWorkplaceAttentionRows(dashboard.attentionPoints || [], filters, currentUser)}
+</section>`;
+}
+
 const WORKER_CANCELLATION_PAGE_SIZES = [50, 100, 200, 500];
 
 const WORKER_CANCELLATION_COLUMNS = [
@@ -5099,6 +5219,14 @@ function renderWorkplaceAnalysisDashboard({
   </section>
 </div>`
     : renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
+  const attentionHtml = progressive
+    ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'attention'))}">
+  <section class="section">
+    <h2>Точки, требующие внимания</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>`
+    : renderWorkplaceAttentionSection(dashboard, currentUser);
   const content = `<section class="section">
   <h1>Анализ точек</h1>
   <p class="technical-note">Стабильность = доля дней с плановым заказом по mg_orders.amount.</p>
@@ -5185,7 +5313,18 @@ function renderWorkplaceAnalysisDashboard({
     <button type="submit">Применить</button>
   </form>
 </section>
-${pointsHtml}`;
+<section class="section dashboard-tabs">
+  <input class="dashboard-tab-input" type="radio" id="workplace-tab-points" name="workplace-analysis-tab" checked>
+  <input class="dashboard-tab-input" type="radio" id="workplace-tab-attention" name="workplace-analysis-tab">
+  <div class="dashboard-tab-list" role="tablist" aria-label="Подвкладки анализа точек">
+    <label class="dashboard-tab" for="workplace-tab-points" role="tab">Обзор точек</label>
+    <label class="dashboard-tab" for="workplace-tab-attention" role="tab">Требуют внимания</label>
+  </div>
+  <div class="dashboard-tab-panels">
+    <div class="dashboard-tab-panel dashboard-tab-panel-points">${pointsHtml}</div>
+    <div class="dashboard-tab-panel dashboard-tab-panel-attention">${attentionHtml}</div>
+  </div>
+</section>`;
 
   return layout({
     title: 'Анализ точек',
@@ -5200,6 +5339,10 @@ ${pointsHtml}`;
 function renderWorkplaceAnalysisDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'points') {
     return renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
+  }
+
+  if (section === 'attention') {
+    return renderWorkplaceAttentionSection(dashboard, currentUser);
   }
 
   return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;

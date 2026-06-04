@@ -324,6 +324,106 @@ WHERE greatCircleDistance(
 GROUP BY sw.workplace_id
 FORMAT JSONEachRow`;
 
+const WORKPLACE_ATTENTION_SQL = `WITH filtered_orders AS (
+  SELECT
+    o._id AS order_id,
+    o.workplace AS workplace_id,
+    toDate(o.start) AS order_date,
+    w.location__coordinates AS workplace_coordinates,
+    ifNull(o.amount, 0) AS amount
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  WHERE o.start >= {from:DateTime}
+    AND o.start < {to:DateTime}
+    AND ifNull(o.amount, 0) > 0
+    AND ifNull(o.workplace, '') != ''
+    AND <safe_optional_filters>
+),
+covered_jobs AS (
+  SELECT
+    j.source AS order_id,
+    count() AS covered
+  FROM mg_jobs AS j
+  INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
+  WHERE ifNull(j.deleted, 0) = 0
+    AND ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'confirmed', 'delayed', 'waiting')
+  GROUP BY order_id
+),
+daily_point AS (
+  SELECT
+    fo.workplace_id,
+    fo.order_date,
+    any(fo.workplace_coordinates) AS workplace_coordinates,
+    sum(fo.amount) AS ordered,
+    sum(ifNull(cj.covered, 0)) AS covered,
+    greatest(sum(fo.amount) - sum(ifNull(cj.covered, 0)), 0) AS free
+  FROM filtered_orders AS fo
+  LEFT JOIN covered_jobs AS cj ON fo.order_id = cj.order_id
+  GROUP BY fo.workplace_id, fo.order_date
+),
+attention_points AS (
+  SELECT
+    workplace_id,
+    any(workplace_coordinates[1]) AS lon,
+    any(workplace_coordinates[2]) AS lat,
+    sum(ordered) AS ordered_7d,
+    sum(covered) AS covered_7d,
+    sum(free) AS free_7d,
+    max(free) AS max_daily_free,
+    minIf(order_date, free > 0) AS nearest_free_date
+  FROM daily_point
+  WHERE length(workplace_coordinates) >= 2
+  GROUP BY workplace_id
+  HAVING free_7d > 0
+  LIMIT {limit:UInt64}
+),
+active_session_users AS (
+  SELECT DISTINCT ifNull(profile_id, '') AS user_id
+  FROM appmetrica_sessions
+  WHERE ifNull(profile_id, '') != ''
+    AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_from:DateTime}
+    AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_to:DateTime}
+),
+latest_workers AS (
+  SELECT
+    worker.user AS user_id,
+    argMax(ifNull(worker.status, ''), ifNull(worker.updatedAt, worker.createdAt)) AS status,
+    argMax(worker.location__coordinates, ifNull(worker.updatedAt, worker.createdAt)) AS worker_coordinates
+  FROM mg_workers AS worker
+  LEFT JOIN mg_users AS u ON worker.user = u._id
+  WHERE ifNull(worker.user, '') != ''
+    AND ifNull(worker.deleted, 0) = 0
+    AND ifNull(u.deleted, 0) = 0
+    AND length(worker.location__coordinates) >= 2
+  GROUP BY worker.user
+),
+point_worker_pairs AS (
+  SELECT
+    ap.workplace_id,
+    lw.user_id,
+    lw.status,
+    lw.user_id IN (SELECT user_id FROM active_session_users) AS is_active_30d
+  FROM attention_points AS ap
+  CROSS JOIN latest_workers AS lw
+  WHERE greatCircleDistance(ap.lon, ap.lat, lw.worker_coordinates[1], lw.worker_coordinates[2]) <= 15000
+)
+SELECT
+  ap.workplace_id,
+  ap.ordered_7d,
+  ap.covered_7d,
+  ap.free_7d,
+  ap.max_daily_free,
+  uniqExact(pwp.user_id) AS total_workers_15km,
+  uniqExactIf(pwp.user_id, pwp.is_active_30d) AS active_workers_30d_15km
+FROM attention_points AS ap
+LEFT JOIN point_worker_pairs AS pwp ON ap.workplace_id = pwp.workplace_id
+GROUP BY ap.workplace_id, ap.ordered_7d, ap.covered_7d, ap.free_7d, ap.max_daily_free
+ORDER BY free_7d DESC, max_daily_free DESC
+FORMAT JSONEachRow`;
+
 const WORKER_CANCELLATIONS_SQL = `WITH shift_facts AS (
   SELECT
     j._id AS job,
@@ -1063,6 +1163,19 @@ defineMetricSet({
     { suffix: 'avg-daily-order', title: 'Точка: средний дневной заказ', description: 'Средний плановый заказ на активный день рабочей точки.' },
     { suffix: 'heatmap', title: 'Точка: дневная тепловая лента', description: 'Цвета дневной ленты строятся по дневному заказу и SLA из отдельного дневного запроса.', sql: WORKPLACE_ANALYSIS_DAILY_SQL },
     { suffix: 'active-gigers-5km', title: 'Точка: гигеры 5 км', description: 'Количество активных исполнителей, которые входили в приложение за последние 30 дней и находятся в радиусе 5 км от точки.', sql: ACTIVE_GIGERS_5KM_SQL }
+  ]
+});
+
+defineMetricSet({
+  baseId: 'workplace-analysis.attention',
+  sql: WORKPLACE_ATTENTION_SQL,
+  metrics: [
+    { id: 'workplace-analysis.attention', title: 'Точки, требующие внимания', description: 'Показывает точки с незакрытым заказом на ближайшие 7 дней и базой исполнителей в радиусе 15 км.' },
+    { suffix: 'free-7d', title: 'Требуют внимания: свободно 7 дней', description: 'Суммарный незакрытый заказ за ближайшие 7 дней.' },
+    { suffix: 'coverage', title: 'Требуют внимания: покрытие', description: 'Доля заказа ближайших 7 дней, закрытая сменами в операционно закрывающих статусах.' },
+    { suffix: 'total-workers-15km', title: 'Требуют внимания: вся база 15 км', description: 'Количество исполнителей с последней геолокацией в радиусе 15 км от точки.' },
+    { suffix: 'active-workers-30d-15km', title: 'Требуют внимания: активная база 30 дней 15 км', description: 'Количество исполнителей в радиусе 15 км, которые входили в приложение за последние 30 дней.' },
+    { suffix: 'active-workers-per-free-shift', title: 'Требуют внимания: актив / свободная', description: 'Отношение активной базы за 30 дней в радиусе 15 км к незакрытому заказу точки.' }
   ]
 });
 

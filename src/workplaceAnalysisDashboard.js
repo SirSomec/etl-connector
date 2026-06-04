@@ -1,5 +1,6 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
+const DEFAULT_ATTENTION_LIMIT = 20;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100000;
 const DEFAULT_SORT = 'orders';
@@ -7,7 +8,7 @@ const ALLOWED_LIMITS = new Set([10, 12, 20, 50]);
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const ALLOWED_SORTS = new Set([DEFAULT_SORT, 'sla', 'stability']);
 const FILTER_OPTION_KEYS = ['client', 'city', 'region', 'profession', 'orderType', 'jobStatus', 'contractor'];
-const WORKPLACE_ANALYSIS_SECTION_NAMES = ['points'];
+const WORKPLACE_ANALYSIS_SECTION_NAMES = ['points', 'attention'];
 const WORKPLACE_ANALYSIS_SECTIONS = new Set(WORKPLACE_ANALYSIS_SECTION_NAMES);
 const SORT_LABELS = {
   orders: 'Сначала крупнейшие по заказу',
@@ -200,6 +201,31 @@ function normalizeWorkplaceAnalysisFilters(input = {}, now = new Date()) {
   };
 }
 
+function normalizeWorkplaceAttentionLimit(value) {
+  const limit = Number(value);
+
+  return Number.isInteger(limit) && ALLOWED_LIMITS.has(limit) ? limit : DEFAULT_ATTENTION_LIMIT;
+}
+
+function normalizeWorkplaceAttentionFilters(input = {}, now = new Date()) {
+  const shared = normalizeWorkplaceAnalysisFilters(input, now);
+  const today = parseDateOnly(formatDateUTC(now));
+  const attentionToDate = addDaysUTC(today, 7);
+  const attentionFrom = formatDateUTC(today);
+  const attentionTo = formatDateUTC(attentionToDate);
+  const attentionToExclusive = formatDateUTC(addDaysUTC(attentionToDate, 1));
+
+  return {
+    ...shared,
+    attentionFrom,
+    attentionTo,
+    attentionFromDateTime: toDateTimeParam(attentionFrom),
+    attentionToExclusiveDateTime: toDateTimeParam(attentionToExclusive),
+    attentionDays: buildDateKeys(attentionFrom, attentionTo).length,
+    attentionLimit: normalizeWorkplaceAttentionLimit(input.attentionLimit)
+  };
+}
+
 function buildDateKeys(from, to) {
   const start = parseDateOnly(from);
   const end = parseDateOnly(to);
@@ -226,6 +252,129 @@ function percent(numerator, denominator) {
   }
 
   return (numberValue(numerator) / bottom) * 100;
+}
+
+function statusBreakdown(row, prefix) {
+  return {
+    ready: numberValue(row[`${prefix}_status_ready`]),
+    booked: numberValue(row[`${prefix}_status_booked`]),
+    worked: numberValue(row[`${prefix}_status_worked`]),
+    other: numberValue(row[`${prefix}_status_other`])
+  };
+}
+
+function daysUntil(filters, dateKey) {
+  const start = parseDateOnly(filters.attentionFrom);
+  const date = parseDateOnly(String(dateKey || ''));
+
+  if (!start || !date) {
+    return null;
+  }
+
+  return Math.round((date.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function startsSoonBoost(filters, nearestFreeDate) {
+  const days = daysUntil(filters, nearestFreeDate);
+
+  if (days === null) {
+    return 0;
+  }
+
+  if (days <= 0) {
+    return 50;
+  }
+
+  if (days === 1) {
+    return 30;
+  }
+
+  if (days <= 3) {
+    return 10;
+  }
+
+  return 0;
+}
+
+function lowActiveBaseBoost(activeWorkersPerFreeShift) {
+  if (activeWorkersPerFreeShift < 1) {
+    return 40;
+  }
+
+  if (activeWorkersPerFreeShift < 2) {
+    return 20;
+  }
+
+  return 0;
+}
+
+function attentionPriorityReason(point) {
+  if (point.maxDailyFree >= 5 && daysUntil(point.filters, point.nearestFreeDate) !== null && daysUntil(point.filters, point.nearestFreeDate) <= 3) {
+    return 'пик в ближайшие дни';
+  }
+
+  if (point.activeWorkersPerFreeShift < 1) {
+    return 'мало активной базы';
+  }
+
+  if (point.coveragePercent < 50) {
+    return 'низкое покрытие';
+  }
+
+  return 'много свободного заказа';
+}
+
+function mergeWorkplaceAttentionRows(filters, rows = []) {
+  const attentionPoints = rows
+    .map((row) => {
+      const free7d = numberValue(row.free_7d);
+      const activeWorkers30d15km = numberValue(row.active_workers_30d_15km);
+      const activeWorkersPerFreeShift = free7d > 0 ? activeWorkers30d15km / free7d : 0;
+      const point = {
+        filters,
+        workplaceId: String(row.workplace_id || ''),
+        title: titleForPoint(row),
+        clientTitle: String(row.client_title || 'Без бренда'),
+        city: String(row.city || ''),
+        region: String(row.region || ''),
+        address: compactAddress(row),
+        ordered7d: numberValue(row.ordered_7d),
+        covered7d: numberValue(row.covered_7d),
+        free7d,
+        coveragePercent: percent(numberValue(row.covered_7d), numberValue(row.ordered_7d)),
+        maxDailyFree: numberValue(row.max_daily_free),
+        daysWithFree: numberValue(row.days_with_free),
+        nearestFreeDate: String(row.nearest_free_date || ''),
+        totalWorkers15km: numberValue(row.total_workers_15km),
+        activeWorkers30d15km,
+        totalWorkersByStatus15km: statusBreakdown(row, 'total'),
+        activeWorkers30dByStatus15km: statusBreakdown(row, 'active'),
+        activeWorkersPerFreeShift
+      };
+
+      point.attentionScore =
+        point.free7d * 100 +
+        point.maxDailyFree * 30 +
+        point.daysWithFree * 10 +
+        startsSoonBoost(filters, point.nearestFreeDate) +
+        lowActiveBaseBoost(point.activeWorkersPerFreeShift);
+      point.priorityReason = attentionPriorityReason(point);
+      delete point.filters;
+
+      return point;
+    })
+    .sort((left, right) => {
+      if (right.attentionScore !== left.attentionScore) {
+        return right.attentionScore - left.attentionScore;
+      }
+
+      return left.title.localeCompare(right.title);
+    });
+
+  return {
+    filters,
+    attentionPoints
+  };
 }
 
 function sortLabel(sort) {
@@ -660,6 +809,29 @@ function baseParamsForFilters(filters) {
   };
 }
 
+function attentionParamsForFilters(filters) {
+  const attentionFilters = {
+    ...filters,
+    fromDateTime: filters.attentionFromDateTime,
+    toExclusiveDateTime: filters.attentionToExclusiveDateTime,
+    limit: filters.attentionLimit,
+    offset: 0
+  };
+  const { params, whereSql } = paramsForFilters(attentionFilters);
+  const activeToDate = parseDateOnly(filters.attentionFrom);
+  const activeFromDate = addDaysUTC(activeToDate, -30);
+  const activeToExclusive = addDaysUTC(activeToDate, 1);
+
+  return {
+    params: {
+      ...params,
+      param_active_from: toDateTimeParam(formatDateUTC(activeFromDate)),
+      param_active_to: toDateTimeParam(formatDateUTC(activeToExclusive))
+    },
+    whereSql
+  };
+}
+
 function paramsForFilters(filters, { excludePinned = false } = {}) {
   const base = baseParamsForFilters(filters);
   const params = {
@@ -967,6 +1139,194 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
+function attentionPointsQuery(whereSql) {
+  return `WITH filtered_orders AS (
+    SELECT
+      o._id AS order_id,
+      o.workplace AS workplace_id,
+      toDate(o.start) AS order_date,
+      ifNull(any(w.title), '') AS workplace_title,
+      ifNull(any(w.technical_name), '') AS technical_name,
+      ifNull(any(c.title), 'Без бренда') AS client_title,
+      ifNull(any(w.address__city), '') AS city,
+      ifNull(any(w.address__region), '') AS region,
+      ifNull(any(w.address__street), '') AS street,
+      any(w.location__coordinates) AS workplace_coordinates,
+      sum(ifNull(o.amount, 0)) AS amount
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    WHERE ${whereSql}
+    GROUP BY order_id, workplace_id, order_date
+  ),
+  covered_jobs AS (
+    SELECT
+      j.source AS order_id,
+      count() AS covered
+    FROM mg_jobs AS j
+    INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
+    WHERE ifNull(j.deleted, 0) = 0
+      AND ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'confirmed', 'delayed', 'waiting')
+    GROUP BY order_id
+  ),
+  daily_point AS (
+    SELECT
+      fo.workplace_id AS workplace_id,
+      fo.order_date AS order_date,
+      any(fo.workplace_title) AS workplace_title,
+      any(fo.technical_name) AS technical_name,
+      any(fo.client_title) AS client_title,
+      any(fo.city) AS city,
+      any(fo.region) AS region,
+      any(fo.street) AS street,
+      any(fo.workplace_coordinates) AS workplace_coordinates,
+      sum(fo.amount) AS ordered,
+      sum(ifNull(cj.covered, 0)) AS covered,
+      greatest(sum(fo.amount) - sum(ifNull(cj.covered, 0)), 0) AS free
+    FROM filtered_orders AS fo
+    LEFT JOIN covered_jobs AS cj ON fo.order_id = cj.order_id
+    GROUP BY workplace_id, order_date
+  ),
+  attention_points AS (
+    SELECT
+      workplace_id,
+      any(workplace_title) AS workplace_title,
+      any(technical_name) AS technical_name,
+      any(client_title) AS client_title,
+      any(city) AS city,
+      any(region) AS region,
+      any(street) AS street,
+      any(workplace_coordinates[1]) AS lon,
+      any(workplace_coordinates[2]) AS lat,
+      sum(ordered) AS ordered_7d,
+      sum(covered) AS covered_7d,
+      sum(free) AS free_7d,
+      max(free) AS max_daily_free,
+      countIf(free > 0) AS days_with_free,
+      minIf(order_date, free > 0) AS nearest_free_date
+    FROM daily_point
+    WHERE workplace_id != ''
+      AND length(workplace_coordinates) >= 2
+      AND workplace_coordinates[1] BETWEEN -180 AND 180
+      AND workplace_coordinates[2] BETWEEN -90 AND 90
+    GROUP BY workplace_id
+    HAVING free_7d > 0
+    ORDER BY free_7d DESC, max_daily_free DESC, workplace_id ASC
+    LIMIT {limit:UInt64}
+  ),
+  point_bounds AS (
+    SELECT
+      count() AS points,
+      min(lon) AS min_lon,
+      max(lon) AS max_lon,
+      min(lat) AS min_lat,
+      max(lat) AS max_lat,
+      15000 / 111000 AS lat_margin,
+      15000 / (111320 * greatest(abs(cos(((min(lat) + max(lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
+    FROM attention_points
+  ),
+  worker_rows AS (
+    SELECT
+      worker.user AS user_id,
+      ifNull(worker.status, '') AS status,
+      worker.location__coordinates AS worker_coordinates,
+      ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
+    FROM mg_workers AS worker
+    CROSS JOIN point_bounds AS bounds
+    LEFT JOIN mg_users AS u ON worker.user = u._id
+    WHERE bounds.points > 0
+      AND ifNull(worker.user, '') != ''
+      AND ifNull(worker.deleted, 0) = 0
+      AND ifNull(u.deleted, 0) = 0
+      AND length(worker.location__coordinates) >= 2
+      AND worker.location__coordinates[1] BETWEEN -180 AND 180
+      AND worker.location__coordinates[2] BETWEEN -90 AND 90
+      AND worker.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
+      AND worker.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
+  ),
+  latest_workers AS (
+    SELECT
+      user_id,
+      argMax(status, updated_at) AS status,
+      argMax(worker_coordinates, updated_at) AS worker_coordinates
+    FROM worker_rows
+    GROUP BY user_id
+  ),
+  active_session_users AS (
+    SELECT DISTINCT ifNull(profile_id, '') AS user_id
+    FROM appmetrica_sessions
+    WHERE ifNull(profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_to:DateTime}
+  ),
+  point_worker_pairs AS (
+    SELECT
+      workplace_id,
+      user_id,
+      status,
+      user_id IN (SELECT user_id FROM active_session_users) AS is_active_30d
+    FROM (
+      SELECT
+        ap.workplace_id AS workplace_id,
+        lw.user_id AS user_id,
+        lw.status AS status,
+        greatCircleDistance(ap.lon, ap.lat, lw.worker_coordinates[1], lw.worker_coordinates[2]) AS distance_m
+      FROM attention_points AS ap
+      CROSS JOIN latest_workers AS lw
+      WHERE lw.worker_coordinates[1] BETWEEN ap.lon - (15000 / (111320 * greatest(abs(cos(ap.lat * pi() / 180)), 0.2))) AND ap.lon + (15000 / (111320 * greatest(abs(cos(ap.lat * pi() / 180)), 0.2)))
+        AND lw.worker_coordinates[2] BETWEEN ap.lat - (15000 / 111000) AND ap.lat + (15000 / 111000)
+        AND greatCircleDistance(ap.lon, ap.lat, lw.worker_coordinates[1], lw.worker_coordinates[2]) <= 15000
+    )
+    WHERE distance_m <= 15000
+  ),
+  point_workers AS (
+    SELECT
+      workplace_id,
+      uniqExact(user_id) AS total_workers_15km,
+      uniqExactIf(user_id, is_active_30d) AS active_workers_30d_15km,
+      uniqExactIf(user_id, status = 'ready') AS total_status_ready,
+      uniqExactIf(user_id, status = 'booked') AS total_status_booked,
+      uniqExactIf(user_id, status = 'worked') AS total_status_worked,
+      uniqExactIf(user_id, status NOT IN ('ready', 'booked', 'worked')) AS total_status_other,
+      uniqExactIf(user_id, is_active_30d AND status = 'ready') AS active_status_ready,
+      uniqExactIf(user_id, is_active_30d AND status = 'booked') AS active_status_booked,
+      uniqExactIf(user_id, is_active_30d AND status = 'worked') AS active_status_worked,
+      uniqExactIf(user_id, is_active_30d AND status NOT IN ('ready', 'booked', 'worked')) AS active_status_other
+    FROM point_worker_pairs
+    GROUP BY workplace_id
+  )
+  SELECT
+    ap.workplace_id AS workplace_id,
+    ap.workplace_title AS workplace_title,
+    ap.technical_name AS technical_name,
+    ap.client_title AS client_title,
+    ap.city AS city,
+    ap.region AS region,
+    ap.street AS street,
+    ap.ordered_7d AS ordered_7d,
+    ap.covered_7d AS covered_7d,
+    ap.free_7d AS free_7d,
+    ap.max_daily_free AS max_daily_free,
+    ap.days_with_free AS days_with_free,
+    toString(ap.nearest_free_date) AS nearest_free_date,
+    ifNull(pw.total_workers_15km, 0) AS total_workers_15km,
+    ifNull(pw.active_workers_30d_15km, 0) AS active_workers_30d_15km,
+    ifNull(pw.total_status_ready, 0) AS total_status_ready,
+    ifNull(pw.total_status_booked, 0) AS total_status_booked,
+    ifNull(pw.total_status_worked, 0) AS total_status_worked,
+    ifNull(pw.total_status_other, 0) AS total_status_other,
+    ifNull(pw.active_status_ready, 0) AS active_status_ready,
+    ifNull(pw.active_status_booked, 0) AS active_status_booked,
+    ifNull(pw.active_status_worked, 0) AS active_status_worked,
+    ifNull(pw.active_status_other, 0) AS active_status_other
+  FROM attention_points AS ap
+  LEFT JOIN point_workers AS pw ON ap.workplace_id = pw.workplace_id
+  ORDER BY free_7d DESC, max_daily_free DESC, workplace_id ASC
+  FORMAT JSONEachRow`;
+}
+
 async function loadDailyRowsForWorkplaces(client, whereSql, params, workplaceIds, operation) {
   if (workplaceIds.length === 0) {
     return [];
@@ -1192,6 +1552,17 @@ async function loadWorkplaceAnalysisPointsDashboard(client, filters, options = {
   };
 }
 
+async function loadWorkplaceAttentionDashboard(client, filters) {
+  const { params, whereSql } = attentionParamsForFilters(filters);
+  const rows = await client.queryJSONEachRow(
+    attentionPointsQuery(whereSql),
+    params,
+    'workplace analysis attention points'
+  );
+
+  return mergeWorkplaceAttentionRows(filters, rows);
+}
+
 async function loadWorkplaceAnalysisDashboardSection(
   client,
   input = {},
@@ -1200,6 +1571,16 @@ async function loadWorkplaceAnalysisDashboardSection(
   options = {}
 ) {
   assertWorkplaceAnalysisSection(section);
+
+  if (section === 'attention') {
+    const filters = normalizeWorkplaceAttentionFilters(input, now);
+
+    return readThroughCache(
+      options.cache,
+      cacheKeyForWorkplaceAnalysisSection(section, filters),
+      () => loadWorkplaceAttentionDashboard(client, filters)
+    );
+  }
 
   const filters = normalizeWorkplaceAnalysisFilters(input, now);
 
@@ -1228,6 +1609,8 @@ module.exports = {
   loadWorkplaceAnalysisDashboard,
   loadWorkplaceAnalysisDashboardSection,
   loadWorkplaceAnalysisDashboardShell,
+  mergeWorkplaceAttentionRows,
   mergeWorkplaceAnalysisRows,
+  normalizeWorkplaceAttentionFilters,
   normalizeWorkplaceAnalysisFilters
 };

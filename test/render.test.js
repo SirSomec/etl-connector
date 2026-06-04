@@ -1024,6 +1024,87 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /data-level="4"/);
 });
 
+test('renderWorkplaceAnalysisDashboard renders attention tab progressive container', () => {
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-03',
+        rangeDays: 3,
+        client: ['Бренд'],
+        city: ['Москва'],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        search: '',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        sort: 'orders',
+        limit: 12
+      },
+      filterOptions: {
+        client: ['Бренд'],
+        city: ['Москва'],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: []
+      },
+      context: { sortLabel: 'Сначала крупнейшие по заказу', maxDailyAmount: 0 },
+      points: []
+    }
+  });
+
+  assert.match(html, /Обзор точек/);
+  assert.match(html, /Требуют внимания/);
+  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/workplace-analysis\/section\?section=attention/);
+});
+
+test('renderWorkplaceAnalysisDashboardSection renders attention table without personal data', () => {
+  const html = renderWorkplaceAnalysisDashboardSection({
+    section: 'attention',
+    dashboard: {
+      filters: {
+        attentionFrom: '2026-06-04',
+        attentionTo: '2026-06-11'
+      },
+      attentionPoints: [
+        {
+          workplaceId: 'wp1',
+          title: '<script>Север</script>',
+          clientTitle: 'Бренд',
+          city: 'Москва',
+          address: 'Ленина 1',
+          free7d: 6,
+          ordered7d: 10,
+          covered7d: 4,
+          coveragePercent: 40,
+          maxDailyFree: 5,
+          nearestFreeDate: '2026-06-04',
+          totalWorkers15km: 20,
+          activeWorkers30d15km: 3,
+          activeWorkersPerFreeShift: 0.5,
+          activeWorkers30dByStatus15km: { ready: 2, booked: 1, worked: 0, other: 0 },
+          totalWorkersByStatus15km: { ready: 8, booked: 2, worked: 1, other: 9 },
+          priorityReason: 'пик в ближайшие дни'
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /Точки, требующие внимания/);
+  assert.match(html, /Свободно 7 дней/);
+  assert.match(html, /&lt;script&gt;Север&lt;\/script&gt;/);
+  assert.match(html, /ready 2 · booked 1 · worked 0 · прочие 0/);
+  assert.match(html, /пик в ближайшие дни/);
+  assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
+});
+
 test('renderWorkplaceAnalysisDashboard aligns heatmap columns from Monday to Sunday', () => {
   const html = renderWorkplaceAnalysisDashboard({
     database: 'etl',

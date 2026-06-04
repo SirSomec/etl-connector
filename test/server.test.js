@@ -555,6 +555,59 @@ test('GET /dashboards/workplace-analysis/section renders at least ten point card
   });
 });
 
+test('GET /dashboards/workplace-analysis/section renders attention fragment', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'workplace analysis attention points') {
+        return [
+          {
+            workplace_id: 'wp-attention',
+            workplace_title: 'Attention point',
+            client_title: 'Brand',
+            city: 'Moscow',
+            street: 'Street 1',
+            ordered_7d: 12,
+            covered_7d: 5,
+            free_7d: 7,
+            max_daily_free: 4,
+            days_with_free: 2,
+            nearest_free_date: '2026-06-04',
+            total_workers_15km: 18,
+            active_workers_30d_15km: 6,
+            active_status_ready: 4,
+            active_status_booked: 1,
+            active_status_worked: 1
+          }
+        ];
+      }
+
+      return [];
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis/section?section=attention&client=Brand'
+    );
+
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(text, /<html/);
+    assert.match(text, /Точки, требующие внимания/);
+    assert.match(text, /Attention point/);
+    assert.match(text, /Свободно 7 дней/);
+    assert.match(text, /ready 4 · booked 1 · worked 1/);
+  });
+
+  const attentionCall = client.calls.find((call) => call[1] === 'workplace analysis attention points');
+
+  assert.ok(attentionCall);
+  assert.equal(attentionCall[2].param_clients, "['Brand']");
+  assert.equal(attentionCall[3].includes("ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'confirmed', 'delayed', 'waiting')"), true);
+});
+
 test('GET /dashboards/workplace-analysis/point renders point detail page', async () => {
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {

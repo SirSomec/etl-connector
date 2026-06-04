@@ -6,8 +6,10 @@ const {
   heatmapLevel,
   loadWorkplaceAnalysisDashboardSection,
   loadWorkplaceAnalysisDashboardShell,
+  mergeWorkplaceAttentionRows,
   mergeWorkplaceAnalysisRows,
-  normalizeWorkplaceAnalysisFilters
+  normalizeWorkplaceAnalysisFilters,
+  normalizeWorkplaceAttentionFilters
 } = require('../src/workplaceAnalysisDashboard');
 
 const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
@@ -51,6 +53,92 @@ test('normalizeWorkplaceAnalysisFilters defaults to the current month and whitel
     limit: 12,
     page: 1,
     offset: 0
+  });
+});
+
+test('normalizeWorkplaceAttentionFilters defaults to today plus seven days and keeps shared filters', () => {
+  const filters = normalizeWorkplaceAttentionFilters(
+    {
+      attentionLimit: '999',
+      client: ['Бренд', ' '],
+      city: 'Москва',
+      orderType: ['regular', 'unsafe'],
+      search: '  север  ',
+      includeHiddenOrders: 'on'
+    },
+    new Date('2026-06-04T12:00:00.000Z')
+  );
+
+  assert.equal(filters.attentionFrom, '2026-06-04');
+  assert.equal(filters.attentionTo, '2026-06-11');
+  assert.equal(filters.attentionFromDateTime, '2026-06-04 00:00:00');
+  assert.equal(filters.attentionToExclusiveDateTime, '2026-06-12 00:00:00');
+  assert.equal(filters.attentionDays, 8);
+  assert.equal(filters.attentionLimit, 20);
+  assert.deepEqual(filters.client, ['Бренд']);
+  assert.deepEqual(filters.city, ['Москва']);
+  assert.deepEqual(filters.orderType, ['regular']);
+  assert.equal(filters.search, 'север');
+  assert.equal(filters.includeHiddenOrders, true);
+});
+
+test('mergeWorkplaceAttentionRows calculates free order, status bases, score and priority reason', () => {
+  const filters = normalizeWorkplaceAttentionFilters({}, new Date('2026-06-04T12:00:00.000Z'));
+  const dashboard = mergeWorkplaceAttentionRows(filters, [
+    {
+      workplace_id: 'wp1',
+      workplace_title: 'Точка 1',
+      client_title: 'Бренд',
+      city: 'Москва',
+      street: 'Ленина 1',
+      ordered_7d: 10,
+      covered_7d: 4,
+      free_7d: 6,
+      max_daily_free: 5,
+      days_with_free: 2,
+      nearest_free_date: '2026-06-04',
+      total_workers_15km: 20,
+      active_workers_30d_15km: 3,
+      total_status_ready: 8,
+      total_status_booked: 2,
+      total_status_worked: 1,
+      total_status_other: 9,
+      active_status_ready: 2,
+      active_status_booked: 1,
+      active_status_worked: 0,
+      active_status_other: 0
+    },
+    {
+      workplace_id: 'wp2',
+      workplace_title: 'Точка 2',
+      ordered_7d: 4,
+      covered_7d: 0,
+      free_7d: 4,
+      max_daily_free: 4,
+      days_with_free: 1,
+      nearest_free_date: '2026-06-08',
+      total_workers_15km: 50,
+      active_workers_30d_15km: 20
+    }
+  ]);
+
+  assert.equal(dashboard.attentionPoints.length, 2);
+  assert.equal(dashboard.attentionPoints[0].workplaceId, 'wp1');
+  assert.equal(dashboard.attentionPoints[0].free7d, 6);
+  assert.equal(dashboard.attentionPoints[0].coveragePercent, 40);
+  assert.equal(dashboard.attentionPoints[0].activeWorkersPerFreeShift, 0.5);
+  assert.equal(dashboard.attentionPoints[0].priorityReason, 'пик в ближайшие дни');
+  assert.deepEqual(dashboard.attentionPoints[0].totalWorkersByStatus15km, {
+    ready: 8,
+    booked: 2,
+    worked: 1,
+    other: 9
+  });
+  assert.deepEqual(dashboard.attentionPoints[0].activeWorkers30dByStatus15km, {
+    ready: 2,
+    booked: 1,
+    worked: 0,
+    other: 0
   });
 });
 
@@ -496,6 +584,74 @@ test('loadWorkplaceAnalysisDashboardSection loads and caches points independentl
     'workplace analysis top workplaces',
     'workplace analysis daily orders'
   ]);
+});
+
+test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing statuses and 15km base', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis attention points') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Север',
+            client_title: 'Бренд',
+            city: 'Москва',
+            street: 'Ленина 1',
+            ordered_7d: 10,
+            covered_7d: 4,
+            free_7d: 6,
+            max_daily_free: 5,
+            days_with_free: 2,
+            nearest_free_date: '2026-06-04',
+            total_workers_15km: 20,
+            active_workers_30d_15km: 3,
+            total_status_ready: 8,
+            total_status_booked: 2,
+            total_status_worked: 1,
+            total_status_other: 9,
+            active_status_ready: 2,
+            active_status_booked: 1
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    {
+      from: '2026-01-01',
+      to: '2026-01-31',
+      client: 'Бренд',
+      city: 'Москва',
+      search: 'Север; DROP TABLE mg_jobs'
+    },
+    'attention',
+    new Date('2026-06-04T12:00:00.000Z')
+  );
+  const attentionCall = calls[0];
+
+  assert.equal(dashboard.attentionPoints.length, 1);
+  assert.equal(dashboard.attentionPoints[0].workplaceId, 'wp1');
+  assert.equal(dashboard.attentionPoints[0].free7d, 6);
+  assert.equal(attentionCall.operation, 'workplace analysis attention points');
+  assert.equal(attentionCall.params.param_from, '2026-06-04 00:00:00');
+  assert.equal(attentionCall.params.param_to, '2026-06-12 00:00:00');
+  assert.equal(attentionCall.params.param_active_from, '2026-05-05 00:00:00');
+  assert.equal(attentionCall.params.param_active_to, '2026-06-05 00:00:00');
+  assert.equal(attentionCall.params.param_clients, "['Бренд']");
+  assert.equal(attentionCall.query.includes('completed'), true);
+  assert.equal(attentionCall.query.includes('doccheck'), false);
+  assert.equal(attentionCall.query.includes('greatCircleDistance'), true);
+  assert.equal(attentionCall.query.includes('<= 15000'), true);
+  assert.equal(attentionCall.query.includes('influence_weight'), false);
+  assert.equal(attentionCall.query.includes('appmetrica_sessions'), true);
+  assert.equal(attentionCall.query.includes('DROP TABLE'), false);
 });
 
 test('loadWorkplaceAnalysisDashboard keeps pinned workplaces above filtered and sorted results', async () => {

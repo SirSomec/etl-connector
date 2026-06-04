@@ -48,6 +48,12 @@ const RENDERED_SQL_METRIC_IDS = [
   'workplace-analysis.points.active-days',
   'workplace-analysis.points.avg-daily-order',
   'workplace-analysis.points.heatmap',
+  'workplace-analysis.attention',
+  'workplace-analysis.attention.free-7d',
+  'workplace-analysis.attention.coverage',
+  'workplace-analysis.attention.total-workers-15km',
+  'workplace-analysis.attention.active-workers-30d-15km',
+  'workplace-analysis.attention.active-workers-per-free-shift',
   'worker-cancellations.workers',
   'worker-cancellations.workers.confirmed-shifts',
   'worker-cancellations.workers.worker-cancellations',
@@ -200,6 +206,17 @@ test('geo and cancellation metrics show the specialized SQL used for those value
   assert.match(heatmap.sql, /appmetrica_sessions/);
   assert.match(cancellations.sql, /is_worker_cancelled_24h/);
   assert.match(cancellations.sql, /INTERVAL 24 HOUR/);
+});
+
+test('workplace attention metrics show 15km base and closing statuses SQL', () => {
+  const attention = getSqlMetricInfo('workplace-analysis.attention.free-7d');
+
+  assert.match(attention.sql, /completed/);
+  assert.doesNotMatch(attention.sql, /doccheck/);
+  assert.match(attention.sql, /greatCircleDistance/);
+  assert.match(attention.sql, /15000/);
+  assert.match(attention.sql, /appmetrica_sessions/);
+  assert.doesNotMatch(attention.sql, /influence_weight/);
 });
 
 test('highlightSql escapes html and highlights SQL keywords and parameters', () => {

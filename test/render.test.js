@@ -1105,6 +1105,79 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
   assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
 });
 
+test('renderWorkplaceAnalysisDashboardSection gives attention table stable horizontal layout', () => {
+  const html = renderWorkplaceAnalysisDashboardSection({
+    section: 'attention',
+    dashboard: {
+      filters: {
+        attentionFrom: '2026-06-04',
+        attentionTo: '2026-06-11'
+      },
+      attentionPoints: [
+        {
+          workplaceId: 'wp1',
+          title: 'Длинное название точки',
+          clientTitle: 'Бренд',
+          city: 'Москва',
+          address: 'Ленина 1',
+          free7d: 124,
+          ordered7d: 200,
+          covered7d: 76,
+          coveragePercent: 38,
+          maxDailyFree: 21,
+          nearestFreeDate: '2026-06-04',
+          totalWorkers15km: 52386,
+          activeWorkers30d15km: 986,
+          activeWorkersPerFreeShift: 8,
+          activeWorkers30dByStatus15km: { ready: 17, booked: 2, worked: 5, other: 0 },
+          totalWorkersByStatus15km: { ready: 3562, booked: 32, worked: 2209, other: 46583 },
+          priorityReason: 'пик в ближайшие дни'
+        }
+      ]
+    }
+  });
+  const pageHtml = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-04',
+        rangeDays: 4,
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        search: '',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        sort: 'orders',
+        limit: 12
+      },
+      filterOptions: {
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: []
+      },
+      context: { sortLabel: 'Сначала крупнейшие по заказу', maxDailyAmount: 0 },
+      points: []
+    }
+  });
+
+  assert.match(html, /<table class="attention-table">/);
+  assert.match(html, /class="attention-point-cell"/);
+  assert.match(html, /class="attention-status-cell"/);
+  assert.match(pageHtml, /\.attention-table\s*\{[^}]*min-width: 1280px;/);
+  assert.match(pageHtml, /\.table-scroll\s*\{[^}]*overflow-x: auto;/);
+});
+
 test('renderWorkplaceAnalysisDashboard aligns heatmap columns from Monday to Sunday', () => {
   const html = renderWorkplaceAnalysisDashboard({
     database: 'etl',

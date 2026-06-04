@@ -985,6 +985,14 @@ function layout({
       background: var(--surface);
     }
 
+    .table-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
     table {
       width: 100%;
       min-width: 560px;
@@ -1032,6 +1040,33 @@ function layout({
     .number-cell {
       text-align: right;
       white-space: nowrap;
+    }
+
+    .attention-table {
+      min-width: 1280px;
+      table-layout: auto;
+    }
+
+    .attention-table th,
+    .attention-table td {
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+
+    .attention-table th {
+      white-space: nowrap;
+    }
+
+    .attention-point-cell {
+      min-width: 220px;
+    }
+
+    .attention-status-cell {
+      min-width: 220px;
+    }
+
+    .attention-reason-cell {
+      min-width: 140px;
     }
 
     .phone-cell,
@@ -4002,10 +4037,10 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
   }
 
   return `<div class="table-scroll">
-  <table>
+  <table class="attention-table">
     <thead>
       <tr>
-        <th>Точка</th>
+        <th class="attention-point-cell">Точка</th>
         <th class="number-cell">Свободно 7 дней</th>
         <th>Ближайший день</th>
         <th class="number-cell">Пик дня</th>
@@ -4013,8 +4048,8 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
         <th class="number-cell">Вся база 15 км</th>
         <th class="number-cell">Активная база 30 дней 15 км</th>
         <th class="number-cell">Актив / свободная</th>
-        <th>Статусы активной базы</th>
-        <th>Причина</th>
+        <th class="attention-status-cell">Статусы активной базы</th>
+        <th class="attention-reason-cell">Причина</th>
       </tr>
     </thead>
     <tbody>
@@ -4022,7 +4057,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
         const detailHref = escapeHtml(workplacePointPageHref(filters || {}, point.workplaceId));
 
         return `<tr>
-        <td><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
+        <td class="attention-point-cell"><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
         ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser)}
         <td>${escapeHtml(point.nearestFreeDate || '')}</td>
         <td class="number-cell">${escapeHtml(formatNumber(point.maxDailyFree))}</td>
@@ -4036,8 +4071,8 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
         )}
         ${renderAttentionNumberCell(point.activeWorkers30d15km, 'workplace-analysis.attention.active-workers-30d-15km', currentUser)}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
-        <td>${escapeHtml(renderWorkerStatusBreakdown(point.activeWorkers30dByStatus15km))}</td>
-        <td>${escapeHtml(point.priorityReason)}</td>
+        <td class="attention-status-cell">${escapeHtml(renderWorkerStatusBreakdown(point.activeWorkers30dByStatus15km))}</td>
+        <td class="attention-reason-cell">${escapeHtml(point.priorityReason)}</td>
       </tr>`;
       }).join('')}
     </tbody>

@@ -462,7 +462,7 @@ test('loadWorkplacePointDayDetails queries selected day datasets with safe param
   assert.equal(calls[0].params.param_professions, "['Комплектовщик']");
   assert.equal(calls[0].params.param_order_types, "['regular']");
   assert.equal(Object.prototype.hasOwnProperty.call(calls[0].params, 'param_job_statuses'), false);
-  assert.equal(calls[1].params.param_job_statuses, "['confirmed','cancelled']");
+  assert.equal(calls[1].params.param_job_statuses, "['confirmed','completed','cancelled']");
   assert.equal(calls[0].query.includes('DROP TABLE'), false);
   assert.equal(calls[0].query.includes('FROM mg_orders AS o'), true);
   assert.equal(calls[1].query.includes('FROM mg_jobs'), true);
@@ -541,7 +541,7 @@ test('loadWorkplacePointDayDetails keeps no-shift orders when job status filter 
     'workplace point day jobs'
   ]);
   assert.equal(Object.prototype.hasOwnProperty.call(calls[0].params, 'param_job_statuses'), false);
-  assert.equal(calls[1].params.param_job_statuses, "['confirmed']");
+  assert.equal(calls[1].params.param_job_statuses, "['confirmed','completed']");
 });
 
 test('loadWorkplacePointDayDetails treats completed factual shifts as detail rows', async () => {
@@ -617,6 +617,76 @@ test('loadWorkplacePointDayDetails treats completed factual shifts as detail row
   assert.equal(calls[1].params.param_job_statuses, "['completed']");
   assert.equal(calls[1].query.includes("ifNull(status, '') IN ('confirmed', 'completed')"), true);
   assert.equal(calls[1].query.includes('hours AS actual_hours'), true);
+});
+
+test('loadWorkplacePointDayDetails keeps completed factual shifts when confirmed filter is selected', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point day orders') {
+        return [
+          {
+            order_id: 'order-1',
+            profession: 'cook',
+            order_start_local: '2026-06-04 06:00:00',
+            planned_hours: 8.3
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day jobs') {
+        if (params.param_job_statuses !== "['confirmed','completed']") {
+          return [];
+        }
+
+        return [
+          {
+            order_id: 'order-1',
+            job_id: 'job-1',
+            status: 'completed',
+            worker_id: 'worker-1',
+            actual_hours: 8.3,
+            is_factual: 1,
+            actual_time_local: '2026-06-04 06:03 - 2026-06-04 15:29'
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day workers') {
+        return [
+          {
+            worker_id: 'worker-1',
+            worker_full_name: 'Worker Name',
+            worker_phone: '+79990000000'
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day payments') {
+        return [{ job_id: 'job-1', payment_amount: 0 }];
+      }
+
+      return [];
+    }
+  };
+
+  const details = await loadWorkplacePointDayDetails(
+    client,
+    {
+      workplaceId: 'wp1',
+      date: '2026-06-04',
+      jobStatus: ['confirmed']
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.rows[0].confirmedStatus, 'completed');
+  assert.equal(details.rows[0].workerFullName, 'Worker Name');
+  assert.equal(details.rows[0].actualHours, 8.3);
+  assert.equal(details.rows[0].actualTimeLocal, '2026-06-04 06:03 - 2026-06-04 15:29');
+  assert.equal(calls[1].params.param_job_statuses, "['confirmed','completed']");
 });
 
 test('mergeWorkplacePointDayDetails keeps legacy row mapping', () => {

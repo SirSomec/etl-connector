@@ -414,6 +414,31 @@ function latestTextValue(values) {
   return uniqueTextValues(values).sort().pop() || '';
 }
 
+function expandDayDetailJobStatusFilters(statuses) {
+  const expanded = [];
+  const seen = new Set();
+  const addStatus = (status) => {
+    const text = textValue(status);
+
+    if (text === '' || seen.has(text)) {
+      return;
+    }
+
+    seen.add(text);
+    expanded.push(text);
+  };
+
+  for (const status of statuses || []) {
+    addStatus(status);
+
+    if (status === 'confirmed') {
+      addStatus('completed');
+    }
+  }
+
+  return expanded;
+}
+
 function sortDayDetailRows(rows) {
   return rows.sort((left, right) => {
     const leftKey = [
@@ -1055,13 +1080,14 @@ async function loadWorkplacePointDayDetails(client, input = {}, now = new Date()
   const jobParams = {
     param_order_ids: serializeStringArray(orderIds)
   };
+  const dayDetailJobStatuses = expandDayDetailJobStatusFilters(detailInput.filters.jobStatus);
 
-  if (detailInput.filters.jobStatus.length > 0) {
-    jobParams.param_job_statuses = serializeStringArray(detailInput.filters.jobStatus);
+  if (dayDetailJobStatuses.length > 0) {
+    jobParams.param_job_statuses = serializeStringArray(dayDetailJobStatuses);
   }
 
   const jobRows = await client.queryJSONEachRow(
-    dayDetailsJobsQuery(detailInput.filters.jobStatus.length > 0),
+    dayDetailsJobsQuery(dayDetailJobStatuses.length > 0),
     jobParams,
     'workplace point day jobs'
   );

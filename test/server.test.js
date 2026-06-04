@@ -924,7 +924,7 @@ test('GET /dashboards/workplace-analysis/point/details renders day details fragm
   assert.equal(calls[0][2].param_from, '2026-06-02 00:00:00');
   assert.equal(calls[0][2].param_to, '2026-06-03 00:00:00');
   assert.equal(Object.prototype.hasOwnProperty.call(calls[0][2], 'param_job_statuses'), false);
-  assert.equal(calls[1][2].param_job_statuses, "['confirmed']");
+  assert.equal(calls[1][2].param_job_statuses, "['confirmed','completed']");
 });
 
 test('GET /dashboards/workplace-analysis/point/details renders bad request as fragment', async () => {

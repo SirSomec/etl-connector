@@ -2,6 +2,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
 const DEFAULT_ATTENTION_LIMIT = 150;
 const ATTENTION_PAGE_SIZE = 15;
+const WORKPLACE_ATTENTION_CACHE_SCHEMA_VERSION = 2;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100000;
 const DEFAULT_SORT = 'orders';
@@ -1530,6 +1531,7 @@ function cacheKeyForWorkplaceAnalysisSection(section, filters) {
   return JSON.stringify({
     board: 'workplace-analysis',
     section,
+    ...(section === 'attention' ? { schemaVersion: WORKPLACE_ATTENTION_CACHE_SCHEMA_VERSION } : {}),
     filters: {
       from: filters.from,
       to: filters.to,
@@ -1553,6 +1555,8 @@ function cacheKeyForWorkplaceAnalysisSection(section, filters) {
       stabilityTo: filters.stabilityTo,
       limit: filters.limit,
       page: filters.page,
+      attentionFrom: filters.attentionFrom,
+      attentionTo: filters.attentionTo,
       attentionPage: filters.attentionPage,
       attentionPageSize: filters.attentionPageSize,
       attentionSort: filters.attentionSort,

@@ -713,6 +713,99 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
   assert.equal(attentionCall.query.includes('DROP TABLE'), false);
 });
 
+test('loadWorkplaceAnalysisDashboardSection ignores stale attention cache without profession breakdown', async () => {
+  const now = new Date('2026-06-04T12:00:00.000Z');
+  const input = {
+    from: '2026-01-01',
+    to: '2026-01-31',
+    client: 'Бренд'
+  };
+  const filters = normalizeWorkplaceAttentionFilters(input, now);
+  const staleCacheKey = JSON.stringify({
+    board: 'workplace-analysis',
+    section: 'attention',
+    filters: {
+      from: filters.from,
+      to: filters.to,
+      pinnedWorkplaceIds: filters.pinnedWorkplaceIds,
+      client: filters.client,
+      city: filters.city,
+      region: filters.region,
+      profession: filters.profession,
+      orderType: filters.orderType,
+      jobStatus: filters.jobStatus,
+      contractor: filters.contractor,
+      search: filters.search,
+      includeDeletedOrders: filters.includeDeletedOrders,
+      includeHiddenOrders: filters.includeHiddenOrders,
+      sort: filters.sort,
+      slaFrom: filters.slaFrom,
+      slaTo: filters.slaTo,
+      ordersFrom: filters.ordersFrom,
+      ordersTo: filters.ordersTo,
+      stabilityFrom: filters.stabilityFrom,
+      stabilityTo: filters.stabilityTo,
+      limit: filters.limit,
+      page: filters.page,
+      attentionPage: filters.attentionPage,
+      attentionPageSize: filters.attentionPageSize,
+      attentionSort: filters.attentionSort,
+      attentionDirection: filters.attentionDirection,
+      attentionLimit: filters.attentionLimit
+    }
+  });
+  const cache = createDashboardSectionCache({
+    now: () => Date.parse('2026-06-04T12:00:00.000Z')
+  });
+
+  await cache.getOrLoad(staleCacheKey, async () => ({
+    filters,
+    attentionPoints: [
+      {
+        workplaceId: 'stale-wp',
+        free7d: 3
+      }
+    ],
+    attentionPagination: {
+      page: 1,
+      pageSize: 15,
+      totalWorkplaces: 1,
+      totalPages: 1,
+      hasPrevious: false,
+      hasNext: false
+    }
+  }));
+
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      return [
+        {
+          workplace_id: 'fresh-wp',
+          workplace_title: 'Свежая точка',
+          client_title: 'Бренд',
+          ordered_7d: 8,
+          covered_7d: 2,
+          free_7d: 6,
+          free_professions_7d: ['Picker'],
+          free_profession_counts_7d: [6],
+          max_daily_free: 6,
+          days_with_free: 1,
+          nearest_free_date: '2026-06-04'
+        }
+      ];
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardSection(client, input, 'attention', now, { cache });
+
+  assert.equal(calls.length, 1);
+  assert.equal(dashboard.attentionPoints[0].workplaceId, 'fresh-wp');
+  assert.deepEqual(dashboard.attentionPoints[0].freeProfessions7d, [{ profession: 'Picker', free7d: 6 }]);
+});
+
 test('loadWorkplaceAnalysisDashboard keeps pinned workplaces above filtered and sorted results', async () => {
   const calls = [];
   const client = {

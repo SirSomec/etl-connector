@@ -1197,7 +1197,7 @@ test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention
   assert.match(html, /class="attention-status-line">ready 3 562<\/span>/);
   assert.match(
     html,
-    /<td class="number-cell attention-stack-cell metric-info-scope">[\s\S]*<div class="attention-metric-content">[\s\S]*52 386[\s\S]*<\/div><button type="button" class="sql-inspector-button"/
+    /<td class="number-cell attention-stack-cell metric-info-scope">[\s\S]*<div class="attention-metric-inline">[\s\S]*<div class="attention-metric-content">[\s\S]*52 386[\s\S]*<\/div><button type="button" class="sql-inspector-button"/
   );
   assert.doesNotMatch(html, /ready 3 562 · booked 32 · worked 2 209 · прочие 46 583/);
   assert.match(html, /class="sortable-header"/);
@@ -1208,6 +1208,8 @@ test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention
   assert.doesNotMatch(html, /table-scroll/);
   assert.doesNotMatch(pageHtml, /\.attention-table\s*\{[^}]*min-width: 1280px;/);
   assert.match(pageHtml, /\.attention-table\s*\{[^}]*min-width: 0;/);
+  assert.doesNotMatch(pageHtml, /\.attention-table td\.metric-info-scope\s*\{[^}]*display:\s*flex/);
+  assert.match(pageHtml, /\.attention-metric-inline\s*\{[^}]*display:\s*flex/);
 });
 
 test('renderWorkplaceAnalysisDashboard aligns heatmap columns from Monday to Sunday', () => {

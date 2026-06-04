@@ -127,10 +127,25 @@ function renderSqlInspector(metricId, currentUser) {
   return `${renderSqlInspectorTrigger(metricId, currentUser)}${renderSqlInspectorModal(metricId, currentUser)}`;
 }
 
-function renderMetricInfoScope({ className, metricId, currentUser, content, tag = 'div', attributes = '' }) {
-  const inspector = renderSqlInspector(metricId, currentUser);
+function renderMetricInfoScope({
+  className,
+  metricId,
+  currentUser,
+  content,
+  tag = 'div',
+  attributes = '',
+  inlineInspector = false,
+  inlineClassName = 'metric-info-inline'
+}) {
+  const inspectorTrigger = renderSqlInspectorTrigger(metricId, currentUser);
+  const inspectorModal = renderSqlInspectorModal(metricId, currentUser);
+  const inspector = `${inspectorTrigger}${inspectorModal}`;
   const scopeClass = inspector ? `${className} metric-info-scope` : className;
   const attributeText = attributes ? ` ${attributes}` : '';
+
+  if (inlineInspector && inspectorTrigger) {
+    return `<${tag} class="${escapeHtml(scopeClass)}"${attributeText}><div class="${escapeHtml(inlineClassName)}">${content}${inspectorTrigger}</div>${inspectorModal}</${tag}>`;
+  }
 
   return `<${tag} class="${escapeHtml(scopeClass)}"${attributeText}>${content}${inspector}</${tag}>`;
 }
@@ -1087,14 +1102,18 @@ function layout({
     }
 
     .attention-table td.metric-info-scope {
+      padding-right: 7px;
+    }
+
+    .attention-metric-inline {
       display: flex;
       align-items: flex-start;
       justify-content: flex-end;
       gap: 6px;
-      padding-right: 7px;
+      min-width: 0;
     }
 
-    .attention-table td.metric-info-scope > .sql-inspector-button {
+    .attention-metric-inline > .sql-inspector-button {
       position: static;
       flex: 0 0 auto;
       margin-top: -2px;
@@ -4177,6 +4196,8 @@ function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, ext
     className,
     metricId,
     currentUser,
+    inlineInspector: true,
+    inlineClassName: 'attention-metric-inline',
     content: `<div class="attention-metric-content"><span class="attention-metric-value">${escapeHtml(formatNumber(value, digits))}</span>${extraContent}</div>`
   });
 }
@@ -4187,6 +4208,8 @@ function renderAttentionPercentCell(value, metricId, currentUser) {
     className: 'number-cell',
     metricId,
     currentUser,
+    inlineInspector: true,
+    inlineClassName: 'attention-metric-inline',
     content: `<div class="attention-metric-content"><span class="attention-metric-value">${escapeHtml(formatPercent(value))}</span></div>`
   });
 }

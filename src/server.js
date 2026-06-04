@@ -735,7 +735,8 @@ function createApp({
 
       try {
         const dashboard = await loadSalesByProjectDashboardSection(client, req.query, section, new Date(), {
-          cache: dashboardSectionCache
+          cache: dashboardSectionCache,
+          preloadService: preloads
         });
 
         res

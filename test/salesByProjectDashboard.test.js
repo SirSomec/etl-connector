@@ -309,6 +309,7 @@ test('loadSalesByProjectDashboardSection loads and caches summary independently'
   assert.equal(first.summary.workedShifts, 8);
   assert.equal(first.summary.slaPercent, 80);
   assert.equal(first.summary.revenueRub, 12000);
+  assert.equal(first.dataSource, undefined);
   assert.equal(second.summary.orderedShifts, 10);
   assert.deepEqual(calls.map((call) => call.operation), [
     'sales by project orders summary',
@@ -331,6 +332,99 @@ test('loadSalesByProjectDashboardSection loads and caches summary independently'
     'sales by project orders summary',
     'sales by project shifts summary'
   ]);
+});
+
+test('loadSalesByProjectDashboardSection reads from preload when coverage is available', async () => {
+  const { calls, client } = createDashboardClient({
+    'sales by project orders summary': [{ ordered_shifts: 999 }],
+    'sales by project shifts summary': [{ worked_shifts: 999 }]
+  });
+  const preloadService = {
+    readSalesByProjectSectionRows(input) {
+      assert.equal(input.section, 'summary');
+      assert.equal(input.fromDate, '2026-05-01');
+      assert.equal(input.toDate, '2026-06-01');
+
+      return {
+        orderSummaryRows: [
+          {
+            ordered_shifts: 10,
+            workplaces_with_orders: 3
+          }
+        ],
+        shiftSummaryRows: [
+          {
+            worked_shifts: 8,
+            revenue_rub: 12000,
+            unique_workers: 5,
+            workplaces_with_worked_shifts: 2,
+            cancelled_shifts: 1,
+            self_booked_confirmed_shifts: 4,
+            avg_worker_rate_hour: 300
+          }
+        ]
+      };
+    }
+  };
+
+  const dashboard = await loadSalesByProjectDashboardSection(
+    client,
+    {
+      period: 'month',
+      from: '2026-05-01',
+      to: '2026-05-31'
+    },
+    'summary',
+    new Date('2026-06-01T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  assert.equal(calls.length, 0);
+  assert.equal(dashboard.summary.orderedShifts, 10);
+  assert.equal(dashboard.dataSource, 'preload');
+});
+
+test('loadSalesByProjectDashboardSection falls back to ClickHouse when preload misses', async () => {
+  const { calls, client } = createDashboardClient({
+    'sales by project orders summary': [
+      {
+        ordered_shifts: 10,
+        workplaces_with_orders: 3
+      }
+    ],
+    'sales by project shifts summary': [
+      {
+        worked_shifts: 8,
+        revenue_rub: 12000,
+        unique_workers: 5,
+        workplaces_with_worked_shifts: 2,
+        cancelled_shifts: 1,
+        self_booked_confirmed_shifts: 4,
+        avg_worker_rate_hour: 300
+      }
+    ]
+  });
+  const preloadService = {
+    readSalesByProjectSectionRows() {
+      return null;
+    }
+  };
+
+  const dashboard = await loadSalesByProjectDashboardSection(
+    client,
+    {
+      period: 'month',
+      from: '2026-05-01',
+      to: '2026-05-31'
+    },
+    'summary',
+    new Date('2026-06-01T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  assert.equal(calls.length, 2);
+  assert.equal(dashboard.summary.orderedShifts, 10);
+  assert.equal(dashboard.dataSource, 'clickhouse');
 });
 
 test('loadSalesByProjectDashboard merges brand rows before limiting them', async () => {

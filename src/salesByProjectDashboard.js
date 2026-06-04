@@ -567,13 +567,44 @@ async function loadSalesByProjectDashboardSection(
   assertSalesByProjectSection(section);
 
   const filters = normalizeSalesByProjectFilters(input, now);
+  const preloadReader = options.preloadService && options.preloadService.readSalesByProjectSectionRows;
+
+  if (typeof preloadReader === 'function') {
+    try {
+      const preloadRows = await preloadReader.call(options.preloadService, {
+        section,
+        period: filters.period,
+        fromDate: filters.from,
+        toDate: filters.toExclusiveDateTime.slice(0, 10)
+      });
+
+      if (preloadRows) {
+        return {
+          ...mergeSalesByProjectSection(filters, section, preloadRows),
+          dataSource: 'preload'
+        };
+      }
+    } catch {
+      // Fall back to live ClickHouse data when the preload store is unavailable.
+    }
+  }
+
   const rows = await readThroughCache(
     options.cache,
     cacheKeyForSalesByProjectSection(section, filters),
     () => loadSalesByProjectSectionRows(client, filters, section)
   );
 
-  return mergeSalesByProjectSection(filters, section, rows);
+  const dashboard = mergeSalesByProjectSection(filters, section, rows);
+
+  if (typeof preloadReader === 'function') {
+    return {
+      ...dashboard,
+      dataSource: 'clickhouse'
+    };
+  }
+
+  return dashboard;
 }
 
 async function loadSalesByProjectDashboard(client, input = {}, now = new Date()) {

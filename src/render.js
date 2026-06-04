@@ -3480,10 +3480,21 @@ ${renderDashboardLoadingSection({
 })}`;
 }
 
+function renderDataSourceBadge(dashboard) {
+  if (!dashboard || !dashboard.dataSource) {
+    return '';
+  }
+
+  const label = dashboard.dataSource === 'preload' ? 'Источник: витрина' : 'Источник: ClickHouse';
+
+  return `<p class="technical-note">${escapeHtml(label)}</p>`;
+}
+
 function renderSalesByProjectDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'summary') {
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
+  ${renderDataSourceBadge(dashboard)}
   ${renderKpiCards(dashboard.summary, currentUser)}
 </section>`;
   }
@@ -3491,6 +3502,7 @@ function renderSalesByProjectDashboardSection({ dashboard, section, currentUser 
   if (section === 'trend') {
     return `<section class="section">
   ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}
+  ${renderDataSourceBadge(dashboard)}
   ${renderTrendRows(dashboard.trendRows, currentUser)}
 </section>`;
   }
@@ -3498,6 +3510,7 @@ function renderSalesByProjectDashboardSection({ dashboard, section, currentUser 
   if (section === 'brands') {
     return `<section class="section">
   ${renderMetricPanelHead('Бренды', 'sales-by-project.brands', currentUser)}
+  ${renderDataSourceBadge(dashboard)}
   ${renderBrandRows(dashboard.brandRows, currentUser)}
 </section>`;
   }
@@ -3505,6 +3518,7 @@ function renderSalesByProjectDashboardSection({ dashboard, section, currentUser 
   if (section === 'statuses') {
     return `<section class="section">
   ${renderMetricPanelHead('Статусы работ', 'sales-by-project.statuses', currentUser)}
+  ${renderDataSourceBadge(dashboard)}
   ${renderStatusRows(dashboard.statusRows, currentUser)}
 </section>`;
   }

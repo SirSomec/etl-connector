@@ -476,6 +476,68 @@ test('GET /dashboards/sales-by-project/section renders cached dashboard fragment
   assert.equal(salesCalls[0][2].param_to, '2026-05-01 00:00:00');
 });
 
+test('GET /dashboards/sales-by-project/section renders preload dashboard fragment', async () => {
+  const client = createFakeClient();
+  const preloadService = createFakePreloadService();
+
+  preloadService.readSalesByProjectSectionRows = async (input) => {
+    preloadService.calls.push(['readSalesByProjectSectionRows', input]);
+
+    return {
+      orderSummaryRows: [
+        {
+          ordered_shifts: 10,
+          workplaces_with_orders: 3
+        }
+      ],
+      shiftSummaryRows: [
+        {
+          worked_shifts: 8,
+          revenue_rub: 12000,
+          unique_workers: 5,
+          workplaces_with_worked_shifts: 2,
+          cancelled_shifts: 1,
+          self_booked_confirmed_shifts: 4,
+          avg_worker_rate_hour: 300
+        }
+      ]
+    };
+  };
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const { response, text } = await fetchText(
+        baseUrl,
+        '/dashboards/sales-by-project/section?section=summary&period=month&from=2026-04-01&to=2026-04-30'
+      );
+
+      assert.equal(response.status, 200);
+      assert.match(text, /Источник: витрина/);
+      assert.match(text, /10/);
+    },
+    baseConfig(),
+    { preloadService }
+  );
+
+  const salesCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('sales by project')
+  );
+
+  assert.deepEqual(preloadService.calls, [
+    [
+      'readSalesByProjectSectionRows',
+      {
+        section: 'summary',
+        period: 'month',
+        fromDate: '2026-04-01',
+        toDate: '2026-05-01'
+      }
+    ]
+  ]);
+  assert.equal(salesCalls.length, 0);
+});
+
 test('GET /dashboards/sales-by-project/section redacts upstream errors in fragment', async () => {
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {

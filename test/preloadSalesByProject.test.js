@@ -89,6 +89,13 @@ test('sales preload query builders use parameterized ClickHouse ranges', () => {
   assert.equal(queries.shiftFacts.includes('FORMAT JSONEachRow'), true);
 });
 
+test('sales preload query builders calculate period dates in Moscow timezone', () => {
+  const queries = buildSalesByProjectPreloadQueries();
+
+  assert.match(queries.orderFacts, /toString\(toDate\(o\.start, 'Europe\/Moscow'\)\) AS period_date/);
+  assert.match(queries.shiftFacts, /toString\(toDate\(shift_start, 'Europe\/Moscow'\)\) AS period_date/);
+});
+
 test('refreshSalesByProjectPreload loads ClickHouse rows and writes sqlite range', async () => {
   const calls = [];
   const client = createSalesClient(calls);

@@ -12,7 +12,7 @@ function preloadParams(fromDate, toDate) {
 function buildSalesByProjectPreloadQueries() {
   return {
     orderFacts: `SELECT
-  toString(toDate(o.start)) AS period_date,
+  toString(toDate(o.start, 'Europe/Moscow')) AS period_date,
   ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
   o._id AS order_id,
   ifNull(o.workplace, '') AS workplace_id,
@@ -87,7 +87,7 @@ shift_enriched AS (
   LEFT JOIN surcharges AS s ON sf.job = s.job
 )
 SELECT
-  toString(toDate(shift_start)) AS period_date,
+  toString(toDate(shift_start, 'Europe/Moscow')) AS period_date,
   ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
   job AS job_id,
   ifNull(worker, '') AS worker_id,

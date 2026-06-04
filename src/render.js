@@ -64,6 +64,12 @@ const NAV_LINKS = [
     label: 'Учетные записи',
     id: 'users',
     permission: 'users'
+  },
+  {
+    href: '/admin/preload',
+    label: 'Предзагрузка',
+    id: 'preload-admin',
+    permission: 'preload-admin'
   }
 ];
 
@@ -3041,6 +3047,86 @@ function renderAccountManagement({
     database,
     content,
     activeNav: 'users',
+    currentUser,
+    csrfToken
+  });
+}
+
+function renderCheckedAttribute(value) {
+  return value ? ' checked' : '';
+}
+
+function renderPreloadRunRow(run) {
+  return `<tr>
+    <td>${escapeHtml(run.id)}</td>
+    <td>${escapeHtml(run.trigger)}</td>
+    <td>${escapeHtml(run.status)}</td>
+    <td>${escapeHtml(run.fromDate)} - ${escapeHtml(run.toDate)}</td>
+    <td>${escapeHtml(run.startedAt || '-')}</td>
+    <td>${escapeHtml(run.finishedAt || '-')}</td>
+    <td>${escapeHtml(run.rowsWritten || 0)}</td>
+    <td>${escapeHtml(run.errorMessage || '')}</td>
+  </tr>`;
+}
+
+function renderPreloadManagement({
+  database,
+  currentUser,
+  csrfToken = '',
+  job,
+  overview,
+  runs = [],
+  message = '',
+  error = ''
+}) {
+  const safeJob = job || {};
+  const safeOverview = overview || {};
+  const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+  const rowsHtml = runs.map(renderPreloadRunRow).join('');
+  const content = `<section class="section">
+  <h1>Предзагрузка витрин</h1>
+  <p class="technical-note">Управление локальной SQLite-витриной для дашборда Продажи по проектам.</p>
+</section>
+<section class="section">
+  ${messageHtml}
+  ${errorHtml}
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">Витрина</div><div class="kpi-value">${escapeHtml(safeJob.id || 'sales-by-project')}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Покрытие</div><div class="kpi-value">${escapeHtml(safeOverview.coveredFrom || '-')} - ${escapeHtml(safeOverview.coveredTo || '-')}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Последний успех</div><div class="kpi-value">${escapeHtml(safeOverview.lastSuccessAt || '-')}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Последняя ошибка</div><div class="kpi-value">${escapeHtml(safeOverview.lastError || '-')}</div></div>
+  </div>
+</section>
+<section class="section">
+  <h2>Ручной запуск</h2>
+  <form class="filter-bar" action="/admin/preload/run" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <div class="field"><label for="preload-from">С</label><input id="preload-from" name="from" type="date" required></div>
+    <div class="field"><label for="preload-to">По</label><input id="preload-to" name="to" type="date" required></div>
+    <button type="submit">Запустить</button>
+  </form>
+</section>
+<section class="section">
+  <h2>Расписание</h2>
+  <form class="filter-bar" action="/admin/preload/schedule" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <label class="checkbox-label"><input name="enabled" type="checkbox" value="1"${renderCheckedAttribute(safeJob.enabled)}> Включено</label>
+    <div class="field"><label for="schedule-time">Время</label><input id="schedule-time" name="scheduleTime" type="time" value="${escapeHtml(safeJob.scheduleTime || '03:00')}" required></div>
+    <div class="field"><label for="refresh-days">Обновлять дней</label><input id="refresh-days" name="refreshDays" type="number" min="1" max="366" value="${escapeHtml(safeJob.refreshDays || 45)}" required></div>
+    <button type="submit">Сохранить</button>
+  </form>
+</section>
+<section class="section">
+  <h2>История запусков</h2>
+  <div class="table-scroll"><table><thead><tr><th>ID</th><th>Тип</th><th>Статус</th><th>Период</th><th>Старт</th><th>Финиш</th><th>Строк</th><th>Ошибка</th></tr></thead><tbody>${rowsHtml || '<tr><td colspan="8">Запусков пока нет.</td></tr>'}</tbody></table></div>
+</section>`;
+
+  return layout({
+    title: 'Предзагрузка витрин',
+    database,
+    content,
+    activeNav: 'preload-admin',
     currentUser,
     csrfToken
   });
@@ -7009,6 +7095,7 @@ module.exports = {
   renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
+  renderPreloadManagement,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,

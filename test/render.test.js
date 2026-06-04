@@ -9,6 +9,7 @@ const {
   renderHeatmapDashboard,
   renderHeatmapDashboardSection,
   renderHome,
+  renderPreloadManagement,
   renderSalesByProjectDashboard,
   renderTable,
   renderWorkerCancellationsDetails,
@@ -103,6 +104,129 @@ test('renderHome includes worker cancellations navigation', () => {
 
   assert.match(html, /Отмены гигерами/);
   assert.match(html, /href="\/dashboards\/worker-cancellations"/);
+});
+
+test('renderPreloadManagement renders schedule, manual run, and history', () => {
+  const html = renderPreloadManagement({
+    database: 'etl',
+    csrfToken: 'csrf-token',
+    currentUser: { role: 'admin', permissions: ['preload-admin'] },
+    message: 'Сохранено',
+    error: '',
+    job: {
+      id: 'sales-by-project',
+      enabled: true,
+      scheduleTime: '03:00',
+      timezone: 'Europe/Moscow',
+      refreshDays: 45
+    },
+    overview: {
+      coveredFrom: '2026-05-01',
+      coveredTo: '2026-06-04',
+      lastSuccessAt: '2026-06-04T03:00:00.000Z',
+      lastError: 'ClickHouse timeout'
+    },
+    runs: [
+      {
+        id: 1,
+        trigger: 'manual',
+        status: 'success',
+        fromDate: '2026-05-01',
+        toDate: '2026-06-01',
+        startedAt: '2026-06-04T10:00:00.000Z',
+        finishedAt: '2026-06-04T10:01:00.000Z',
+        rowsWritten: 10,
+        errorMessage: ''
+      }
+    ]
+  });
+
+  assert.match(html, /Предзагрузка витрин/);
+  assert.match(html, /action="\/admin\/preload\/run"/);
+  assert.match(html, /action="\/admin\/preload\/schedule"/);
+  assert.match(html, /name="csrfToken" value="csrf-token"/);
+  assert.match(html, /value="03:00"/);
+  assert.match(html, /value="45"/);
+  assert.match(html, /sales-by-project/);
+  assert.match(html, /ClickHouse timeout/);
+  assert.match(html, /class="nav-link active" href="\/admin\/preload"/);
+});
+
+test('renderPreloadManagement escapes hostile values', () => {
+  const hostile = `<script>alert("x")</script>&'`;
+  const html = renderPreloadManagement({
+    database: `etl-${hostile}`,
+    csrfToken: `csrf-${hostile}`,
+    currentUser: { role: 'admin', permissions: ['preload-admin'] },
+    message: `saved-${hostile}`,
+    error: `error-${hostile}`,
+    job: {
+      id: `job-${hostile}`,
+      enabled: true,
+      scheduleTime: `03:00"${hostile}`,
+      refreshDays: `45${hostile}`
+    },
+    overview: {
+      coveredFrom: `from-${hostile}`,
+      coveredTo: `to-${hostile}`,
+      lastSuccessAt: `success-${hostile}`,
+      lastError: `last-error-${hostile}`
+    },
+    runs: [
+      {
+        id: `run-${hostile}`,
+        trigger: `manual-${hostile}`,
+        status: `success-${hostile}`,
+        fromDate: `run-from-${hostile}`,
+        toDate: `run-to-${hostile}`,
+        startedAt: `started-${hostile}`,
+        finishedAt: `finished-${hostile}`,
+        rowsWritten: `10${hostile}`,
+        errorMessage: `run-error-${hostile}`
+      }
+    ]
+  });
+
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`csrf-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`saved-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`error-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`job-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`03:00"${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`45${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`from-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`to-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`success-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`last-error-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`run-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`manual-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`run-error-${hostile}`))));
+  assert.doesNotMatch(html, /saved-<script>/);
+  assert.doesNotMatch(html, /error-<script>/);
+  assert.doesNotMatch(html, /job-<script>/);
+  assert.doesNotMatch(html, /last-error-<script>/);
+  assert.doesNotMatch(html, /run-error-<script>/);
+  assert.doesNotMatch(html, /alert\("x"\)/);
+});
+
+test('renderPreloadManagement filters preload navigation by permission', () => {
+  const withoutPermissionHtml = renderPreloadManagement({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: ['tables'] },
+    job: { id: 'sales-by-project' },
+    overview: {},
+    runs: []
+  });
+  const withPermissionHtml = renderPreloadManagement({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: ['preload-admin'] },
+    job: { id: 'sales-by-project' },
+    overview: {},
+    runs: []
+  });
+
+  assert.doesNotMatch(withoutPermissionHtml, /href="\/admin\/preload"/);
+  assert.match(withPermissionHtml, /href="\/admin\/preload"/);
+  assert.match(withPermissionHtml, /class="nav-link active" href="\/admin\/preload"/);
 });
 
 test('renderWorkerCancellationsDashboard renders filters and progressive table loading state', () => {

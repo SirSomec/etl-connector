@@ -67,6 +67,8 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
   assert.match(html, /name="permissions" value="worker-cancellations" checked/);
   assert.match(html, /SQL метрик/);
   assert.match(html, /name="permissions" value="sql-inspector" checked/);
+  assert.match(html, /Предзагрузка витрин/);
+  assert.match(html, /name="permissions" value="preload-admin"/);
   assert.match(html, /class="nav-link active" href="\/admin\/users"/);
   assert.doesNotMatch(html, /<Analyst>/);
 });

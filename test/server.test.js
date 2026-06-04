@@ -598,7 +598,9 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
     assert.match(text, /Точки, требующие внимания/);
     assert.match(text, /Attention point/);
     assert.match(text, /Своб\. 7д/);
-    assert.match(text, /ready 4 · booked 1 · worked 1/);
+    assert.match(text, /class="attention-status-line">ready 4<\/span>/);
+    assert.match(text, /class="attention-status-line">booked 1<\/span>/);
+    assert.match(text, /class="attention-status-line">worked 1<\/span>/);
   });
 
   const attentionCall = client.calls.find((call) => call[1] === 'workplace analysis attention points');

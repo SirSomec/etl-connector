@@ -1086,6 +1086,36 @@ function layout({
       line-height: 1.25;
     }
 
+    .attention-table td.metric-info-scope {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      gap: 6px;
+      padding-right: 7px;
+    }
+
+    .attention-table td.metric-info-scope > .sql-inspector-button {
+      position: static;
+      flex: 0 0 auto;
+      margin-top: -2px;
+    }
+
+    .attention-metric-content {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .attention-status-breakdown {
+      display: grid;
+      gap: 2px;
+      margin-top: 4px;
+      white-space: normal;
+    }
+
+    .attention-status-line {
+      display: block;
+    }
+
     .phone-cell,
     .nowrap-cell {
       white-space: nowrap;
@@ -4128,13 +4158,36 @@ function renderWorkerStatusBreakdown(statuses = {}) {
   return `ready ${formatNumber(statuses.ready)} · booked ${formatNumber(statuses.booked)} · worked ${formatNumber(statuses.worked)} · прочие ${formatNumber(statuses.other)}`;
 }
 
+function renderAttentionStatusBreakdown(statuses = {}) {
+  const rows = [
+    ['ready', statuses.ready],
+    ['booked', statuses.booked],
+    ['worked', statuses.worked],
+    ['прочие', statuses.other]
+  ];
+
+  return `<div class="muted attention-status-breakdown">${rows
+    .map(([label, value]) => `<span class="attention-status-line">${escapeHtml(label)} ${escapeHtml(formatNumber(value))}</span>`)
+    .join('')}</div>`;
+}
+
 function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '', className = 'number-cell') {
   return renderMetricInfoScope({
     tag: 'td',
     className,
     metricId,
     currentUser,
-    content: `${escapeHtml(formatNumber(value, digits))}${extraContent}`
+    content: `<div class="attention-metric-content"><span class="attention-metric-value">${escapeHtml(formatNumber(value, digits))}</span>${extraContent}</div>`
+  });
+}
+
+function renderAttentionPercentCell(value, metricId, currentUser) {
+  return renderMetricInfoScope({
+    tag: 'td',
+    className: 'number-cell',
+    metricId,
+    currentUser,
+    content: `<div class="attention-metric-content"><span class="attention-metric-value">${escapeHtml(formatPercent(value))}</span></div>`
   });
 }
 
@@ -4210,13 +4263,13 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
         ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser)}
         <td>${escapeHtml(point.nearestFreeDate || '')}</td>
         <td class="number-cell">${escapeHtml(formatNumber(point.maxDailyFree))}</td>
-        ${percentCell(point.coveragePercent, 'workplace-analysis.attention.coverage', currentUser)}
+        ${renderAttentionPercentCell(point.coveragePercent, 'workplace-analysis.attention.coverage', currentUser)}
         ${renderAttentionNumberCell(
           point.totalWorkers15km,
           'workplace-analysis.attention.total-workers-15km',
           currentUser,
           0,
-          `<div class="muted">${escapeHtml(renderWorkerStatusBreakdown(point.totalWorkersByStatus15km))}</div>`,
+          renderAttentionStatusBreakdown(point.totalWorkersByStatus15km),
           'number-cell attention-stack-cell'
         )}
         ${renderAttentionNumberCell(
@@ -4224,7 +4277,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
           'workplace-analysis.attention.active-workers-30d-15km',
           currentUser,
           0,
-          `<div class="muted">${escapeHtml(renderWorkerStatusBreakdown(point.activeWorkers30dByStatus15km))}</div>`,
+          renderAttentionStatusBreakdown(point.activeWorkers30dByStatus15km),
           'number-cell attention-stack-cell'
         )}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}

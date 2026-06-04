@@ -1100,7 +1100,10 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
   assert.match(html, /Точки, требующие внимания/);
   assert.match(html, /Своб\. 7д/);
   assert.match(html, /&lt;script&gt;Север&lt;\/script&gt;/);
-  assert.match(html, /ready 2 · booked 1 · worked 0 · прочие 0/);
+  assert.match(html, /class="attention-status-line">ready 2<\/span>/);
+  assert.match(html, /class="attention-status-line">booked 1<\/span>/);
+  assert.match(html, /class="attention-status-line">worked 0<\/span>/);
+  assert.match(html, /class="attention-status-line">прочие 0<\/span>/);
   assert.match(html, /пик в ближайшие дни/);
   assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
 });
@@ -1108,6 +1111,7 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
 test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention table without horizontal scroll', () => {
   const html = renderWorkplaceAnalysisDashboardSection({
     section: 'attention',
+    currentUser: { role: 'analyst', permissions: ['workplace-analysis', 'sql-inspector'] },
     dashboard: {
       filters: {
         attentionFrom: '2026-06-04',
@@ -1188,6 +1192,14 @@ test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention
   assert.match(html, /<table class="attention-table">/);
   assert.match(html, /class="attention-point-cell"/);
   assert.match(html, /attention-stack-cell/);
+  assert.match(html, /class="attention-metric-content"/);
+  assert.match(html, /attention-status-breakdown/);
+  assert.match(html, /class="attention-status-line">ready 3 562<\/span>/);
+  assert.match(
+    html,
+    /<td class="number-cell attention-stack-cell metric-info-scope">[\s\S]*<div class="attention-metric-content">[\s\S]*52 386[\s\S]*<\/div><button type="button" class="sql-inspector-button"/
+  );
+  assert.doesNotMatch(html, /ready 3 562 · booked 32 · worked 2 209 · прочие 46 583/);
   assert.match(html, /class="sortable-header"/);
   assert.match(html, /attentionSort=free7d/);
   assert.match(html, /attentionDirection=asc/);

@@ -1666,12 +1666,14 @@ test('renderWorkplacePointDayDetails renders escaped compact table fragment', ()
   });
 
   assert.match(html, /Детализация дня: 2026-06-02/);
+  assert.match(html, /<th>Заказ<\/th>/);
   assert.match(html, /<th>Профессия<\/th>/);
   assert.match(html, /<th>Старт<\/th>/);
   assert.match(html, /<th>План<\/th>/);
   assert.match(html, /<th>Гигер<\/th>/);
   assert.match(html, /<th>Телефон<\/th>/);
   assert.match(html, /<th>Статус<\/th>/);
+  assert.match(html, /order-1/);
   assert.match(html, /&lt;bad&gt;/);
   assert.match(html, /Иванов &lt;Иван&gt;/);
   assert.match(html, /\+79990000000/);

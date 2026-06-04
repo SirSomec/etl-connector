@@ -4698,6 +4698,7 @@ function renderWorkplacePointDayDetails({ details }) {
 
   const bodyRows = rows
     .map((row) => `<tr>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(row.orderId))}">${escapeHtml(detailText(row.orderId))}</td>
   <td class="compact-text-cell" title="${escapeHtml(detailText(row.profession))}">${escapeHtml(detailText(row.profession))}</td>
   <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(row.orderStartLocal))}</td>
   <td class="number-cell">${escapeHtml(formatNullableNumber(row.plannedHours, 1))}</td>
@@ -4716,6 +4717,7 @@ function renderWorkplacePointDayDetails({ details }) {
   <h2>Детализация дня: ${escapeHtml(date)}</h2>
   <div class="table-wrap compact-detail-table-wrap"><table class="compact-detail-table">
     <thead><tr>
+      <th>Заказ</th>
       <th>Профессия</th>
       <th>Старт</th>
       <th>План</th>

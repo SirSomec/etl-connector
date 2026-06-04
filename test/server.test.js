@@ -848,22 +848,46 @@ test('GET /dashboards/workplace-analysis/point/details renders day details fragm
     async queryJSONEachRow(query, params, operation) {
       this.calls.push(['queryJSONEachRow', operation, params, query]);
 
-      if (operation === 'workplace point day details') {
+      if (operation === 'workplace point day orders') {
+        return [
+          {
+            order_id: 'order-1',
+            profession: 'Комплектовщик',
+            order_start_local: '2026-06-02 09:00:00',
+            planned_hours: 8
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day jobs') {
         return [
           {
             order_id: 'order-1',
             job_id: 'job-1',
-            profession: 'Комплектовщик',
-            order_start_local: '2026-06-02 09:00:00',
-            planned_hours: 8,
-            worker_full_name: 'Иванов Иван',
-            worker_phone: '+79990000000',
-            confirmed_status: 'confirmed',
+            status: 'confirmed',
+            worker_id: 'worker-1',
             actual_hours: 7.5,
             actual_time_local: '2026-06-02 09:10 - 2026-06-02 16:40',
-            payment_amount: 4500,
-            cancelled_shifts: 0,
-            last_cancelled_at_local: ''
+            is_factual: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day workers') {
+        return [
+          {
+            worker_id: 'worker-1',
+            worker_full_name: 'Иванов Иван',
+            worker_phone: '+79990000000'
+          }
+        ];
+      }
+
+      if (operation === 'workplace point day payments') {
+        return [
+          {
+            job_id: 'job-1',
+            payment_amount: 4500
           }
         ];
       }
@@ -887,13 +911,20 @@ test('GET /dashboards/workplace-analysis/point/details renders day details fragm
   });
 
   const calls = client.calls.filter(
-    (call) => call[0] === 'queryJSONEachRow' && call[1] === 'workplace point day details'
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace point day')
   );
 
-  assert.equal(calls.length, 1);
+  assert.deepEqual(calls.map((call) => call[1]), [
+    'workplace point day orders',
+    'workplace point day jobs',
+    'workplace point day workers',
+    'workplace point day payments'
+  ]);
   assert.equal(calls[0][2].param_workplace_id, 'wp1');
   assert.equal(calls[0][2].param_from, '2026-06-02 00:00:00');
   assert.equal(calls[0][2].param_to, '2026-06-03 00:00:00');
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0][2], 'param_job_statuses'), false);
+  assert.equal(calls[1][2].param_job_statuses, "['confirmed']");
 });
 
 test('GET /dashboards/workplace-analysis/point/details renders bad request as fragment', async () => {

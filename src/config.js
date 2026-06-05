@@ -1,6 +1,7 @@
 const path = require('node:path');
 
 const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sqlite');
+const DEFAULT_USER_ACTIVITY_STORE_PATH = path.join(process.cwd(), 'data', 'user-activity.sqlite');
 
 class ConfigError extends Error {
   constructor(message) {
@@ -80,6 +81,9 @@ function loadConfig(env = process.env) {
     },
     preload: {
       storePath: env.PRELOAD_STORE_PATH || DEFAULT_PRELOAD_STORE_PATH
+    },
+    activity: {
+      storePath: env.USER_ACTIVITY_STORE_PATH || DEFAULT_USER_ACTIVITY_STORE_PATH
     },
     auth: {
       enabled: authEnabled,

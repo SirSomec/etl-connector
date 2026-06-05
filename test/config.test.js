@@ -49,6 +49,31 @@ test('loadConfig accepts preload store path override', () => {
   assert.equal(config.preload.storePath, 'C:\\runtime\\preload.sqlite');
 });
 
+test('loadConfig includes user activity store path', () => {
+  const config = loadConfig({
+    CLICKHOUSE_HOST: 'clickhouse.example.test',
+    CLICKHOUSE_USER: 'rouser',
+    CLICKHOUSE_PASSWORD: 'secret',
+    AUTH_ADMIN_EMAIL: 'admin@example.test',
+    AUTH_ADMIN_PASSWORD: 'AdminPass123',
+    USER_ACTIVITY_STORE_PATH: 'C:\\activity\\user-activity.sqlite'
+  });
+
+  assert.equal(config.activity.storePath, 'C:\\activity\\user-activity.sqlite');
+});
+
+test('loadConfig defaults user activity store to data directory', () => {
+  const config = loadConfig({
+    CLICKHOUSE_HOST: 'clickhouse.example.test',
+    CLICKHOUSE_USER: 'rouser',
+    CLICKHOUSE_PASSWORD: 'secret',
+    AUTH_ADMIN_EMAIL: 'admin@example.test',
+    AUTH_ADMIN_PASSWORD: 'AdminPass123'
+  });
+
+  assert.match(config.activity.storePath, /data[\\/]user-activity\.sqlite$/);
+});
+
 test('loadConfig reports every missing required variable', () => {
   assert.throws(
     () => loadConfig({}),

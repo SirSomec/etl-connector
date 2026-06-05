@@ -422,6 +422,18 @@ test('managed users only access granted sections', async () => {
 test('admin can open /admin/activity', async () => {
   const activityStore = createActivitySpy();
   let capturedOverviewInput = null;
+  let nowCalls = 0;
+  const nowValues = [
+    new Date('2026-06-05T10:00:00.000Z'),
+    new Date('2026-06-05T23:59:59.999Z'),
+    new Date('2026-06-06T00:00:00.000Z')
+  ];
+  const currentNow = () => {
+    const value = nowValues[nowCalls] || nowValues[nowValues.length - 1];
+
+    nowCalls += 1;
+    return new Date(value.getTime());
+  };
 
   activityStore.getActivityOverview = (input) => {
     capturedOverviewInput = input;
@@ -459,30 +471,43 @@ test('admin can open /admin/activity', async () => {
     assert.equal(capturedOverviewInput.from, '2026-03-08');
     assert.equal(capturedOverviewInput.to, '2026-06-05');
     assert.ok(capturedOverviewInput.users.some((user) => user.id === 'env-admin'));
-    assert.ok(
-      activityStore.events.some((event) => (
-        event.eventType === 'page_view' &&
-        event.path === '/admin/activity' &&
-        event.section === 'activity'
-      ))
-    );
+    const activityPageEvents = activityStore.events.filter((event) => (
+      event.eventType === 'page_view' &&
+      event.path === '/admin/activity' &&
+      event.section === 'activity'
+    ));
+
+    assert.equal(activityPageEvents.length, 1);
+    assert.equal(nowCalls, 3);
   }, {
     activityStore,
-    now: () => new Date('2026-06-05T12:00:00.000Z')
+    now: currentNow
   });
 });
 
-test('/admin/activity is admin-only', async () => {
-  await withAuthServer(async ({ baseUrl, userStore }) => {
-    await userStore.createUser({
-      email: 'analyst@example.test',
-      name: 'Analyst',
-      role: 'analyst',
-      permissions: ['tables', 'preload-admin'],
-      password: 'AnalystPass123'
-    });
+test('/admin/activity is admin-only by role', async () => {
+  const activityStore = createActivitySpy();
+  const wideAnalyst = {
+    id: 'wide-analyst',
+    email: 'wide-analyst@example.test',
+    name: 'Wide Analyst',
+    role: 'analyst',
+    permissions: ['tables', 'preload-admin', 'users']
+  };
+  const userStore = {
+    async listUsers() {
+      return [wideAnalyst];
+    },
+    async findByEmail(email) {
+      return email === wideAnalyst.email ? wideAnalyst : null;
+    },
+    async verifyCredentials(email, password) {
+      return email === wideAnalyst.email && password === 'AnalystPass123' ? wideAnalyst : null;
+    }
+  };
 
-    const analystLogin = await login(baseUrl, 'analyst@example.test', 'AnalystPass123');
+  await withAuthServer(async ({ baseUrl }) => {
+    const analystLogin = await login(baseUrl, 'wide-analyst@example.test', 'AnalystPass123');
     const activityPage = await fetchText(baseUrl, '/admin/activity', {
       headers: {
         cookie: cookieFrom(analystLogin)
@@ -491,7 +516,8 @@ test('/admin/activity is admin-only', async () => {
 
     assert.equal(activityPage.response.status, 403);
     assert.match(activityPage.text, /Недостаточно прав/);
-  });
+    assert.equal(activityStore.events.filter((event) => event.path === '/admin/activity').length, 0);
+  }, { activityStore, userStore });
 });
 
 test('/admin/activity renders sanitized store errors', async () => {

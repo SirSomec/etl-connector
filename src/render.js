@@ -2506,6 +2506,19 @@ function layout({
       .point-detail-grid {
         grid-template-columns: 1fr;
       }
+
+      .activity-user-summary {
+        grid-template-columns: minmax(180px, 1fr) minmax(90px, auto) minmax(90px, auto);
+      }
+
+      .activity-day-strip {
+        grid-column: 1 / -1;
+        width: 100%;
+      }
+
+      .activity-event-table {
+        min-width: 640px;
+      }
     }
 
     @media (max-width: 820px) {
@@ -3674,8 +3687,8 @@ function renderUserActivityDashboard({
   const body = disabled
     ? `<section class="section">
   <div class="activity-disabled">
-    <strong>Авторизация отключена</strong>
-    <p>Экран доступен без данных, потому что активность пользователей собирается только при включенной авторизации.</p>
+    <strong>Авторизация отключена или хранилище активности недоступно</strong>
+    <p>Экран доступен без данных, потому что активность пользователей собирается только при включенной авторизации и подключенном store.</p>
   </div>
 </section>`
     : `<section class="section">

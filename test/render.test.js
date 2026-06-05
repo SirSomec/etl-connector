@@ -278,6 +278,10 @@ test('renderUserActivityDashboard renders escaped matrix and disabled state', ()
   assert.match(html, /analyst&lt;script&gt;@example\.test/);
   assert.match(html, /data-activity-level="intense"/);
   assert.match(html, /\/dashboards\/workplace-analysis\?&lt;bad&gt;/);
+  assert.match(
+    html,
+    /@media \(max-width: 1120px\) \{[\s\S]*\.activity-user-summary \{[\s\S]*grid-template-columns: minmax\(180px, 1fr\) minmax\(90px, auto\) minmax\(90px, auto\);[\s\S]*\.activity-day-strip \{[\s\S]*grid-column: 1 \/ -1;/
+  );
   assert.match(disabledHtml, /Авторизация отключена/);
 });
 

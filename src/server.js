@@ -588,6 +588,41 @@ function createApp({
     });
   }
 
+  function requireAdmin() {
+    return asyncRoute(async (req, res, next) => {
+      if (!authEnabled) {
+        next();
+        return;
+      }
+
+      const auth = await loadRequestAuth(req);
+
+      if (!auth) {
+        if (req.method === 'GET') {
+          res.redirect(302, `/login?returnTo=${encodeURIComponent(req.originalUrl || '/')}`);
+          return;
+        }
+
+        sendError(res, 401, 'Unauthorized', 'Требуется вход в систему');
+        return;
+      }
+
+      if (auth.user.role !== 'admin') {
+        sendError(
+          res,
+          403,
+          'Недостаточно прав',
+          'Недостаточно прав для выбранного раздела.',
+          activeNavForPath(req.path),
+          viewContext(req)
+        );
+        return;
+      }
+
+      next();
+    });
+  }
+
   function verifyCsrf(req, res, activeNav = 'users') {
     if (!authEnabled) {
       return true;
@@ -945,7 +980,7 @@ function createApp({
 
   app.get(
     '/admin/activity',
-    requireAuth('users'),
+    requireAdmin(),
     asyncRoute(async (req, res) => {
       if (!authEnabled || !activity) {
         res
@@ -956,8 +991,9 @@ function createApp({
       }
 
       try {
-        const to = formatDateUTC(now());
-        const fromDate = now();
+        const currentDate = now();
+        const to = formatDateUTC(currentDate);
+        const fromDate = new Date(currentDate.getTime());
 
         fromDate.setUTCDate(fromDate.getUTCDate() - (DEFAULT_USER_ACTIVITY_RETENTION_DAYS - 1));
 

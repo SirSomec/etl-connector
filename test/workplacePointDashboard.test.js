@@ -6,8 +6,10 @@ const {
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
   loadWorkplacePointDayDetails,
+  loadWorkplacePointGigerDetails,
   mergeWorkplacePointDayDetails,
   mergeWorkplacePointRows,
+  normalizeWorkplacePointGigerDetailsInput,
   normalizeWorkplacePointDayDetailsInput,
   normalizeWorkplacePointFilters
 } = require('../src/workplacePointDashboard');
@@ -38,6 +40,132 @@ test('normalizeWorkplacePointFilters keeps workplace id and supported filters', 
   assert.deepEqual(filters.jobStatus, ['confirmed', 'failed']);
   assert.equal(filters.includeDeletedOrders, true);
   assert.equal(filters.includeHiddenOrders, true);
+});
+
+test('normalizeWorkplacePointGigerDetailsInput validates point metrics and keeps page size at 20', () => {
+  const details = normalizeWorkplacePointGigerDetailsInput(
+    {
+      workplaceId: ' wp1 ',
+      metric: 'radius-active-session-workers',
+      radiusKm: '10',
+      page: '3'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.workplaceId, 'wp1');
+  assert.equal(details.metric, 'radius-active-session-workers');
+  assert.equal(details.metricLabel, 'Активные в радиусе');
+  assert.equal(details.radiusKm, 10);
+  assert.equal(details.page, 3);
+  assert.equal(details.pageSize, 20);
+  assert.equal(details.offset, 40);
+  assert.equal(details.export, false);
+});
+
+test('loadWorkplacePointGigerDetails loads completed workers with safe filters', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point giger details total') {
+        return [{ total_gigers: 22 }];
+      }
+
+      if (operation === 'workplace point giger details') {
+        return [
+          {
+            user_id: 'user-1',
+            worker_id: 'worker-1',
+            full_name: 'Иван Петров',
+            phone: '+79990000000',
+            status: 'worked'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const details = await loadWorkplacePointGigerDetails(
+    client,
+    {
+      workplaceId: 'wp1; DROP TABLE mg_jobs',
+      metric: 'unique-completed-workers',
+      page: '2',
+      profession: 'Комплектовщик',
+      orderType: 'regular'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.metricLabel, 'Завершавшие');
+  assert.equal(details.pagination.page, 2);
+  assert.equal(details.pagination.pageSize, 20);
+  assert.equal(details.pagination.totalGigers, 22);
+  assert.deepEqual(details.gigers, [
+    {
+      userId: 'user-1',
+      workerId: 'worker-1',
+      fullName: 'Иван Петров',
+      phone: '+79990000000',
+      status: 'worked'
+    }
+  ]);
+
+  for (const call of calls) {
+    assert.equal(call.params.param_workplace_id, 'wp1; DROP TABLE mg_jobs');
+    assert.equal(call.params.param_professions, "['Комплектовщик']");
+    assert.equal(call.params.param_order_types, "['regular']");
+    assert.equal(call.params.param_limit, 20);
+    assert.equal(call.params.param_offset, 20);
+    assert.equal(call.query.includes('shift_facts'), true);
+    assert.equal(call.query.includes('is_successful_confirmed_shift = 1'), true);
+    assert.equal(call.query.includes('mg_workers'), true);
+    assert.equal(call.query.includes('mg_users'), true);
+    assert.equal(call.query.includes('DROP TABLE'), false);
+  }
+});
+
+test('loadWorkplacePointGigerDetails loads radius active-session workers by radius', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point giger details total') {
+        return [{ total_gigers: 1 }];
+      }
+
+      if (operation === 'workplace point giger details') {
+        return [{ user_id: 'user-2', worker_id: 'worker-2', full_name: 'Анна Иванова', phone: '', status: 'ready' }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  await loadWorkplacePointGigerDetails(
+    client,
+    {
+      workplaceId: 'wp2',
+      metric: 'radius-active-session-workers',
+      radiusKm: '15'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  const detailsCall = calls.find((call) => call.operation === 'workplace point giger details');
+
+  assert.equal(detailsCall.params.param_workplace_id, 'wp2');
+  assert.equal(detailsCall.params.param_radius_m, 15000);
+  assert.equal(detailsCall.params.param_active_session_from, '2026-05-16 12:00:00');
+  assert.equal(detailsCall.params.param_active_session_to, '2026-06-15 12:00:00');
+  assert.equal(detailsCall.query.includes('greatCircleDistance'), true);
+  assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), true);
+  assert.equal(detailsCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
 });
 
 test('normalizeWorkplacePointDayDetailsInput requires workplace id and valid date', () => {

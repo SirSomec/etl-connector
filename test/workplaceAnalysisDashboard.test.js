@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const {
   buildDateKeys,
   heatmapLevel,
+  loadWorkplaceAnalysisGigerDetails,
   loadWorkplaceAnalysisDashboardSection,
   loadWorkplaceAnalysisDashboardShell,
   mergeWorkplaceAttentionRows,
   mergeWorkplaceAnalysisRows,
+  normalizeWorkplaceGigerDetailsInput,
   normalizeWorkplaceAnalysisFilters,
   normalizeWorkplaceAttentionFilters
 } = require('../src/workplaceAnalysisDashboard');
@@ -147,6 +149,136 @@ test('mergeWorkplaceAttentionRows calculates free order, status bases, score and
     worked: 0,
     other: 0
   });
+});
+
+test('normalizeWorkplaceGigerDetailsInput keeps page size at 20 and validates workplace metrics', () => {
+  const details = normalizeWorkplaceGigerDetailsInput(
+    {
+      metric: 'attention-active-workers-30d-15km',
+      workplaceId: ' wp-1 ',
+      status: 'ready',
+      page: '3'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.metric, 'attention-active-workers-30d-15km');
+  assert.equal(details.metricLabel, 'Актив 30д');
+  assert.equal(details.workplaceId, 'wp-1');
+  assert.equal(details.status, 'ready');
+  assert.equal(details.page, 3);
+  assert.equal(details.pageSize, 20);
+  assert.equal(details.offset, 40);
+  assert.equal(details.export, false);
+});
+
+test('loadWorkplaceAnalysisGigerDetails loads paged active gigers for a point and preserves safe parameters', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis giger details total') {
+        return [{ total_gigers: 21 }];
+      }
+
+      if (operation === 'workplace analysis giger details') {
+        return [
+          {
+            user_id: 'user-1',
+            worker_id: 'worker-1',
+            full_name: 'Иван Петров',
+            phone: '+79990000000',
+            status: 'ready'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const details = await loadWorkplaceAnalysisGigerDetails(
+    client,
+    {
+      metric: 'points-active-gigers-5km',
+      workplaceId: 'wp-1',
+      page: '2'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.metricLabel, 'Гигеры 5 км');
+  assert.equal(details.pagination.page, 2);
+  assert.equal(details.pagination.pageSize, 20);
+  assert.equal(details.pagination.totalGigers, 21);
+  assert.equal(details.pagination.totalPages, 2);
+  assert.equal(details.pagination.hasPrevious, true);
+  assert.equal(details.pagination.hasNext, false);
+  assert.deepEqual(details.gigers, [
+    {
+      userId: 'user-1',
+      workerId: 'worker-1',
+      fullName: 'Иван Петров',
+      phone: '+79990000000',
+      status: 'ready'
+    }
+  ]);
+
+  assert.equal(calls.length, 2);
+
+  for (const call of calls) {
+    assert.equal(call.params.param_workplace_id, 'wp-1');
+    assert.equal(call.params.param_limit, 20);
+    assert.equal(call.params.param_offset, 20);
+    assert.equal(call.query.includes('appmetrica_sessions'), true);
+    assert.equal(call.query.includes('mg_workers'), true);
+    assert.equal(call.query.includes('mg_users'), true);
+    assert.equal(call.query.includes('greatCircleDistance'), true);
+    assert.equal(call.query.includes('wp-1'), false);
+  }
+});
+
+test('loadWorkplaceAnalysisGigerDetails filters attention workers by status and active session window', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis giger details total') {
+        return [{ total_gigers: 1 }];
+      }
+
+      if (operation === 'workplace analysis giger details') {
+        return [{ user_id: 'user-2', worker_id: 'worker-2', full_name: 'Анна Иванова', phone: '', status: 'ready' }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  await loadWorkplaceAnalysisGigerDetails(
+    client,
+    {
+      metric: 'attention-active-workers-30d-15km',
+      workplaceId: 'wp-2',
+      status: 'ready',
+      attentionPage: '2',
+      attentionSort: 'free7d',
+      attentionDirection: 'asc'
+    },
+    new Date('2026-06-04T12:00:00.000Z')
+  );
+
+  const detailsCall = calls.find((call) => call.operation === 'workplace analysis giger details');
+
+  assert.equal(detailsCall.params.param_workplace_id, 'wp-2');
+  assert.equal(detailsCall.params.param_active_from, '2026-06-04 00:00:00');
+  assert.equal(detailsCall.params.param_active_to, '2026-06-12 00:00:00');
+  assert.equal(detailsCall.params.param_status, 'ready');
+  assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), true);
+  assert.equal(detailsCall.query.includes('status = {status:String}'), true);
+  assert.equal(detailsCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
 });
 
 test('mergeWorkplaceAttentionRows sorts attention points and paginates by 15 rows', () => {

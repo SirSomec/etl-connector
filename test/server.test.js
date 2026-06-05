@@ -715,9 +715,9 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
     assert.match(text, /Точки, требующие внимания/);
     assert.match(text, /Attention point/);
     assert.match(text, /Своб\. 7д/);
-    assert.match(text, /class="attention-status-line">ready 4<\/span>/);
-    assert.match(text, /class="attention-status-line">booked 1<\/span>/);
-    assert.match(text, /class="attention-status-line">worked 1<\/span>/);
+    assert.match(text, /class="attention-status-line">ready [\s\S]*>4<\/button><\/span>/);
+    assert.match(text, /class="attention-status-line">booked [\s\S]*>1<\/button><\/span>/);
+    assert.match(text, /class="attention-status-line">worked [\s\S]*>1<\/button><\/span>/);
   });
 
   const attentionCall = client.calls.find((call) => call[1] === 'workplace analysis attention points');
@@ -942,6 +942,151 @@ test('GET /dashboards/workplace-analysis/point/details renders bad request as fr
     assert.match(text, /date/);
     assert.doesNotMatch(text, /<html/);
   });
+});
+
+test('GET /dashboards/workplace-analysis/gigers renders giger details fragment', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'workplace analysis giger details total') {
+        return [{ total_gigers: 21 }];
+      }
+
+      if (operation === 'workplace analysis giger details') {
+        return [
+          {
+            user_id: 'user-1',
+            worker_id: 'worker-1',
+            full_name: 'Ivan Petrov',
+            phone: '+79990000000',
+            status: 'ready'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis/gigers?workplaceId=wp1&metric=points-active-gigers-5km&page=1'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Ivan Petrov/);
+    assert.match(text, /\+79990000000/);
+    assert.match(text, /data-giger-list-page-link/);
+    assert.match(text, /\/dashboards\/workplace-analysis\/gigers\/export\?/);
+    assert.doesNotMatch(text, /<html/);
+  });
+
+  const calls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace analysis giger')
+  );
+
+  assert.deepEqual(calls.map((call) => call[1]), [
+    'workplace analysis giger details total',
+    'workplace analysis giger details'
+  ]);
+  assert.equal(calls[0][2].param_workplace_id, 'wp1');
+  assert.equal(calls[1][2].param_limit, 20);
+});
+
+test('GET /dashboards/city-analysis/gigers/export downloads excel-compatible giger list', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'city analysis giger details total') {
+        return [{ total_gigers: 1 }];
+      }
+
+      if (operation === 'city analysis giger details') {
+        return [
+          {
+            user_id: 'user-1',
+            worker_id: 'worker-1',
+            full_name: 'Ivan Petrov',
+            phone: '+79990000000',
+            status: 'worked'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/city-analysis/gigers/export?city=Moscow&metric=total-located-users'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^application\/vnd\.ms-excel\b/);
+    assert.match(response.headers.get('content-disposition'), /attachment; filename="city-analysis-gigers\.xls"/);
+    assert.match(text, /Ivan Petrov/);
+    assert.match(text, /\+79990000000/);
+    assert.match(text, /<table>/);
+  });
+
+  const detailsCall = client.calls.find((call) => call[1] === 'city analysis giger details');
+
+  assert.equal(detailsCall[2].param_city, 'Moscow');
+  assert.equal(detailsCall[2].param_limit, 20);
+});
+
+test('GET /dashboards/workplace-analysis/point/gigers renders point detail giger fragment', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'workplace point giger details total') {
+        return [{ total_gigers: 1 }];
+      }
+
+      if (operation === 'workplace point giger details') {
+        return [
+          {
+            user_id: 'user-1',
+            worker_id: 'worker-1',
+            full_name: 'Ivan Petrov',
+            phone: '+79990000000',
+            status: 'booked'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis/point/gigers?workplaceId=wp1&metric=unique-completed-workers&page=1'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(text, /Ivan Petrov/);
+    assert.match(text, /\/dashboards\/workplace-analysis\/point\/gigers\/export\?/);
+    assert.doesNotMatch(text, /<html/);
+  });
+
+  const calls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace point giger')
+  );
+
+  assert.deepEqual(calls.map((call) => call[1]), [
+    'workplace point giger details total',
+    'workplace point giger details'
+  ]);
+  assert.equal(calls[1][2].param_workplace_id, 'wp1');
 });
 
 test('GET /dashboards/workplace-analysis keeps navigation active on trailing slash route errors', async () => {

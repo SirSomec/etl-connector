@@ -3,6 +3,13 @@ const path = require('node:path');
 
 const { writeFileAtomically } = require('./atomicFile');
 const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+const {
+  GIGER_DETAILS_PAGE_SIZE,
+  cleanBooleanFlag: cleanGigerDetailsBooleanFlag,
+  firstCleanText: firstGigerDetailsText,
+  mergeGigerDetails,
+  normalizeGigerDetailsPage
+} = require('./gigerDetails');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
@@ -1084,6 +1091,256 @@ function dynamicsQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
+const CITY_GIGER_METRICS = {
+  'total-located-users': { label: 'Общая база', condition: '1 = 1' },
+  'ready-located-users': { label: 'Активная база', condition: 'located.is_ready_base = 1' },
+  'ready-status-located-users': { label: 'ready', condition: 'located.is_ready_status = 1' },
+  'booked-status-located-users': { label: 'booked', condition: 'located.is_booked_status = 1' },
+  'worked-status-located-users': { label: 'worked', condition: 'located.is_worked_status = 1' },
+  'app-active-users': {
+    label: 'Входили в приложение',
+    condition: 'located.user_id IN (SELECT user_id FROM app_active_users)'
+  },
+  'app-30d-active-users': {
+    label: 'Активная за 30 дней',
+    condition: 'located.user_id IN (SELECT user_id FROM app_30d_active_users)'
+  },
+  'booked-users': {
+    label: 'Откликались',
+    condition: 'located.user_id IN (SELECT user_id FROM booked_users)'
+  },
+  'completed-users': {
+    label: 'Завершали',
+    condition: 'located.user_id IN (SELECT user_id FROM completed_users)'
+  },
+  'dynamic-app-active-users': {
+    label: 'Входили в приложение',
+    condition: 'located.user_id IN (SELECT user_id FROM app_active_users)',
+    dynamic: true
+  },
+  'dynamic-booked-users': {
+    label: 'Откликались',
+    condition: 'located.user_id IN (SELECT user_id FROM booked_users)',
+    dynamic: true
+  },
+  'dynamic-completed-users': {
+    label: 'Завершали',
+    condition: 'located.user_id IN (SELECT user_id FROM completed_users)',
+    dynamic: true
+  }
+};
+const CITY_GIGER_STATUSES = new Set(['ready', 'booked', 'worked']);
+
+function httpError(status, message) {
+  const error = new Error(message);
+
+  error.status = status;
+  return error;
+}
+
+function normalizeCityGigerDetailsInput(input = {}, now = new Date()) {
+  const metric = firstGigerDetailsText(input.metric);
+  const metricConfig = CITY_GIGER_METRICS[metric];
+
+  if (!metricConfig) {
+    throw httpError(400, `Unknown city giger metric: ${metric}`);
+  }
+
+  const filters = normalizeCityAnalysisFilters(input, now);
+
+  if (filters.city === '') {
+    throw httpError(400, 'city is required');
+  }
+
+  const page = normalizeGigerDetailsPage(input.page);
+  const status = firstGigerDetailsText(input.status);
+  const date = firstGigerDetailsText(input.date);
+
+  if (metricConfig.dynamic && !parseDateOnly(date)) {
+    throw httpError(400, 'date is required for dynamic city giger metric');
+  }
+
+  return {
+    source: 'city-analysis',
+    metric,
+    metricLabel: metricConfig.label,
+    city: filters.city,
+    status: CITY_GIGER_STATUSES.has(status) ? status : '',
+    date: metricConfig.dynamic ? date : '',
+    page,
+    pageSize: GIGER_DETAILS_PAGE_SIZE,
+    offset: (page - 1) * GIGER_DETAILS_PAGE_SIZE,
+    export: cleanGigerDetailsBooleanFlag(input.export),
+    filters
+  };
+}
+
+function cityGigerAppActiveUsersCte(input) {
+  if (input.metric === 'dynamic-app-active-users') {
+    return `app_active_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime)) = {metric_date:Date}
+  )`;
+  }
+
+  return appActiveUsersCte();
+}
+
+function cityGigerBookedUsersCte(input) {
+  const dateWhere = input.metric === 'dynamic-booked-users' ? '\n      AND fo.period = toString({metric_date:Date})' : '';
+
+  return `booked_users AS (
+    SELECT DISTINCT worker.user AS user_id
+    FROM mg_job_history AS history
+    INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+    INNER JOIN mg_workers AS worker ON history.worker = worker._id
+    WHERE ifNull(history.status, '') = 'booked'
+      AND ifNull(worker.user, '') != ''${dateWhere}
+  )`;
+}
+
+function cityGigerCompletedUsersCte(input) {
+  const dateWhere = input.metric === 'dynamic-completed-users' ? '\n      AND fo.period = toString({metric_date:Date})' : '';
+
+  return `completed_users AS (
+    SELECT DISTINCT worker.user AS user_id
+    FROM (
+      SELECT
+        job.source AS source,
+        job.worker AS worker,
+        ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+      FROM mg_jobs AS job
+      WHERE ifNull(job.deleted, 0) = 0
+    ) AS job
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
+    INNER JOIN mg_workers AS worker ON job.worker = worker._id
+    WHERE job.is_successful_confirmed_shift = 1
+      AND ifNull(worker.user, '') != ''${dateWhere}
+  )`;
+}
+
+function cityGigerProfilesCte() {
+  return `latest_worker_profiles AS (
+    SELECT
+      worker.user AS user_id,
+      argMax(worker._id, updated_at) AS worker_id,
+      argMax(ifNull(worker.status, ''), updated_at) AS status,
+      argMax(
+        coalesce(
+          nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
+          nullIf(trim(ifNull(worker.full_name, '')), ''),
+          ''
+        ),
+        updated_at
+      ) AS full_name,
+      argMax(ifNull(u.phone, ''), updated_at) AS phone
+    FROM (
+      SELECT
+        *,
+        ifNull(updatedAt, ifNull(createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
+      FROM mg_workers
+    ) AS worker
+    LEFT JOIN mg_users AS u ON worker.user = u._id
+    WHERE ifNull(worker.user, '') != ''
+      AND ifNull(worker.deleted, 0) = 0
+    GROUP BY user_id
+  )`;
+}
+
+function cityGigerDetailsStatusWhere(input) {
+  return input.status === '' ? '' : '\n      AND profile.status = {status:String}';
+}
+
+function cityGigerDetailsCtes(input, whereSql) {
+  const condition = CITY_GIGER_METRICS[input.metric].condition;
+
+  return `${filteredOrdersCte(whereSql)},
+  ${demandCityWorkplacesCtes()},
+  ${cityBoundsCte()},
+  ${candidateWorkersCte()},
+  ${locatedUsersCte()},
+  ${cityGigerAppActiveUsersCte(input)},
+  ${app30dActiveUsersCte()},
+  ${cityGigerBookedUsersCte(input)},
+  ${cityGigerCompletedUsersCte(input)},
+  ${cityGigerProfilesCte()},
+  eligible_gigers AS (
+    SELECT
+      located.user_id AS user_id,
+      ifNull(profile.worker_id, '') AS worker_id,
+      ifNull(profile.full_name, '') AS full_name,
+      ifNull(profile.phone, '') AS phone,
+      ifNull(profile.status, '') AS status
+    FROM located_users AS located
+    LEFT JOIN latest_worker_profiles AS profile ON profile.user_id = located.user_id
+    WHERE ${condition}${cityGigerDetailsStatusWhere(input)}
+  )`;
+}
+
+function cityGigerDetailsLimitClause(input) {
+  return input.export ? '' : '\n  LIMIT {limit:UInt64} OFFSET {offset:UInt64}';
+}
+
+function cityGigerDetailsTotalQuery(input, whereSql) {
+  return `WITH ${cityGigerDetailsCtes(input, whereSql)}
+  SELECT count() AS total_gigers
+  FROM eligible_gigers
+  FORMAT JSONEachRow`;
+}
+
+function cityGigerDetailsQuery(input, whereSql) {
+  return `WITH ${cityGigerDetailsCtes(input, whereSql)}
+  SELECT
+    user_id,
+    worker_id,
+    full_name,
+    phone,
+    status
+  FROM eligible_gigers
+  ORDER BY full_name ASC, user_id ASC, worker_id ASC${cityGigerDetailsLimitClause(input)}
+  FORMAT JSONEachRow`;
+}
+
+function cityGigerDetailsParams(input) {
+  const { params } = paramsAndWhere(input.filters);
+  const detailParams = {
+    ...params,
+    param_limit: input.pageSize,
+    param_offset: input.offset
+  };
+
+  if (input.status !== '') {
+    detailParams.param_status = input.status;
+  }
+
+  if (input.date !== '') {
+    detailParams.param_metric_date = input.date;
+  }
+
+  return detailParams;
+}
+
+async function loadCityAnalysisGigerDetails(client, input = {}, now = new Date()) {
+  const detailInput = normalizeCityGigerDetailsInput(input, now);
+  const { whereSql } = paramsAndWhere(detailInput.filters);
+  const params = cityGigerDetailsParams(detailInput);
+  const totalRows = await client.queryJSONEachRow(
+    cityGigerDetailsTotalQuery(detailInput, whereSql),
+    params,
+    'city analysis giger details total'
+  );
+  const gigerRows = await client.queryJSONEachRow(
+    cityGigerDetailsQuery(detailInput, whereSql),
+    params,
+    'city analysis giger details'
+  );
+
+  return mergeGigerDetails(detailInput, totalRows, gigerRows);
+}
+
 function cityAnalysisEmptyDatasets(overrides = {}) {
   return {
     cityOptionRows: [],
@@ -1318,9 +1575,11 @@ module.exports = {
   CITY_ANALYSIS_SECTIONS,
   cityAnalysisCachePathFromEnv,
   createCityAnalysisCache,
+  loadCityAnalysisGigerDetails,
   loadCityAnalysisDashboardSection,
   loadCityAnalysisDashboardShell,
   mergeCityAnalysisRows,
+  normalizeCityGigerDetailsInput,
   normalizeCityAnalysisFilters,
   loadCityAnalysisDashboard
 };

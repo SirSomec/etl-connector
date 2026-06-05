@@ -1171,11 +1171,13 @@ function layout({
       outline: none;
     }
 
+    .giger-list-modal[hidden],
     .worker-cancellation-modal[hidden],
     .workplace-point-day-modal[hidden] {
       display: none;
     }
 
+    .giger-list-modal,
     .worker-cancellation-modal,
     .workplace-point-day-modal {
       position: fixed;
@@ -1186,6 +1188,7 @@ function layout({
       padding: 24px;
     }
 
+    .giger-list-modal-backdrop,
     .worker-cancellation-modal-backdrop,
     .workplace-point-day-modal-backdrop {
       position: absolute;
@@ -1193,6 +1196,7 @@ function layout({
       background: rgba(16, 33, 43, 0.42);
     }
 
+    .giger-list-modal-dialog,
     .worker-cancellation-modal-dialog,
     .workplace-point-day-modal-dialog {
       position: relative;
@@ -1209,6 +1213,7 @@ function layout({
       width: min(1320px, 100%);
     }
 
+    .giger-list-modal-head,
     .worker-cancellation-modal-head,
     .workplace-point-day-modal-head {
       position: sticky;
@@ -1223,12 +1228,14 @@ function layout({
       background: var(--surface);
     }
 
+    .giger-list-modal-head h2,
     .worker-cancellation-modal-head h2,
     .workplace-point-day-modal-head h2 {
       margin: 0;
       font-size: 18px;
     }
 
+    .giger-list-modal-close,
     .worker-cancellation-modal-close,
     .workplace-point-day-modal-close {
       width: 36px;
@@ -1241,6 +1248,8 @@ function layout({
       line-height: 1;
     }
 
+    .giger-list-modal-close:hover,
+    .giger-list-modal-close:focus,
     .worker-cancellation-modal-close:hover,
     .worker-cancellation-modal-close:focus,
     .workplace-point-day-modal-close:hover,
@@ -1250,9 +1259,36 @@ function layout({
       color: var(--text);
     }
 
+    .giger-list-modal-body,
     .worker-cancellation-modal-body,
     .workplace-point-day-modal-body {
       padding: 16px;
+    }
+
+    .giger-details-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 14px;
+      margin-bottom: 12px;
+    }
+
+    .giger-details-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .giger-details-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .giger-details-table th,
+    .giger-details-table td {
+      white-space: nowrap;
     }
 
     .worker-cancellation-details,
@@ -2331,16 +2367,19 @@ function layout({
       }
 
       .metric-detail-trigger,
+      .giger-list-modal-close,
       .worker-cancellation-modal-close,
       .workplace-point-day-modal-close {
         width: auto;
       }
 
+      .giger-list-modal,
       .worker-cancellation-modal,
       .workplace-point-day-modal {
         padding: 10px;
       }
 
+      .giger-list-modal-dialog,
       .worker-cancellation-modal-dialog,
       .workplace-point-day-modal-dialog {
         max-height: calc(100vh - 20px);
@@ -2370,6 +2409,7 @@ function layout({
       : ''
   }
   ${content.includes('data-worker-cancellation-modal') ? renderWorkerCancellationDetailsScript() : ''}
+  ${content.includes('data-giger-list-modal') ? renderGigerDetailsScript() : ''}
   ${content.includes('data-workplace-point-day-modal') ? renderWorkplacePointDayDetailsScript() : ''}
   ${content.includes('data-sql-inspector-modal') || canViewSqlInspector(currentUser) ? renderSqlInspectorScript() : ''}
 </body>
@@ -2759,6 +2799,121 @@ function renderWorkerCancellationDetailsScript() {
     }
 
     if (event.target.closest('[data-worker-cancellation-modal-close]')) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !modal.hidden) {
+      closeModal();
+    }
+  });
+})();
+</script>`;
+}
+
+function renderGigerDetailsScript() {
+  return `<script>
+(function () {
+  var modal = document.querySelector('[data-giger-list-modal]');
+
+  if (!modal) {
+    return;
+  }
+
+  var body = modal.querySelector('[data-giger-list-modal-body]');
+  var closeButton = modal.querySelector('[data-giger-list-modal-close]');
+  var lastFocused = null;
+
+  function escapeClientHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function openModal() {
+    lastFocused = document.activeElement;
+    modal.hidden = false;
+
+    if (closeButton) {
+      closeButton.focus();
+    }
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+
+    if (body) {
+      body.innerHTML = '<p class="loading">Загружается</p>';
+    }
+
+    if (lastFocused && typeof lastFocused.focus === 'function') {
+      lastFocused.focus();
+    }
+  }
+
+  function renderModalError(message) {
+    if (body) {
+      body.innerHTML = '<div class="error">' + escapeClientHtml(message) + '</div>';
+    }
+  }
+
+  function loadDetails(url) {
+    if (!url) {
+      renderModalError('Не удалось загрузить список гигеров.');
+      return;
+    }
+
+    if (body) {
+      body.innerHTML = '<p class="loading">Загружается</p>';
+    }
+
+    fetch(url)
+      .then(function (response) {
+        return response.text().then(function (html) {
+          if (!response.ok) {
+            if (body) {
+              body.innerHTML = html || '<div class="error">Не удалось загрузить список гигеров.</div>';
+            }
+            return;
+          }
+
+          if (body) {
+            body.innerHTML = html;
+          }
+        });
+      })
+      .catch(function (error) {
+        renderModalError(error && error.message ? error.message : 'Не удалось загрузить список гигеров.');
+      });
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!event.target || typeof event.target.closest !== 'function') {
+      return;
+    }
+
+    var pageLink = event.target.closest('[data-giger-list-page-link]');
+
+    if (pageLink && modal.contains(pageLink)) {
+      event.preventDefault();
+      loadDetails(pageLink.getAttribute('href'));
+      return;
+    }
+
+    var trigger = event.target.closest('[data-giger-detail-trigger]');
+
+    if (trigger) {
+      event.preventDefault();
+      openModal();
+      loadDetails(trigger.getAttribute('data-detail-url'));
+      return;
+    }
+
+    if (event.target.closest('[data-giger-list-modal-close]')) {
       closeModal();
     }
   });
@@ -3284,12 +3439,12 @@ function renderTable({ database, tableName, columns, rows, currentUser, csrfToke
 
 function renderKpiGrid(cards, currentUser) {
   return `<div class="kpi-grid">${cards
-    .map(({ label, value, detail, metricId, fragmentUrl = '' }) => {
+    .map(({ label, value, detail, valueHtml, detailHtml, metricId, fragmentUrl = '' }) => {
       const fragmentAttribute =
         fragmentUrl === '' ? '' : `data-dashboard-fragment-url="${escapeHtml(fragmentUrl)}"`;
       const content = `<div class="kpi-label">${escapeHtml(label)}</div>
-  <div class="kpi-value">${escapeHtml(value)}</div>
-  ${detail ? `<div class="kpi-subvalue">${escapeHtml(detail)}</div>` : ''}`;
+  <div class="kpi-value">${valueHtml || escapeHtml(value)}</div>
+  ${detailHtml ? `<div class="kpi-subvalue">${detailHtml}</div>` : detail ? `<div class="kpi-subvalue">${escapeHtml(detail)}</div>` : ''}`;
 
       return renderMetricInfoScope({
         className: 'kpi-card',
@@ -3838,9 +3993,9 @@ function renderMetricRangeFields(filters) {
   ].join('');
 }
 
-function renderPointMetric(label, value, metricId, currentUser) {
+function renderPointMetric(label, value, metricId, currentUser, detailUrl = '') {
   const content = `<div class="point-metric-label">${escapeHtml(label)}</div>
-  <div class="point-metric-value">${escapeHtml(value)}</div>`;
+  <div class="point-metric-value">${renderGigerDetailTrigger(value, detailUrl)}</div>`;
 
   return renderMetricInfoScope({
     className: 'point-metric',
@@ -3965,18 +4120,19 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
 function renderPointCard(point, filters, currentDateValue, currentUser) {
   const cardClass = point.pinned ? 'point-card pinned' : 'point-card';
   const detailHref = escapeHtml(workplacePointPageHref(filters, point.workplaceId));
+  const activeGigersDetailUrl = workplaceAnalysisGigerUrl(filters, 'points-active-gigers-5km', {
+    workplaceId: point.workplaceId
+  });
   const metricsHtml = `<div class="point-metrics">
       ${renderPointMetric('Заказано', formatNumber(point.totalOrderedShifts), 'workplace-analysis.points.ordered-shifts', currentUser)}
       ${renderPointMetric('SLA', formatPercent(point.slaPercent), 'workplace-analysis.points.sla', currentUser)}
       ${renderPointMetric('Стабильность', formatPercent(point.stabilityPercent), 'workplace-analysis.points.stability', currentUser)}
-      ${renderPointMetric('Гигеры 5 км', formatNumber(point.activeGigers5km), 'workplace-analysis.points.active-gigers-5km', currentUser)}
+      ${renderPointMetric('Гигеры 5 км', formatNumber(point.activeGigers5km), 'workplace-analysis.points.active-gigers-5km', currentUser, activeGigersDetailUrl)}
       ${renderPointMetric('Активные дни', `${formatNumber(point.activeDays)} / ${formatNumber(point.rangeDays)}`, 'workplace-analysis.points.active-days', currentUser)}
       ${renderPointMetric('Среднее', formatNumber(point.avgDailyOrder, 1), 'workplace-analysis.points.avg-daily-order', currentUser)}
     </div>
     ${renderMetricHeatmap(point.heatmapDays, currentDateValue, 'workplace-analysis.points.heatmap', currentUser)}`;
-  const bodyHtml = canViewSqlInspector(currentUser)
-    ? `<div class="point-card-link">${metricsHtml}</div>`
-    : `<a class="point-card-link" href="${detailHref}" target="_blank" rel="noopener noreferrer">${metricsHtml}</a>`;
+  const bodyHtml = `<div class="point-card-link">${metricsHtml}</div>`;
 
   return `<article class="${cardClass}">
   <div class="point-card-head">
@@ -4111,6 +4267,63 @@ function workplacePointDayDetailsUrl(filters, date) {
   }
 
   return `/dashboards/workplace-analysis/point/details?${params.toString()}`;
+}
+
+function workplaceAnalysisGigerUrl(filters, metric, overrides = {}) {
+  const params = new URLSearchParams();
+  const multiFilterKeys = ['client', 'city', 'region', 'profession', 'orderType', 'jobStatus', 'contractor'];
+  const rangeFilterKeys = ['slaFrom', 'slaTo', 'ordersFrom', 'ordersTo', 'stabilityFrom', 'stabilityTo'];
+
+  addDashboardQueryParam(params, 'from', filters.from);
+  addDashboardQueryParam(params, 'to', filters.to);
+
+  for (const key of multiFilterKeys) {
+    addDashboardQueryParam(params, key, filters[key]);
+  }
+
+  if (filters.includeDeletedOrders) {
+    params.set('includeDeletedOrders', '1');
+  }
+
+  if (filters.includeHiddenOrders) {
+    params.set('includeHiddenOrders', '1');
+  }
+
+  addDashboardQueryParam(params, 'search', filters.search);
+
+  for (const key of rangeFilterKeys) {
+    addDashboardQueryParam(params, key, filters[key]);
+  }
+
+  addDashboardQueryParam(params, 'metric', metric);
+  addDashboardQueryParam(params, 'status', overrides.status);
+  addDashboardQueryParam(params, 'workplaceId', overrides.workplaceId);
+
+  return `/dashboards/workplace-analysis/gigers?${params.toString()}`;
+}
+
+function workplacePointGigerUrl(filters, metric, overrides = {}) {
+  const params = new URLSearchParams();
+
+  addDashboardQueryParam(params, 'workplaceId', filters.workplaceId);
+  addDashboardQueryParam(params, 'from', filters.from);
+  addDashboardQueryParam(params, 'to', filters.to);
+  addDashboardQueryParam(params, 'profession', filters.profession);
+  addDashboardQueryParam(params, 'orderType', filters.orderType);
+  addDashboardQueryParam(params, 'jobStatus', filters.jobStatus);
+
+  if (filters.includeDeletedOrders) {
+    params.set('includeDeletedOrders', '1');
+  }
+
+  if (filters.includeHiddenOrders) {
+    params.set('includeHiddenOrders', '1');
+  }
+
+  addDashboardQueryParam(params, 'metric', metric);
+  addDashboardQueryParam(params, 'radiusKm', overrides.radiusKm);
+
+  return `/dashboards/workplace-analysis/point/gigers?${params.toString()}`;
 }
 
 function renderHiddenInput(name, value) {
@@ -4333,16 +4546,20 @@ function renderWorkerStatusBreakdown(statuses = {}) {
   return `ready ${formatNumber(statuses.ready)} · booked ${formatNumber(statuses.booked)} · worked ${formatNumber(statuses.worked)} · прочие ${formatNumber(statuses.other)}`;
 }
 
-function renderAttentionStatusBreakdown(statuses = {}) {
+function renderAttentionStatusBreakdown(statuses = {}, detailUrlForStatus) {
   const rows = [
-    ['ready', statuses.ready],
-    ['booked', statuses.booked],
-    ['worked', statuses.worked],
-    ['прочие', statuses.other]
+    ['ready', 'ready', statuses.ready],
+    ['booked', 'booked', statuses.booked],
+    ['worked', 'worked', statuses.worked],
+    ['прочие', 'other', statuses.other]
   ];
 
   return `<div class="muted attention-status-breakdown">${rows
-    .map(([label, value]) => `<span class="attention-status-line">${escapeHtml(label)} ${escapeHtml(formatNumber(value))}</span>`)
+    .map(([label, status, value]) => {
+      const detailUrl = typeof detailUrlForStatus === 'function' ? detailUrlForStatus(status) : '';
+
+      return `<span class="attention-status-line">${escapeHtml(label)} ${renderGigerDetailTrigger(formatNumber(value), detailUrl)}</span>`;
+    })
     .join('')}</div>`;
 }
 
@@ -4368,7 +4585,7 @@ function renderAttentionProfessionBreakdown(professions = []) {
   return rows ? `<div class="muted attention-profession-breakdown">${rows}</div>` : '';
 }
 
-function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '', className = 'number-cell') {
+function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, extraContent = '', className = 'number-cell', detailUrl = '') {
   return renderMetricInfoScope({
     tag: 'td',
     className,
@@ -4376,7 +4593,7 @@ function renderAttentionNumberCell(value, metricId, currentUser, digits = 0, ext
     currentUser,
     inlineInspector: true,
     inlineClassName: 'attention-metric-inline',
-    content: `<div class="attention-metric-content"><span class="attention-metric-value">${escapeHtml(formatNumber(value, digits))}</span>${extraContent}</div>`
+    content: `<div class="attention-metric-content"><span class="attention-metric-value">${renderGigerDetailTrigger(formatNumber(value, digits), detailUrl)}</span>${extraContent}</div>`
   });
 }
 
@@ -4458,6 +4675,22 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
     <tbody>
       ${points.map((point) => {
         const detailHref = escapeHtml(workplacePointPageHref(filters || {}, point.workplaceId));
+        const totalWorkersDetailUrl = workplaceAnalysisGigerUrl(filters || {}, 'attention-total-workers-15km', {
+          workplaceId: point.workplaceId
+        });
+        const activeWorkersDetailUrl = workplaceAnalysisGigerUrl(filters || {}, 'attention-active-workers-30d-15km', {
+          workplaceId: point.workplaceId
+        });
+        const totalStatusDetailUrl = (status) =>
+          workplaceAnalysisGigerUrl(filters || {}, 'attention-total-workers-15km', {
+            workplaceId: point.workplaceId,
+            status
+          });
+        const activeStatusDetailUrl = (status) =>
+          workplaceAnalysisGigerUrl(filters || {}, 'attention-active-workers-30d-15km', {
+            workplaceId: point.workplaceId,
+            status
+          });
 
         return `<tr>
         <td class="attention-point-cell"><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
@@ -4470,16 +4703,18 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
           'workplace-analysis.attention.total-workers-15km',
           currentUser,
           0,
-          renderAttentionStatusBreakdown(point.totalWorkersByStatus15km),
-          'number-cell attention-stack-cell'
+          renderAttentionStatusBreakdown(point.totalWorkersByStatus15km, totalStatusDetailUrl),
+          'number-cell attention-stack-cell',
+          totalWorkersDetailUrl
         )}
         ${renderAttentionNumberCell(
           point.activeWorkers30d15km,
           'workplace-analysis.attention.active-workers-30d-15km',
           currentUser,
           0,
-          renderAttentionStatusBreakdown(point.activeWorkers30dByStatus15km),
-          'number-cell attention-stack-cell'
+          renderAttentionStatusBreakdown(point.activeWorkers30dByStatus15km, activeStatusDetailUrl),
+          'number-cell attention-stack-cell',
+          activeWorkersDetailUrl
         )}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
         <td class="attention-reason-cell">${escapeHtml(point.priorityReason)}</td>
@@ -4697,6 +4932,133 @@ function detailText(value) {
   const text = String(value || '').trim();
 
   return text === '' ? '-' : text;
+}
+
+function renderGigerDetailTrigger(value, detailUrl) {
+  const text = String(value || '');
+
+  if (String(detailUrl || '') === '') {
+    return escapeHtml(text);
+  }
+
+  return `<button type="button" class="metric-detail-trigger" data-giger-detail-trigger data-detail-url="${escapeHtml(detailUrl)}">${escapeHtml(text)}</button>`;
+}
+
+function gigerDetailsPageUrl(baseUrl, page) {
+  const [path, query = ''] = String(baseUrl || '').split('?');
+  const params = new URLSearchParams(query);
+
+  params.set('page', String(page));
+
+  return `${path}?${params.toString()}`;
+}
+
+function renderGigerDetailsPagination(details) {
+  const pagination = details && details.pagination ? details.pagination : null;
+
+  if (!pagination || (!pagination.hasPrevious && !pagination.hasNext)) {
+    return '';
+  }
+
+  const page = Number(pagination.page) || 1;
+  const totalPages = Math.max(1, Number(pagination.totalPages) || 1);
+  const previousPage = Math.max(1, page - 1);
+  const nextPage = Math.min(totalPages, page + 1);
+  const detailUrl = details.detailUrl || '';
+
+  return `<nav class="pagination" aria-label="Пагинация гигеров">
+  <div class="pagination-meta">Страница ${escapeHtml(page)} из ${escapeHtml(totalPages)} · гигеров: ${escapeHtml(formatNumber(pagination.totalGigers))}</div>
+  <div class="pagination-actions">
+    ${
+      pagination.hasPrevious
+        ? `<a class="pagination-link" href="${escapeHtml(gigerDetailsPageUrl(detailUrl, previousPage))}" data-giger-list-page-link="1">Назад</a>`
+        : '<span class="pagination-link disabled" aria-disabled="true">Назад</span>'
+    }
+    ${
+      pagination.hasNext
+        ? `<a class="pagination-link" href="${escapeHtml(gigerDetailsPageUrl(detailUrl, nextPage))}" data-giger-list-page-link="1">Вперед</a>`
+        : '<span class="pagination-link disabled" aria-disabled="true">Вперед</span>'
+    }
+  </div>
+</nav>`;
+}
+
+function renderGigerRows(gigers) {
+  if (!Array.isArray(gigers) || gigers.length === 0) {
+    return '<p class="empty">Нет гигеров для выбранной метрики.</p>';
+  }
+
+  const rows = gigers
+    .map((giger) => `<tr>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(giger.userId))}">${escapeHtml(detailText(giger.userId))}</td>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(giger.workerId))}">${escapeHtml(detailText(giger.workerId))}</td>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(giger.fullName))}">${escapeHtml(detailText(giger.fullName))}</td>
+  <td class="phone-cell">${escapeHtml(detailText(giger.phone))}</td>
+  <td>${escapeHtml(detailText(giger.status))}</td>
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table class="giger-details-table">
+  <thead><tr>
+    <th>User ID</th>
+    <th>Worker ID</th>
+    <th>ФИО</th>
+    <th>Телефон</th>
+    <th>Статус</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table></div>`;
+}
+
+function renderGigerDetails({ details }) {
+  const safeDetails = details || {};
+  const pagination = safeDetails.pagination || {};
+  const totalLabel =
+    typeof pagination.totalGigers === 'undefined'
+      ? ''
+      : `<span class="muted">Всего: ${escapeHtml(formatNumber(pagination.totalGigers))}</span>`;
+
+  return `<div class="giger-details">
+  <div class="giger-details-head">
+    <h2>${escapeHtml(safeDetails.metricLabel || 'Гигеры')}</h2>
+    <div class="giger-details-actions">
+      ${totalLabel}
+      ${safeDetails.exportUrl ? `<a class="secondary-button" href="${escapeHtml(safeDetails.exportUrl)}">Выгрузить в Excel</a>` : ''}
+    </div>
+  </div>
+  ${renderGigerRows(safeDetails.gigers || [])}
+  ${renderGigerDetailsPagination(safeDetails)}
+</div>`;
+}
+
+function renderGigerDetailsWorkbook({ details }) {
+  const safeDetails = details || {};
+  const rows = (safeDetails.gigers || [])
+    .map((giger) => `<tr>
+  <td>${escapeHtml(detailText(giger.userId))}</td>
+  <td>${escapeHtml(detailText(giger.workerId))}</td>
+  <td>${escapeHtml(detailText(giger.fullName))}</td>
+  <td>${escapeHtml(detailText(giger.phone))}</td>
+  <td>${escapeHtml(detailText(giger.status))}</td>
+</tr>`)
+    .join('');
+
+  return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>${escapeHtml(safeDetails.metricLabel || 'Гигеры')}</title></head>
+<body>
+<table>
+  <thead><tr>
+    <th>User ID</th>
+    <th>Worker ID</th>
+    <th>ФИО</th>
+    <th>Телефон</th>
+    <th>Статус</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+</body>
+</html>`;
 }
 
 function renderWorkerCancellationsDetails({ details }) {
@@ -4920,6 +5282,21 @@ function renderWorkplacePointDayModal() {
 </div>`;
 }
 
+function renderGigerListModal() {
+  return `<div class="giger-list-modal" data-giger-list-modal hidden>
+  <div class="giger-list-modal-backdrop" data-giger-list-modal-close></div>
+  <div class="giger-list-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="giger-list-modal-title">
+    <div class="giger-list-modal-head">
+      <h2 id="giger-list-modal-title">Список гигеров</h2>
+      <button type="button" class="giger-list-modal-close" data-giger-list-modal-close aria-label="Закрыть">&times;</button>
+    </div>
+    <div class="giger-list-modal-body" data-giger-list-modal-body>
+      <p class="loading">Загружается</p>
+    </div>
+  </div>
+</div>`;
+}
+
 function renderWorkerCancellationsDashboardSection({ dashboard, section, currentUser }) {
   if (section === 'workers') {
     const rows = dashboard.rows || dashboard.workers || [];
@@ -5000,107 +5377,86 @@ function formatRadiusWorkerValue(summary, radius) {
   return `${formatNumber(workers)} / ${formatNumber(activeSessionWorkers)}`;
 }
 
-function renderWorkplacePointKpis(summary) {
-  const cards = [
-    ['Заказано', formatNumber(summary.orderedShifts)],
-    ['Выполнено', formatNumber(summary.completedShifts)],
-    ['SLA', formatPercent(summary.slaPercent)],
-    ['Стабильность', formatPercent(summary.stabilityPercent)],
-    ['Уникальные завершали', formatNumber(summary.uniqueCompletedWorkers)],
-    ['Уникальные бронировали', formatNumber(summary.uniqueBookedWorkers)],
-    ['Слеты < 24ч', formatNumber(summary.dropoffs24h)],
-    ['5 км', formatRadiusWorkerValue(summary, 5)],
-    ['10 км', formatRadiusWorkerValue(summary, 10)],
-    ['15 км', formatRadiusWorkerValue(summary, 15)],
-    ['20 км', formatRadiusWorkerValue(summary, 20)]
-  ];
-
-  return `<div class="kpi-grid">${cards
-    .map(
-      ([label, value]) => `<div class="kpi-card">
-  <div class="kpi-label">${escapeHtml(label)}</div>
-  <div class="kpi-value">${escapeHtml(value)}</div>
-</div>`
-    )
-    .join('')}</div>`;
-}
-
-function renderWorkplacePointSummaryKpis(summary) {
-  const cards = [
-    ['Заказано', formatNumber(summary.orderedShifts)],
-    ['Выполнено', formatNumber(summary.completedShifts)],
-    ['SLA', formatPercent(summary.slaPercent)],
-    ['Стабильность', formatPercent(summary.stabilityPercent)],
-    ['Уникальные завершали', formatNumber(summary.uniqueCompletedWorkers)],
-    ['Уникальные бронировали', formatNumber(summary.uniqueBookedWorkers)],
-    ['Слеты < 24ч', formatNumber(summary.dropoffs24h)]
-  ];
-
-  return `<div class="kpi-grid">${cards
-    .map(
-      ([label, value]) => `<div class="kpi-card">
-  <div class="kpi-label">${escapeHtml(label)}</div>
-  <div class="kpi-value">${escapeHtml(value)}</div>
-</div>`
-    )
-    .join('')}</div>`;
-}
-
-function renderWorkplacePointRadiusKpis(summary) {
-  const cards = [
-    [5, '5 км'],
-    [10, '10 км'],
-    [15, '15 км'],
-    [20, '20 км']
-  ].map(([radius, label]) => [
-    label,
-    formatRadiusWorkerValue(summary, radius)
-  ]);
-
-  return `<div class="kpi-grid">${cards
-    .map(
-      ([label, value]) => `<div class="kpi-card">
-  <div class="kpi-label">${escapeHtml(label)}</div>
-  <div class="kpi-value">${escapeHtml(value)}</div>
-</div>`
-    )
-    .join('')}</div>`;
-}
-
 function renderWorkplacePointKpis(summary, currentUser) {
+  const filters = summary.filters || {};
+
   return renderKpiGrid([
     { label: 'Заказано', value: formatNumber(summary.orderedShifts), metricId: 'workplace-point.summary.ordered-shifts' },
     { label: 'Выполнено', value: formatNumber(summary.completedShifts), metricId: 'workplace-point.summary.completed-shifts' },
     { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'workplace-point.summary.sla' },
     { label: 'Стабильность', value: formatPercent(summary.stabilityPercent), metricId: 'workplace-point.summary.stability' },
-    { label: 'Уникальные завершали', value: formatNumber(summary.uniqueCompletedWorkers), metricId: 'workplace-point.summary.unique-completed-workers' },
-    { label: 'Уникальные бронировали', value: formatNumber(summary.uniqueBookedWorkers), metricId: 'workplace-point.summary.unique-booked-workers' },
+    {
+      label: 'Уникальные завершали',
+      value: formatNumber(summary.uniqueCompletedWorkers),
+      valueHtml: renderGigerDetailTrigger(formatNumber(summary.uniqueCompletedWorkers), workplacePointGigerUrl(filters, 'unique-completed-workers')),
+      metricId: 'workplace-point.summary.unique-completed-workers'
+    },
+    {
+      label: 'Уникальные бронировали',
+      value: formatNumber(summary.uniqueBookedWorkers),
+      valueHtml: renderGigerDetailTrigger(formatNumber(summary.uniqueBookedWorkers), workplacePointGigerUrl(filters, 'unique-booked-workers')),
+      metricId: 'workplace-point.summary.unique-booked-workers'
+    },
     { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' },
-    { label: '5 км', value: formatRadiusWorkerValue(summary, 5), metricId: 'workplace-point.summary.radius-5km' },
-    { label: '10 км', value: formatRadiusWorkerValue(summary, 10), metricId: 'workplace-point.summary.radius-10km' },
-    { label: '15 км', value: formatRadiusWorkerValue(summary, 15), metricId: 'workplace-point.summary.radius-15km' },
-    { label: '20 км', value: formatRadiusWorkerValue(summary, 20), metricId: 'workplace-point.summary.radius-20km' }
+    { label: '5 км', value: formatRadiusWorkerValue(summary, 5), valueHtml: renderRadiusWorkerValue(summary, filters, 5), metricId: 'workplace-point.summary.radius-5km' },
+    { label: '10 км', value: formatRadiusWorkerValue(summary, 10), valueHtml: renderRadiusWorkerValue(summary, filters, 10), metricId: 'workplace-point.summary.radius-10km' },
+    { label: '15 км', value: formatRadiusWorkerValue(summary, 15), valueHtml: renderRadiusWorkerValue(summary, filters, 15), metricId: 'workplace-point.summary.radius-15km' },
+    { label: '20 км', value: formatRadiusWorkerValue(summary, 20), valueHtml: renderRadiusWorkerValue(summary, filters, 20), metricId: 'workplace-point.summary.radius-20km' }
   ], currentUser);
 }
 
 function renderWorkplacePointSummaryKpis(summary, currentUser) {
+  const filters = summary.filters || {};
   return renderKpiGrid([
     { label: 'Заказано', value: formatNumber(summary.orderedShifts), metricId: 'workplace-point.summary.ordered-shifts' },
     { label: 'Выполнено', value: formatNumber(summary.completedShifts), metricId: 'workplace-point.summary.completed-shifts' },
     { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'workplace-point.summary.sla' },
     { label: 'Стабильность', value: formatPercent(summary.stabilityPercent), metricId: 'workplace-point.summary.stability' },
-    { label: 'Уникальные завершали', value: formatNumber(summary.uniqueCompletedWorkers), metricId: 'workplace-point.summary.unique-completed-workers' },
-    { label: 'Уникальные бронировали', value: formatNumber(summary.uniqueBookedWorkers), metricId: 'workplace-point.summary.unique-booked-workers' },
+    {
+      label: 'Уникальные завершали',
+      value: formatNumber(summary.uniqueCompletedWorkers),
+      valueHtml: renderGigerDetailTrigger(
+        formatNumber(summary.uniqueCompletedWorkers),
+        workplacePointGigerUrl(filters, 'unique-completed-workers')
+      ),
+      metricId: 'workplace-point.summary.unique-completed-workers'
+    },
+    {
+      label: 'Уникальные бронировали',
+      value: formatNumber(summary.uniqueBookedWorkers),
+      valueHtml: renderGigerDetailTrigger(
+        formatNumber(summary.uniqueBookedWorkers),
+        workplacePointGigerUrl(filters, 'unique-booked-workers')
+      ),
+      metricId: 'workplace-point.summary.unique-booked-workers'
+    },
     { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' }
   ], currentUser);
 }
 
+function renderRadiusWorkerValue(summary, filters, radius) {
+  const workers = summary.radiusWorkers ? summary.radiusWorkers[radius] : 0;
+  const activeSessionWorkers = summary.radiusActiveSessionWorkers
+    ? summary.radiusActiveSessionWorkers[radius]
+    : 0;
+
+  return `${renderGigerDetailTrigger(
+    formatNumber(workers),
+    workplacePointGigerUrl(filters, 'radius-workers', { radiusKm: radius })
+  )} / ${renderGigerDetailTrigger(
+    formatNumber(activeSessionWorkers),
+    workplacePointGigerUrl(filters, 'radius-active-session-workers', { radiusKm: radius })
+  )}`;
+}
+
 function renderWorkplacePointRadiusKpis(summary, currentUser) {
+  const filters = summary.filters || {};
+
   return renderKpiGrid([
-    { label: '5 км', value: formatRadiusWorkerValue(summary, 5), metricId: 'workplace-point.summary.radius-5km' },
-    { label: '10 км', value: formatRadiusWorkerValue(summary, 10), metricId: 'workplace-point.summary.radius-10km' },
-    { label: '15 км', value: formatRadiusWorkerValue(summary, 15), metricId: 'workplace-point.summary.radius-15km' },
-    { label: '20 км', value: formatRadiusWorkerValue(summary, 20), metricId: 'workplace-point.summary.radius-20km' }
+    { label: '5 км', value: formatRadiusWorkerValue(summary, 5), valueHtml: renderRadiusWorkerValue(summary, filters, 5), metricId: 'workplace-point.summary.radius-5km' },
+    { label: '10 км', value: formatRadiusWorkerValue(summary, 10), valueHtml: renderRadiusWorkerValue(summary, filters, 10), metricId: 'workplace-point.summary.radius-10km' },
+    { label: '15 км', value: formatRadiusWorkerValue(summary, 15), valueHtml: renderRadiusWorkerValue(summary, filters, 15), metricId: 'workplace-point.summary.radius-15km' },
+    { label: '20 км', value: formatRadiusWorkerValue(summary, 20), valueHtml: renderRadiusWorkerValue(summary, filters, 20), metricId: 'workplace-point.summary.radius-20km' }
   ], currentUser);
 }
 
@@ -5572,7 +5928,7 @@ function renderWorkplacePointDashboard({
 </div>`
     : `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'workplace-point.summary', currentUser)}
-  ${renderWorkplacePointKpis(dashboard.summary, currentUser)}
+  ${renderWorkplacePointKpis({ ...dashboard.summary, filters }, currentUser)}
 </section>
 <section class="section">
   ${renderWorkplacePointCharts(dashboard, currentUser)}
@@ -5629,7 +5985,8 @@ function renderWorkplacePointDashboard({
   </form>
 </section>
 ${detailSections}
-${renderWorkplacePointDayModal()}`;
+${renderWorkplacePointDayModal()}
+${renderGigerListModal()}`;
 
   return layout({
     title: 'Детализация точки',
@@ -5645,14 +6002,14 @@ function renderWorkplacePointDashboardSection({ dashboard, section, currentUser 
   if (section === 'summary') {
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'workplace-point.summary', currentUser)}
-  ${renderWorkplacePointSummaryKpis(dashboard.summary, currentUser)}
+  ${renderWorkplacePointSummaryKpis({ ...dashboard.summary, filters: dashboard.filters }, currentUser)}
 </section>`;
   }
 
   if (section === 'radius') {
     return `<section class="section">
   ${renderMetricPanelHead('База вокруг точки', 'workplace-point.radius', currentUser)}
-  ${renderWorkplacePointRadiusKpis(dashboard.summary, currentUser)}
+  ${renderWorkplacePointRadiusKpis({ ...dashboard.summary, filters: dashboard.filters }, currentUser)}
 </section>`;
   }
 
@@ -5786,7 +6143,8 @@ function renderWorkplaceAnalysisDashboard({
     <div class="dashboard-tab-panel dashboard-tab-panel-points">${pointsHtml}</div>
     <div class="dashboard-tab-panel dashboard-tab-panel-attention">${attentionHtml}</div>
   </div>
-</section>`;
+</section>
+${renderGigerListModal()}`;
 
   return layout({
     title: 'Анализ точек',
@@ -5896,30 +6254,76 @@ function renderCityKpiCards(summary) {
   return `<div class="kpi-grid">${cards.map((card) => renderCityKpiCard(card)).join('')}</div>`;
 }
 
-function renderCityKpiCard({ label, value, detail, fragmentUrl = '', metricId, currentUser }) {
-  return renderKpiGrid([{ label, value, detail, fragmentUrl, metricId }], currentUser).replace(/^<div class="kpi-grid">|<\/div>$/g, '');
+function renderCityKpiCard({ label, value, detail, valueHtml, detailHtml, fragmentUrl = '', metricId, currentUser }) {
+  return renderKpiGrid([{ label, value, detail, valueHtml, detailHtml, fragmentUrl, metricId }], currentUser).replace(/^<div class="kpi-grid">|<\/div>$/g, '');
 }
 
-function renderCityKpiCards(summary, currentUser) {
+function cityGigerValueHtml(filters, metric, value, overrides = {}) {
+  return renderGigerDetailTrigger(formatNumber(value), cityAnalysisGigerUrl(filters, metric, overrides));
+}
+
+function cityGigerStatusDetailHtml(filters, metric, statuses) {
+  return [
+    ['ready', 'ready', statuses.ready],
+    ['booked', 'booked', statuses.booked],
+    ['worked', 'worked', statuses.worked]
+  ]
+    .map(([label, status, value]) => `${escapeHtml(label)} ${renderGigerDetailTrigger(formatNumber(value), cityAnalysisGigerUrl(filters, metric, { status }))}`)
+    .join(' · ');
+}
+
+function renderCityKpiCards(summary, currentUser, filters = {}) {
   return renderKpiGrid([
     { label: 'Заказ', value: formatNumber(summary.orderedShifts), metricId: 'city-analysis.summary.ordered-shifts' },
     { label: 'Не удаленные заявки', value: formatNumber(summary.activeOrderRequests), metricId: 'city-analysis.summary.active-order-requests' },
-    { label: 'Общая база', value: formatNumber(summary.totalLocatedUsers), metricId: 'city-analysis.summary.total-located-users' },
+    {
+      label: 'Общая база',
+      value: formatNumber(summary.totalLocatedUsers),
+      valueHtml: cityGigerValueHtml(filters, 'total-located-users', summary.totalLocatedUsers),
+      metricId: 'city-analysis.summary.total-located-users'
+    },
     {
       label: 'Активная база',
       value: formatNumber(summary.readyLocatedUsers),
       detail: `ready ${formatNumber(summary.readyStatusLocatedUsers)} · booked ${formatNumber(summary.bookedStatusLocatedUsers)} · worked ${formatNumber(summary.workedStatusLocatedUsers)}`,
+      valueHtml: cityGigerValueHtml(filters, 'ready-located-users', summary.readyLocatedUsers),
+      detailHtml: cityGigerStatusDetailHtml(filters, 'ready-located-users', {
+        ready: summary.readyStatusLocatedUsers,
+        booked: summary.bookedStatusLocatedUsers,
+        worked: summary.workedStatusLocatedUsers
+      }),
       metricId: 'city-analysis.summary.ready-located-users'
     },
-    { label: 'Входили в приложение', value: formatNumber(summary.appActiveUsers), metricId: 'city-analysis.summary.app-active-users' },
+    {
+      label: 'Входили в приложение',
+      value: formatNumber(summary.appActiveUsers),
+      valueHtml: cityGigerValueHtml(filters, 'app-active-users', summary.appActiveUsers),
+      metricId: 'city-analysis.summary.app-active-users'
+    },
     {
       label: 'Активная за 30 дней',
       value: formatNumber(summary.app30dActiveUsers),
       detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`,
+      valueHtml: cityGigerValueHtml(filters, 'app-30d-active-users', summary.app30dActiveUsers),
+      detailHtml: cityGigerStatusDetailHtml(filters, 'app-30d-active-users', {
+        ready: summary.app30dReadyStatusUsers,
+        booked: summary.app30dBookedStatusUsers,
+        worked: summary.app30dWorkedStatusUsers
+      }),
       metricId: 'city-analysis.summary.app-30d-active-users'
     },
-    { label: 'Откликались', value: formatNumber(summary.bookedUsers), metricId: 'city-analysis.summary.booked-users' },
-    { label: 'Завершали', value: formatNumber(summary.completedUsers), metricId: 'city-analysis.summary.completed-users' },
+    {
+      label: 'Откликались',
+      value: formatNumber(summary.bookedUsers),
+      valueHtml: cityGigerValueHtml(filters, 'booked-users', summary.bookedUsers),
+      metricId: 'city-analysis.summary.booked-users'
+    },
+    {
+      label: 'Завершали',
+      value: formatNumber(summary.completedUsers),
+      valueHtml: cityGigerValueHtml(filters, 'completed-users', summary.completedUsers),
+      metricId: 'city-analysis.summary.completed-users'
+    },
     { label: '30д активные / заявка', value: formatNumber(summary.avgDaily30dActiveUsersPerRequest, 1), metricId: 'city-analysis.summary.avg-daily-30d-active-users-per-request' }
   ], currentUser);
 }
@@ -5938,6 +6342,35 @@ function addCityAnalysisQueryParam(params, key, value) {
   if (value !== null && value !== undefined && String(value) !== '') {
     params.append(key, String(value));
   }
+}
+
+function cityAnalysisGigerUrl(filters = {}, metric, overrides = {}) {
+  const params = new URLSearchParams();
+
+  addCityAnalysisQueryParam(params, 'from', filters.from);
+  addCityAnalysisQueryParam(params, 'to', filters.to);
+  addCityAnalysisQueryParam(params, 'city', filters.city);
+  addCityAnalysisQueryParam(params, 'client', filters.client);
+  addCityAnalysisQueryParam(params, 'profession', filters.profession);
+  addCityAnalysisQueryParam(params, 'orderType', filters.orderType);
+  addCityAnalysisQueryParam(params, 'jobStatus', filters.jobStatus);
+  addCityAnalysisQueryParam(params, 'contractor', filters.contractor);
+  addCityAnalysisQueryParam(params, 'salaryFrom', filters.salaryFrom);
+  addCityAnalysisQueryParam(params, 'salaryTo', filters.salaryTo);
+
+  if (filters.includeDeletedOrders) {
+    params.set('includeDeletedOrders', '1');
+  }
+
+  if (filters.includeHiddenOrders) {
+    params.set('includeHiddenOrders', '1');
+  }
+
+  addCityAnalysisQueryParam(params, 'metric', metric);
+  addCityAnalysisQueryParam(params, 'status', overrides.status);
+  addCityAnalysisQueryParam(params, 'date', overrides.date);
+
+  return `/dashboards/city-analysis/gigers?${params.toString()}`;
 }
 
 function cityAnalysisSectionUrl(filters, section) {
@@ -6013,6 +6446,7 @@ function renderCityProgressiveSections(dashboard) {
 function renderCityAnalysisDashboardSection({ dashboard, section, currentUser }) {
   const summary = dashboard.summary || {};
   const context = dashboard.context || {};
+  const filters = dashboard.filters || {};
 
   if (section === 'summary-demand') {
     return [
@@ -6041,6 +6475,7 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
       renderCityKpiCard({
         label: 'Общая база',
         value: formatNumber(summary.totalLocatedUsers),
+        valueHtml: cityGigerValueHtml(filters, 'total-located-users', summary.totalLocatedUsers),
         detail: coordinateDetail,
         metricId: 'city-analysis.summary.total-located-users',
         currentUser
@@ -6049,6 +6484,12 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
         label: 'Активная база',
         value: formatNumber(summary.readyLocatedUsers),
         detail: `ready ${formatNumber(summary.readyStatusLocatedUsers)} · booked ${formatNumber(summary.bookedStatusLocatedUsers)} · worked ${formatNumber(summary.workedStatusLocatedUsers)}`,
+        valueHtml: cityGigerValueHtml(filters, 'ready-located-users', summary.readyLocatedUsers),
+        detailHtml: cityGigerStatusDetailHtml(filters, 'ready-located-users', {
+          ready: summary.readyStatusLocatedUsers,
+          booked: summary.bookedStatusLocatedUsers,
+          worked: summary.workedStatusLocatedUsers
+        }),
         metricId: 'city-analysis.summary.ready-located-users',
         currentUser
       })
@@ -6060,6 +6501,7 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
       renderCityKpiCard({
         label: 'Входили в приложение',
         value: formatNumber(summary.appActiveUsers),
+        valueHtml: cityGigerValueHtml(filters, 'app-active-users', summary.appActiveUsers),
         metricId: 'city-analysis.summary.app-active-users',
         currentUser
       }),
@@ -6067,6 +6509,12 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
         label: 'Активная за 30 дней',
         value: formatNumber(summary.app30dActiveUsers),
         detail: `ready ${formatNumber(summary.app30dReadyStatusUsers)} · booked ${formatNumber(summary.app30dBookedStatusUsers)} · worked ${formatNumber(summary.app30dWorkedStatusUsers)}`,
+        valueHtml: cityGigerValueHtml(filters, 'app-30d-active-users', summary.app30dActiveUsers),
+        detailHtml: cityGigerStatusDetailHtml(filters, 'app-30d-active-users', {
+          ready: summary.app30dReadyStatusUsers,
+          booked: summary.app30dBookedStatusUsers,
+          worked: summary.app30dWorkedStatusUsers
+        }),
         metricId: 'city-analysis.summary.app-30d-active-users',
         currentUser
       })
@@ -6078,12 +6526,14 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
       renderCityKpiCard({
         label: 'Откликались',
         value: formatNumber(summary.bookedUsers),
+        valueHtml: cityGigerValueHtml(filters, 'booked-users', summary.bookedUsers),
         metricId: 'city-analysis.summary.booked-users',
         currentUser
       }),
       renderCityKpiCard({
         label: 'Завершали',
         value: formatNumber(summary.completedUsers),
+        valueHtml: cityGigerValueHtml(filters, 'completed-users', summary.completedUsers),
         metricId: 'city-analysis.summary.completed-users',
         currentUser
       })
@@ -6104,7 +6554,7 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
   }
 
   if (section === 'dynamics') {
-    return renderCityDynamics(dashboard.dynamics, currentUser);
+    return renderCityDynamics(dashboard.dynamics, currentUser, filters);
   }
 
   return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
@@ -6126,7 +6576,7 @@ function safeRows(rows) {
   return Array.isArray(rows) ? rows : [];
 }
 
-function renderMiniBarPanel({ title, rows, valueForWidth, metaForRow, metricId, rowMetricId, currentUser }) {
+function renderMiniBarPanel({ title, rows, valueForWidth, metaForRow, metaHtmlForRow, metricId, rowMetricId, currentUser }) {
   const panelRows = safeRows(rows);
   const titleHtml = renderMetricInfoScope({
     tag: 'h3',
@@ -6150,9 +6600,12 @@ function renderMiniBarPanel({ title, rows, valueForWidth, metaForRow, metricId, 
       const width = maxValue > 0 ? clampPercent((rawValue / maxValue) * 100) : 0;
 
       const metricIdForRow = typeof rowMetricId === 'function' ? rowMetricId(row) : rowMetricId;
+      const metaHtml = typeof metaHtmlForRow === 'function'
+        ? metaHtmlForRow(row)
+        : escapeHtml(metaForRow(row));
       const content = `<div class="mini-row-head">
       <span class="mini-label">${escapeHtml(row.label || '')}</span>
-      <span class="mini-meta">${escapeHtml(metaForRow(row))}</span>
+      <span class="mini-meta">${metaHtml}</span>
     </div>
     <div class="mini-bar-track"><div class="mini-bar-fill" style="width: ${escapeHtml(formatNumber(width, 1).replace(',', '.'))}%"></div></div>`;
 
@@ -6257,7 +6710,7 @@ function renderCityComboDynamics(rows) {
 </article>`;
 }
 
-function renderCityComboDynamics(rows, currentUser) {
+function renderCityComboDynamics(rows, currentUser, filters = {}) {
   const maxOrder = maxCityDynamicValue(rows, 'orderedShifts');
   const maxUsers = Math.max(
     maxCityDynamicValue(rows, 'appActiveUsers'),
@@ -6265,7 +6718,7 @@ function renderCityComboDynamics(rows, currentUser) {
     maxCityDynamicValue(rows, 'completedUsers')
   );
 
-  function comboMetric(label, value, maxValue, className, metricId, digits = 0) {
+  function comboMetric(label, value, maxValue, className, metricId, digits = 0, detailUrl = '') {
     return renderMetricInfoScope({
       className: 'city-metric-line',
       metricId,
@@ -6273,7 +6726,7 @@ function renderCityComboDynamics(rows, currentUser) {
       content: `
         <span>${escapeHtml(label)}</span>
         <div class="city-metric-track"><div class="city-metric-fill ${escapeHtml(className)}" style="width: ${cssPercent(cityDynamicWidth(value, maxValue))}%"></div></div>
-        <span class="city-metric-value">${escapeHtml(formatNumber(value, digits))}</span>`
+        <span class="city-metric-value">${detailUrl ? renderGigerDetailTrigger(formatNumber(value, digits), detailUrl) : escapeHtml(formatNumber(value, digits))}</span>`
     });
   }
 
@@ -6285,9 +6738,9 @@ function renderCityComboDynamics(rows, currentUser) {
     <div class="city-combo-main">
       <span hidden>${escapeHtml(cityDynamicsMeta(row))}</span>
       ${comboMetric('Заказ', row.orderedShifts, maxOrder, 'city-series-demand', 'city-analysis.dynamics.combo-ordered-shifts')}
-      ${comboMetric('Входы', row.appActiveUsers, maxUsers, 'city-series-app', 'city-analysis.dynamics.combo-app-active-users')}
-      ${comboMetric('Отклики', row.bookedUsers, maxUsers, 'city-series-booked', 'city-analysis.dynamics.combo-booked-users')}
-      ${comboMetric('Завершения', row.completedUsers, maxUsers, 'city-series-completed', 'city-analysis.dynamics.combo-completed-users')}
+      ${comboMetric('Входы', row.appActiveUsers, maxUsers, 'city-series-app', 'city-analysis.dynamics.combo-app-active-users', 0, cityAnalysisGigerUrl(filters, 'dynamic-app-active-users', { date: row.period }))}
+      ${comboMetric('Отклики', row.bookedUsers, maxUsers, 'city-series-booked', 'city-analysis.dynamics.combo-booked-users', 0, cityAnalysisGigerUrl(filters, 'dynamic-booked-users', { date: row.period }))}
+      ${comboMetric('Завершения', row.completedUsers, maxUsers, 'city-series-completed', 'city-analysis.dynamics.combo-completed-users', 0, cityAnalysisGigerUrl(filters, 'dynamic-completed-users', { date: row.period }))}
     </div>
   </div>`)
     .join('')}</div>
@@ -6302,22 +6755,25 @@ function cityDynamicRowsForMetric(rows, key) {
   }));
 }
 
-function renderCitySmallMultiples(rows, currentUser) {
+function renderCitySmallMultiples(rows, currentUser, filters = {}) {
   const panels = [
-    ['Заказ', 'orderedShifts', 0, 'смен', 'city-analysis.dynamics.multiples-ordered-shifts'],
-    ['Входили в приложение', 'appActiveUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-app-active-users'],
-    ['Откликались', 'bookedUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-booked-users'],
-    ['Завершали', 'completedUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-completed-users'],
-    ['Активные / заявка', 'activeUsersPerRequest', 1, '', 'city-analysis.dynamics.multiples-active-users-per-request']
+    ['Заказ', 'orderedShifts', 0, 'смен', 'city-analysis.dynamics.multiples-ordered-shifts', ''],
+    ['Входили в приложение', 'appActiveUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-app-active-users', 'dynamic-app-active-users'],
+    ['Откликались', 'bookedUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-booked-users', 'dynamic-booked-users'],
+    ['Завершали', 'completedUsers', 0, 'польз.', 'city-analysis.dynamics.multiples-completed-users', 'dynamic-completed-users'],
+    ['Активные / заявка', 'activeUsersPerRequest', 1, '', 'city-analysis.dynamics.multiples-active-users-per-request', '']
   ];
 
   return `<div class="mini-panels-grid">${panels
-    .map(([title, key, digits, suffix, metricId]) =>
+    .map(([title, key, digits, suffix, metricId, gigerMetric]) =>
       renderMiniBarPanel({
         title,
         rows: cityDynamicRowsForMetric(rows, key),
         valueForWidth: (row) => row.metricValue,
         metaForRow: (row) => `${formatNumber(row.metricValue, digits)}${suffix ? ` ${suffix}` : ''}`,
+        metaHtmlForRow: gigerMetric
+          ? (row) => `${renderGigerDetailTrigger(formatNumber(row.metricValue, digits), cityAnalysisGigerUrl(filters, gigerMetric, { date: row.period }))}${suffix ? ` ${escapeHtml(suffix)}` : ''}`
+          : null,
         metricId,
         rowMetricId: metricId,
         currentUser
@@ -6414,18 +6870,18 @@ function renderCityHeatmap(rows, currentUser) {
 </article>`;
 }
 
-function renderCityFunnelStep({ label, value, maxValue, className, metricId, currentUser }) {
+function renderCityFunnelStep({ label, value, maxValue, className, metricId, currentUser, detailUrl = '' }) {
   return renderMetricInfoScope({
     className: 'city-funnel-step',
     metricId,
     currentUser,
     content: `<span>${escapeHtml(label)}</span>
   <div class="city-funnel-track"><div class="city-funnel-fill ${escapeHtml(className)}" style="width: ${cssPercent(cityDynamicWidth(value, maxValue))}%"></div></div>
-  <span class="city-funnel-value">${escapeHtml(formatNumber(value))}</span>`
+  <span class="city-funnel-value">${detailUrl ? renderGigerDetailTrigger(formatNumber(value), detailUrl) : escapeHtml(formatNumber(value))}</span>`
   });
 }
 
-function renderCityFunnel(rows, currentUser) {
+function renderCityFunnel(rows, currentUser, filters = {}) {
   return `<article class="mini-panel">
   <h3>Воронка</h3>
   <div class="city-funnel-list">${rows
@@ -6449,7 +6905,8 @@ function renderCityFunnel(rows, currentUser) {
         maxValue,
         className: 'city-series-app',
         metricId: 'city-analysis.dynamics.funnel-app-active-users',
-        currentUser
+        currentUser,
+        detailUrl: cityAnalysisGigerUrl(filters, 'dynamic-app-active-users', { date: row.period })
       })}
       ${renderCityFunnelStep({
         label: 'Отклики',
@@ -6457,7 +6914,8 @@ function renderCityFunnel(rows, currentUser) {
         maxValue,
         className: 'city-series-booked',
         metricId: 'city-analysis.dynamics.funnel-booked-users',
-        currentUser
+        currentUser,
+        detailUrl: cityAnalysisGigerUrl(filters, 'dynamic-booked-users', { date: row.period })
       })}
       ${renderCityFunnelStep({
         label: 'Завершения',
@@ -6465,7 +6923,8 @@ function renderCityFunnel(rows, currentUser) {
         maxValue,
         className: 'city-series-completed',
         metricId: 'city-analysis.dynamics.funnel-completed-users',
-        currentUser
+        currentUser,
+        detailUrl: cityAnalysisGigerUrl(filters, 'dynamic-completed-users', { date: row.period })
       })}
     </div>
   </div>`;
@@ -6563,7 +7022,7 @@ function renderCityComposition(composition, currentUser) {
 </section>`;
 }
 
-function renderCityDynamics(dynamics, currentUser) {
+function renderCityDynamics(dynamics, currentUser, filters = {}) {
   const rows = safeRows(dynamics).map((row) => ({
     ...row,
     label: row.period
@@ -6599,10 +7058,10 @@ function renderCityDynamics(dynamics, currentUser) {
       <label class="city-dynamics-tab" for="city-dynamics-tab-index">Индексы</label>
     </div>
     <div class="city-dynamics-panels">
-      <div class="city-dynamics-panel city-dynamics-panel-combo">${renderCityComboDynamics(rows, currentUser)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-multiples">${renderCitySmallMultiples(rows, currentUser)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-combo">${renderCityComboDynamics(rows, currentUser, filters)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-multiples">${renderCitySmallMultiples(rows, currentUser, filters)}</div>
       <div class="city-dynamics-panel city-dynamics-panel-heatmap">${renderCityHeatmap(rows, currentUser)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-funnel">${renderCityFunnel(rows, currentUser)}</div>
+      <div class="city-dynamics-panel city-dynamics-panel-funnel">${renderCityFunnel(rows, currentUser, filters)}</div>
       <div class="city-dynamics-panel city-dynamics-panel-index">${renderCityIndexDynamics(rows, currentUser)}</div>
     </div>
   </div>
@@ -6638,7 +7097,7 @@ function renderCityAnalysisResultSections(dashboard, currentUser) {
 </section>`
       : '';
 
-  return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition, currentUser)}${renderCityDynamics(dashboard.dynamics, currentUser)}`;
+  return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition, currentUser)}${renderCityDynamics(dashboard.dynamics, currentUser, filters)}`;
 }
 
 function renderCityAnalysisDashboard({
@@ -6724,9 +7183,10 @@ function renderCityAnalysisDashboard({
     <button type="submit">Применить</button>
   </form>
   ${renderMetricPanelHead('Баланс спроса и базы', 'city-analysis.summary', currentUser)}
-  ${progressive ? '' : renderCityKpiCards(summary, currentUser)}
+  ${progressive ? '' : renderCityKpiCards(summary, currentUser, filters)}
 </section>
-${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard, currentUser)}`;
+${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard, currentUser)}
+${renderGigerListModal()}`;
 
   return layout({
     title: 'Анализ городов',
@@ -7172,6 +7632,8 @@ module.exports = {
   renderAccountManagement,
   renderDashboardSectionError,
   renderError,
+  renderGigerDetails,
+  renderGigerDetailsWorkbook,
   renderCityAnalysisDashboard: renderCityAnalysisDashboardPage,
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,

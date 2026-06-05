@@ -6,10 +6,12 @@ const path = require('node:path');
 
 const {
   createCityAnalysisCache,
+  loadCityAnalysisGigerDetails,
   loadCityAnalysisDashboard,
   loadCityAnalysisDashboardSection,
   loadCityAnalysisDashboardShell,
   mergeCityAnalysisRows,
+  normalizeCityGigerDetailsInput,
   normalizeCityAnalysisFilters
 } = require('../src/cityAnalysisDashboard');
 
@@ -49,6 +51,156 @@ test('normalizeCityAnalysisFilters defaults dates, requires a single city, and w
     includeDeletedOrders: true,
     includeHiddenOrders: true
   });
+});
+
+test('normalizeCityGigerDetailsInput validates city giger metric and keeps page size at 20', () => {
+  const details = normalizeCityGigerDetailsInput(
+    {
+      city: ' Москва ',
+      metric: 'app-30d-active-users',
+      status: 'worked',
+      page: '4'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.city, 'Москва');
+  assert.equal(details.metric, 'app-30d-active-users');
+  assert.equal(details.metricLabel, 'Активная за 30 дней');
+  assert.equal(details.status, 'worked');
+  assert.equal(details.page, 4);
+  assert.equal(details.pageSize, 20);
+  assert.equal(details.offset, 60);
+  assert.equal(details.export, false);
+});
+
+test('loadCityAnalysisGigerDetails loads paged geo base users with safe parameters', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'city analysis giger details total') {
+        return [{ total_gigers: 21 }];
+      }
+
+      if (operation === 'city analysis giger details') {
+        return [
+          {
+            user_id: 'user-1',
+            worker_id: 'worker-1',
+            full_name: 'Иван Петров',
+            phone: '+79990000000',
+            status: 'ready'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const details = await loadCityAnalysisGigerDetails(
+    client,
+    {
+      city: 'Москва; DROP TABLE mg_workers',
+      metric: 'total-located-users',
+      page: '2',
+      client: 'Brand A'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(details.metricLabel, 'Общая база');
+  assert.equal(details.pagination.page, 2);
+  assert.equal(details.pagination.pageSize, 20);
+  assert.equal(details.pagination.totalGigers, 21);
+  assert.deepEqual(details.gigers, [
+    {
+      userId: 'user-1',
+      workerId: 'worker-1',
+      fullName: 'Иван Петров',
+      phone: '+79990000000',
+      status: 'ready'
+    }
+  ]);
+
+  assert.equal(calls.length, 2);
+
+  for (const call of calls) {
+    assert.equal(call.params.param_city, 'Москва; DROP TABLE mg_workers');
+    assert.equal(call.params.param_clients, "['Brand A']");
+    assert.equal(call.params.param_limit, 20);
+    assert.equal(call.params.param_offset, 20);
+    assert.equal(call.query.includes('located_users'), true);
+    assert.equal(call.query.includes('mg_workers'), true);
+    assert.equal(call.query.includes('mg_users'), true);
+    assert.equal(call.query.includes('DROP TABLE'), false);
+  }
+});
+
+test('loadCityAnalysisGigerDetails supports app, booked, completed and dynamic-day metrics', async () => {
+  const scenarios = [
+    {
+      metric: 'app-active-users',
+      expected: 'app_active_users',
+      extra: 'parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {from:DateTime}'
+    },
+    {
+      metric: 'booked-users',
+      expected: 'booked_users',
+      extra: "ifNull(history.status, '') = 'booked'"
+    },
+    {
+      metric: 'completed-users',
+      expected: 'completed_users',
+      extra: 'is_successful_confirmed_shift = 1'
+    },
+    {
+      metric: 'dynamic-app-active-users',
+      date: '2026-06-03',
+      expected: 'app_active_users',
+      extra: "toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime)) = {metric_date:Date}"
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const calls = [];
+    const client = {
+      async queryJSONEachRow(query, params, operation) {
+        calls.push({ query, params, operation });
+
+        if (operation === 'city analysis giger details total') {
+          return [{ total_gigers: 1 }];
+        }
+
+        if (operation === 'city analysis giger details') {
+          return [{ user_id: 'user-1', worker_id: 'worker-1', full_name: 'Test', phone: '', status: 'ready' }];
+        }
+
+        throw new Error(`Unexpected operation: ${operation}`);
+      }
+    };
+
+    await loadCityAnalysisGigerDetails(
+      client,
+      {
+        city: 'Москва',
+        metric: scenario.metric,
+        date: scenario.date
+      },
+      new Date('2026-06-15T12:00:00.000Z')
+    );
+
+    const detailsCall = calls.find((call) => call.operation === 'city analysis giger details');
+
+    assert.equal(detailsCall.query.includes(scenario.expected), true);
+    assert.equal(detailsCall.query.includes(scenario.extra), true);
+
+    if (scenario.date) {
+      assert.equal(detailsCall.params.param_metric_date, scenario.date);
+    }
+  }
 });
 
 test('normalizeCityAnalysisFilters resets invalid date ranges to current month', () => {

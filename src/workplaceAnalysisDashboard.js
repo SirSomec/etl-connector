@@ -2,6 +2,13 @@ const {
   successfulConfirmedShiftCondition,
   successfulConfirmedShiftFlagExpression
 } = require('./successfulConfirmedShift');
+const {
+  GIGER_DETAILS_PAGE_SIZE,
+  cleanBooleanFlag: cleanGigerDetailsBooleanFlag,
+  firstCleanText: firstGigerDetailsText,
+  mergeGigerDetails,
+  normalizeGigerDetailsPage
+} = require('./gigerDetails');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
@@ -1477,6 +1484,264 @@ function attentionPointsQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
+const WORKPLACE_GIGER_METRICS = {
+  'points-active-gigers-5km': {
+    label: 'Гигеры 5 км',
+    kind: 'points'
+  },
+  'attention-total-workers-15km': {
+    label: 'База 15км',
+    kind: 'attention',
+    activeOnly: false
+  },
+  'attention-active-workers-30d-15km': {
+    label: 'Актив 30д',
+    kind: 'attention',
+    activeOnly: true
+  }
+};
+const WORKPLACE_GIGER_STATUSES = new Set(['ready', 'booked', 'worked', 'other']);
+
+function httpError(status, message) {
+  const error = new Error(message);
+
+  error.status = status;
+  return error;
+}
+
+function normalizeWorkplaceGigerDetailsInput(input = {}, now = new Date()) {
+  const metric = firstGigerDetailsText(input.metric);
+  const metricConfig = WORKPLACE_GIGER_METRICS[metric];
+
+  if (!metricConfig) {
+    throw httpError(400, `Unknown workplace giger metric: ${metric}`);
+  }
+
+  const workplaceId = firstGigerDetailsText(input.workplaceId);
+
+  if (workplaceId === '') {
+    throw httpError(400, 'workplaceId is required');
+  }
+
+  const page = normalizeGigerDetailsPage(input.page);
+  const status = firstGigerDetailsText(input.status);
+  const filters =
+    metricConfig.kind === 'attention'
+      ? normalizeWorkplaceAttentionFilters(input, now)
+      : normalizeWorkplaceAnalysisFilters(input, now);
+
+  return {
+    source: 'workplace-analysis',
+    metric,
+    metricLabel: metricConfig.label,
+    workplaceId,
+    status: WORKPLACE_GIGER_STATUSES.has(status) ? status : '',
+    page,
+    pageSize: GIGER_DETAILS_PAGE_SIZE,
+    offset: (page - 1) * GIGER_DETAILS_PAGE_SIZE,
+    export: cleanGigerDetailsBooleanFlag(input.export),
+    filters
+  };
+}
+
+function gigerFullNameExpression(workerAlias = 'worker', userAlias = 'u') {
+  return `coalesce(
+      nullIf(trim(concat(ifNull(${userAlias}.lastname, ''), ' ', ifNull(${userAlias}.firstname, ''), ' ', ifNull(${userAlias}.middlename, ''))), ''),
+      nullIf(trim(ifNull(${workerAlias}.full_name, '')), ''),
+      ''
+    )`;
+}
+
+function workplacePointGigerDetailsCtes() {
+  return `selected_workplace AS (
+    SELECT
+      _id AS workplace_id,
+      location__coordinates AS workplace_coordinates
+    FROM mg_workplaces
+    WHERE _id = {workplace_id:String}
+      AND length(location__coordinates) >= 2
+    LIMIT 1
+  ),
+  active_session_users AS (
+    SELECT DISTINCT ifNull(profile_id, '') AS user_id
+    FROM appmetrica_sessions
+    WHERE ifNull(profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) >= now() - INTERVAL 30 DAY
+  ),
+  eligible_gigers AS (
+    SELECT
+      worker.user AS user_id,
+      worker._id AS worker_id,
+      ${gigerFullNameExpression('worker', 'u')} AS full_name,
+      ifNull(u.phone, '') AS phone,
+      ifNull(worker.status, '') AS status
+    FROM selected_workplace AS sw
+    CROSS JOIN mg_workers AS worker
+    INNER JOIN active_session_users AS au ON au.user_id = worker.user
+    LEFT JOIN mg_users AS u ON worker.user = u._id
+    WHERE ifNull(worker.user, '') != ''
+      AND ifNull(worker.deleted, 0) = 0
+      AND ifNull(worker.status, '') IN ('ready', 'worked', 'booked')
+      AND length(worker.location__coordinates) >= 2
+      AND greatCircleDistance(
+        sw.workplace_coordinates[1],
+        sw.workplace_coordinates[2],
+        worker.location__coordinates[1],
+        worker.location__coordinates[2]
+      ) <= 5000
+  )`;
+}
+
+function workplaceAttentionGigerDetailsCtes(input) {
+  const activeWhere = WORKPLACE_GIGER_METRICS[input.metric].activeOnly
+    ? '\n      AND user_id IN (SELECT user_id FROM active_session_users)'
+    : '';
+  let statusWhere = '';
+
+  if (input.status === 'other') {
+    statusWhere = "\n      AND status NOT IN ('ready', 'booked', 'worked')";
+  } else if (input.status !== '') {
+    statusWhere = '\n      AND status = {status:String}';
+  }
+
+  return `selected_workplace AS (
+    SELECT
+      _id AS workplace_id,
+      location__coordinates AS workplace_coordinates
+    FROM mg_workplaces
+    WHERE _id = {workplace_id:String}
+      AND length(location__coordinates) >= 2
+    LIMIT 1
+  ),
+  worker_rows AS (
+    SELECT
+      worker.user AS user_id,
+      worker._id AS worker_id,
+      ifNull(worker.status, '') AS status,
+      worker.location__coordinates AS worker_coordinates,
+      ${gigerFullNameExpression('worker', 'u')} AS full_name,
+      ifNull(u.phone, '') AS phone,
+      ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
+    FROM mg_workers AS worker
+    LEFT JOIN mg_users AS u ON worker.user = u._id
+    WHERE ifNull(worker.user, '') != ''
+      AND ifNull(worker.deleted, 0) = 0
+      AND length(worker.location__coordinates) >= 2
+  ),
+  latest_workers AS (
+    SELECT
+      user_id,
+      argMax(worker_id, updated_at) AS worker_id,
+      argMax(status, updated_at) AS status,
+      argMax(worker_coordinates, updated_at) AS worker_coordinates,
+      argMax(full_name, updated_at) AS full_name,
+      argMax(phone, updated_at) AS phone
+    FROM worker_rows
+    GROUP BY user_id
+  ),
+  active_session_users AS (
+    SELECT DISTINCT ifNull(profile_id, '') AS user_id
+    FROM appmetrica_sessions
+    WHERE ifNull(profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_to:DateTime}
+  ),
+  eligible_gigers AS (
+    SELECT
+      user_id,
+      worker_id,
+      full_name,
+      phone,
+      status
+    FROM (
+      SELECT
+        lw.user_id AS user_id,
+        lw.worker_id AS worker_id,
+        lw.full_name AS full_name,
+        lw.phone AS phone,
+        lw.status AS status,
+        greatCircleDistance(
+          sw.workplace_coordinates[1],
+          sw.workplace_coordinates[2],
+          lw.worker_coordinates[1],
+          lw.worker_coordinates[2]
+        ) AS distance_m
+      FROM selected_workplace AS sw
+      CROSS JOIN latest_workers AS lw
+      WHERE length(lw.worker_coordinates) >= 2
+    )
+    WHERE distance_m <= 15000${activeWhere}${statusWhere}
+  )`;
+}
+
+function workplaceGigerDetailsCtes(input) {
+  if (input.metric === 'points-active-gigers-5km') {
+    return workplacePointGigerDetailsCtes();
+  }
+
+  return workplaceAttentionGigerDetailsCtes(input);
+}
+
+function workplaceGigerDetailsLimitClause(input) {
+  return input.export ? '' : '\n  LIMIT {limit:UInt64} OFFSET {offset:UInt64}';
+}
+
+function workplaceGigerDetailsTotalQuery(input) {
+  return `WITH ${workplaceGigerDetailsCtes(input)}
+  SELECT count() AS total_gigers
+  FROM eligible_gigers
+  FORMAT JSONEachRow`;
+}
+
+function workplaceGigerDetailsQuery(input) {
+  return `WITH ${workplaceGigerDetailsCtes(input)}
+  SELECT
+    user_id,
+    worker_id,
+    full_name,
+    phone,
+    status
+  FROM eligible_gigers
+  ORDER BY full_name ASC, user_id ASC, worker_id ASC${workplaceGigerDetailsLimitClause(input)}
+  FORMAT JSONEachRow`;
+}
+
+function workplaceGigerDetailsParams(input) {
+  const params = {
+    param_workplace_id: input.workplaceId,
+    param_limit: input.pageSize,
+    param_offset: input.offset
+  };
+
+  if (input.metric !== 'points-active-gigers-5km') {
+    params.param_active_from = input.filters.attentionFromDateTime;
+    params.param_active_to = input.filters.attentionToExclusiveDateTime;
+  }
+
+  if (input.status !== '' && input.status !== 'other') {
+    params.param_status = input.status;
+  }
+
+  return params;
+}
+
+async function loadWorkplaceAnalysisGigerDetails(client, input = {}, now = new Date()) {
+  const detailInput = normalizeWorkplaceGigerDetailsInput(input, now);
+  const params = workplaceGigerDetailsParams(detailInput);
+  const totalRows = await client.queryJSONEachRow(
+    workplaceGigerDetailsTotalQuery(detailInput),
+    params,
+    'workplace analysis giger details total'
+  );
+  const gigerRows = await client.queryJSONEachRow(
+    workplaceGigerDetailsQuery(detailInput),
+    params,
+    'workplace analysis giger details'
+  );
+
+  return mergeGigerDetails(detailInput, totalRows, gigerRows);
+}
+
 async function loadDailyRowsForWorkplaces(client, whereSql, params, workplaceIds, operation) {
   if (workplaceIds.length === 0) {
     return [];
@@ -1764,11 +2029,13 @@ module.exports = {
   buildDateKeys,
   heatmapLevel,
   loadActiveGigers5kmByWorkplace,
+  loadWorkplaceAnalysisGigerDetails,
   loadWorkplaceAnalysisDashboard,
   loadWorkplaceAnalysisDashboardSection,
   loadWorkplaceAnalysisDashboardShell,
   mergeWorkplaceAttentionRows,
   mergeWorkplaceAnalysisRows,
+  normalizeWorkplaceGigerDetailsInput,
   normalizeWorkplaceAttentionFilters,
   normalizeWorkplaceAnalysisFilters
 };

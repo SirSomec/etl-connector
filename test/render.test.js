@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const {
   escapeHtml,
   renderError,
+  renderGigerDetails,
+  renderGigerDetailsWorkbook,
   renderCityAnalysisDashboard,
   renderCityAnalysisDashboardSection,
   renderHeatmapDashboard,
@@ -530,6 +532,69 @@ test('renderWorkerCancellationsDetails renders escaped shift details fragment', 
   assert.match(html, />-<\/td>/);
   assert.doesNotMatch(html, /<html/);
   assert.doesNotMatch(html, /<script>/);
+});
+
+test('renderGigerDetails renders paged escaped giger list with modal pagination and export link', () => {
+  const html = renderGigerDetails({
+    details: {
+      metricLabel: 'Гигеры <b>5 км</b>',
+      detailUrl: '/dashboards/city-analysis/gigers?city=Москва&metric=total-located-users&page=2',
+      exportUrl: '/dashboards/city-analysis/gigers/export?city=Москва&metric=total-located-users',
+      pagination: {
+        page: 2,
+        pageSize: 20,
+        totalGigers: 21,
+        totalPages: 2,
+        hasPrevious: true,
+        hasNext: false
+      },
+      gigers: [
+        {
+          userId: 'user-1<script>x</script>',
+          workerId: 'worker-1',
+          fullName: 'Иванов <Иван>',
+          phone: '+79990000000<script>x</script>',
+          status: 'ready'
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /class="giger-details"/);
+  assert.match(html, /Гигеры &lt;b&gt;5 км&lt;\/b&gt;/);
+  assert.match(html, /href="\/dashboards\/city-analysis\/gigers\/export\?city=/);
+  assert.match(html, /data-giger-list-page-link/);
+  assert.match(html, /href="\/dashboards\/city-analysis\/gigers\?city=/);
+  assert.match(html, /page=1/);
+  assert.match(html, /user-1&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /Иванов &lt;Иван&gt;/);
+  assert.match(html, /\+79990000000&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /Страница 2 из 2/);
+  assert.doesNotMatch(html, /<script>x<\/script>/);
+  assert.doesNotMatch(html, /<html/);
+});
+
+test('renderGigerDetailsWorkbook renders excel-compatible escaped table', () => {
+  const html = renderGigerDetailsWorkbook({
+    details: {
+      metricLabel: 'База',
+      gigers: [
+        {
+          userId: 'user-1',
+          workerId: 'worker-1<script>x</script>',
+          fullName: 'Иванов Иван',
+          phone: '+79990000000',
+          status: 'worked'
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /^<!doctype html>/);
+  assert.match(html, /<meta charset="utf-8">/);
+  assert.match(html, /worker-1&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /Иванов Иван/);
+  assert.doesNotMatch(html, /<script>x<\/script>/);
 });
 
 test('renderTable escapes metadata and cells, formats complex values, and uses column order', () => {
@@ -1114,7 +1179,14 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /&lt;script&gt;contractor&lt;\/script&gt;/);
   assert.match(html, /&lt;script&gt;search&lt;\/script&gt;/);
   assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
-  assert.match(html, /<a class="point-card-link" href="\/dashboards\/workplace-analysis\/point\?[^"]*workplaceId=wp1[^"]*from=2026-06-01[^"]*profession=driver[^"]*jobStatus=confirmed[^"]*" target="_blank" rel="noopener noreferrer">/);
+  assert.match(html, /<a class="point-card-link point-card-title-block" href="\/dashboards\/workplace-analysis\/point\?[^"]*workplaceId=wp1[^"]*from=2026-06-01[^"]*profession=driver[^"]*jobStatus=confirmed[^"]*" target="_blank" rel="noopener noreferrer">/);
+  assert.match(html, /data-giger-list-modal/);
+  assert.match(html, /data-giger-detail-trigger/);
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/workplace-analysis\/gigers\?[^"]*metric=points-active-gigers-5km[^"]*workplaceId=wp1/
+  );
+  assert.doesNotMatch(html, /<a class="point-card-link"[\s\S]*data-giger-detail-trigger/);
   assert.match(html, /title="&lt;script&gt;date&lt;\/script&gt;: заказано 6; выполнено 3"/);
   assert.match(html, /\.heatmap-cell\.is-current-day/);
   assert.match(html, /<span class="heatmap-cell" data-date="2026-06-01" data-level="2" title="2026-06-01: заказано 3; выполнено 2"><\/span>/);
@@ -1231,11 +1303,20 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
   assert.match(html, /attention-profession-breakdown/);
   assert.match(html, /class="attention-profession-line">Picker&lt;script&gt; 4<\/span>/);
   assert.match(html, /class="attention-profession-line">Courier 2<\/span>/);
-  assert.match(html, /class="attention-status-line">ready 2<\/span>/);
-  assert.match(html, /class="attention-status-line">booked 1<\/span>/);
-  assert.match(html, /class="attention-status-line">worked 0<\/span>/);
-  assert.match(html, /class="attention-status-line">прочие 0<\/span>/);
+  assert.match(html, /class="attention-status-line">ready [\s\S]*>2<\/button><\/span>/);
+  assert.match(html, /class="attention-status-line">booked [\s\S]*>1<\/button><\/span>/);
+  assert.match(html, /class="attention-status-line">worked [\s\S]*>0<\/button><\/span>/);
+  assert.match(html, /class="attention-status-line">прочие [\s\S]*>0<\/button><\/span>/);
   assert.match(html, /пик в ближайшие дни/);
+  assert.match(html, /data-giger-detail-trigger/);
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/workplace-analysis\/gigers\?[^"]*metric=attention-total-workers-15km[^"]*workplaceId=wp1/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/workplace-analysis\/gigers\?[^"]*metric=attention-active-workers-30d-15km[^"]*status=ready[^"]*workplaceId=wp1/
+  );
   assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
 });
 
@@ -1325,7 +1406,7 @@ test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention
   assert.match(html, /attention-stack-cell/);
   assert.match(html, /class="attention-metric-content"/);
   assert.match(html, /attention-status-breakdown/);
-  assert.match(html, /class="attention-status-line">ready 3 562<\/span>/);
+  assert.match(html, /class="attention-status-line">ready [\s\S]*>3 562<\/button><\/span>/);
   assert.match(
     html,
     /<td class="number-cell attention-stack-cell metric-info-scope">[\s\S]*<div class="attention-metric-inline">[\s\S]*<div class="attention-metric-content">[\s\S]*52 386[\s\S]*<\/div><button type="button" class="sql-inspector-button"/
@@ -1596,8 +1677,22 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(html, /\.point-calendar-cell\.is-current-day/);
   assert.match(html, /data-workplace-point-day-modal/);
   assert.match(html, /data-workplace-point-day-modal-body/);
-  assert.match(html, /11 \/ 4/);
-  assert.match(html, /45 \/ 18/);
+  assert.match(html, /data-giger-list-modal/);
+  assert.match(html, /data-giger-detail-trigger/);
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/workplace-analysis\/point\/gigers\?[^"]*metric=unique-completed-workers/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/workplace-analysis\/point\/gigers\?[^"]*metric=unique-booked-workers/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/workplace-analysis\/point\/gigers\?[^"]*metric=radius-active-session-workers[^"]*radiusKm=15/
+  );
+  assert.match(html, /metric=radius-workers[^"]*radiusKm=5[\s\S]*>11<\/button>\s*\/\s*<button[\s\S]*metric=radius-active-session-workers[^"]*radiusKm=5[\s\S]*>4<\/button>/);
+  assert.match(html, /metric=radius-workers[^"]*radiusKm=20[\s\S]*>45<\/button>\s*\/\s*<button[\s\S]*metric=radius-active-session-workers[^"]*radiusKm=20[\s\S]*>18<\/button>/);
   assert.match(html, /2026-06-02/);
   assert.match(html, /Календарь заказа и SLA/);
   assert.match(html, /Профессии точки/);
@@ -1996,16 +2091,30 @@ test('renderCityAnalysisDashboard renders filters, active navigation, KPI cards,
   assert.match(html, /Не удаленные заявки/);
   assert.match(html, /Общая база/);
   assert.match(html, /Активная база/);
-  assert.match(html, /ready 420 · booked 310 · worked 170/);
+  assert.match(html, /ready [\s\S]*>420<\/button> · booked [\s\S]*>310<\/button> · worked [\s\S]*>170<\/button>/);
   assert.match(html, /Входили в приложение/);
   assert.match(html, /Активная за 30 дней/);
-  assert.match(html, /ready 210 · booked 190 · worked 160/);
+  assert.match(html, /ready [\s\S]*>210<\/button> · booked [\s\S]*>190<\/button> · worked [\s\S]*>160<\/button>/);
   assert.match(html, /Откликались/);
   assert.match(html, /Завершали/);
   assert.match(html, /30д активные \/ заявка/);
   assert.match(html, /5 000/);
   assert.match(html, /130/);
   assert.match(html, /11,3/);
+  assert.match(html, /data-giger-list-modal/);
+  assert.match(html, /data-giger-detail-trigger/);
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/city-analysis\/gigers\?[^"]*metric=total-located-users/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/city-analysis\/gigers\?[^"]*metric=app-active-users/
+  );
+  assert.match(
+    html,
+    /data-detail-url="\/dashboards\/city-analysis\/gigers\?[^"]*metric=completed-users/
+  );
   assert.match(html, /Состав заказа/);
   assert.match(html, /Бренды/);
   assert.match(html, /Специальности/);
@@ -2117,7 +2226,9 @@ test('renderCityAnalysisDashboardSection renders requested fragment without full
   };
 
   const summaryHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'summary-demand' });
+  const baseHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'summary-base' });
   const appHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'summary-app' });
+  const responsesHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'summary-responses' });
   const compositionHtml = renderCityAnalysisDashboardSection({ dashboard, section: 'composition' });
 
   assert.match(summaryHtml, /Заказ/);
@@ -2127,7 +2238,14 @@ test('renderCityAnalysisDashboardSection renders requested fragment without full
   assert.match(appHtml, /Входили в приложение/);
   assert.match(appHtml, /Активная за 30 дней/);
   assert.match(appHtml, /560/);
-  assert.match(appHtml, /ready 210 · booked 190 · worked 160/);
+  assert.match(baseHtml, /data-giger-detail-trigger/);
+  assert.match(baseHtml, /metric=total-located-users/);
+  assert.match(baseHtml, /metric=ready-located-users/);
+  assert.match(appHtml, /metric=app-active-users/);
+  assert.match(appHtml, /metric=app-30d-active-users/);
+  assert.match(responsesHtml, /metric=booked-users/);
+  assert.match(responsesHtml, /metric=completed-users/);
+  assert.match(appHtml, /ready [\s\S]*>210<\/button> · booked [\s\S]*>190<\/button> · worked [\s\S]*>160<\/button>/);
   assert.doesNotMatch(appHtml, /<html/);
   assert.match(compositionHtml, /Состав заказа/);
   assert.match(compositionHtml, /Brand A/);

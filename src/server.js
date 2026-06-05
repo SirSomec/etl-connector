@@ -22,6 +22,7 @@ const {
   CITY_ANALYSIS_SECTIONS,
   cityAnalysisCachePathFromEnv,
   createCityAnalysisCache,
+  loadCityAnalysisGigerDetails,
   loadCityAnalysisDashboardSection,
   loadCityAnalysisDashboardShell
 } = require('./cityAnalysisDashboard');
@@ -37,6 +38,7 @@ const {
 } = require('./salesByProjectDashboard');
 const {
   WORKPLACE_ANALYSIS_SECTIONS,
+  loadWorkplaceAnalysisGigerDetails,
   loadWorkplaceAnalysisDashboardSection,
   loadWorkplaceAnalysisDashboardShell
 } = require('./workplaceAnalysisDashboard');
@@ -44,7 +46,8 @@ const {
   WORKPLACE_POINT_SECTIONS,
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
-  loadWorkplacePointDayDetails
+  loadWorkplacePointDayDetails,
+  loadWorkplacePointGigerDetails
 } = require('./workplacePointDashboard');
 const {
   WORKER_CANCELLATIONS_SECTIONS,
@@ -57,6 +60,8 @@ const {
   renderAccountManagement,
   renderDashboardSectionError,
   renderError,
+  renderGigerDetails,
+  renderGigerDetailsWorkbook,
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,
   renderCityAnalysisDashboard,
@@ -102,6 +107,36 @@ function statusCodeFromError(error) {
   }
 
   return 502;
+}
+
+function queryStringWithout(originalUrl, keys) {
+  const query = String(originalUrl || '').split('?')[1] || '';
+  const params = new URLSearchParams(query);
+
+  for (const key of keys) {
+    params.delete(key);
+  }
+
+  return params.toString();
+}
+
+function attachGigerDetailsUrls(req, details, exportPath) {
+  const exportQuery = queryStringWithout(req.originalUrl, ['page', 'export']);
+  const suffix = exportQuery === '' ? '' : `?${exportQuery}`;
+
+  return {
+    ...details,
+    detailUrl: req.originalUrl,
+    exportUrl: `${exportPath}${suffix}`
+  };
+}
+
+function sendGigerDetailsWorkbook(res, details, filename) {
+  res
+    .status(200)
+    .set('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
+    .set('Content-Disposition', `attachment; filename="${filename}"`)
+    .send(renderGigerDetailsWorkbook({ details }));
 }
 
 function normalizePathForNav(path) {
@@ -811,6 +846,42 @@ function createApp({
   );
 
   app.get(
+    '/dashboards/city-analysis/gigers',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadCityAnalysisGigerDetails(client, req.query, new Date());
+
+        res
+          .status(200)
+          .type('html')
+          .send(
+            renderGigerDetails({
+              details: attachGigerDetailsUrls(req, details, '/dashboards/city-analysis/gigers/export')
+            })
+          );
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/city-analysis/gigers/export',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      const details = await loadCityAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
+
+      sendGigerDetailsWorkbook(res, details, 'city-analysis-gigers.xls');
+    })
+  );
+
+  app.get(
     '/dashboards/city-analysis/section',
     requireAuth('city-analysis'),
     asyncRoute(async (req, res) => {
@@ -914,6 +985,42 @@ function createApp({
         .status(200)
         .type('html')
         .send(renderWorkplaceAnalysisDashboard({ database, dashboard, progressive: true, ...viewContext(req) }));
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis/gigers',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadWorkplaceAnalysisGigerDetails(client, req.query, new Date());
+
+        res
+          .status(200)
+          .type('html')
+          .send(
+            renderGigerDetails({
+              details: attachGigerDetailsUrls(req, details, '/dashboards/workplace-analysis/gigers/export')
+            })
+          );
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis/gigers/export',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      const details = await loadWorkplaceAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
+
+      sendGigerDetailsWorkbook(res, details, 'workplace-analysis-gigers.xls');
     })
   );
 
@@ -1034,6 +1141,42 @@ function createApp({
           .type('html')
           .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
       }
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis/point/gigers',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadWorkplacePointGigerDetails(client, req.query, new Date());
+
+        res
+          .status(200)
+          .type('html')
+          .send(
+            renderGigerDetails({
+              details: attachGigerDetailsUrls(req, details, '/dashboards/workplace-analysis/point/gigers/export')
+            })
+          );
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis/point/gigers/export',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      const details = await loadWorkplacePointGigerDetails(client, { ...req.query, export: '1' }, new Date());
+
+      sendGigerDetailsWorkbook(res, details, 'workplace-point-gigers.xls');
     })
   );
 

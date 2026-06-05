@@ -77,6 +77,7 @@ const {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
@@ -152,6 +153,7 @@ function normalizePathForNav(path) {
 function activeNavForPath(path) {
   const normalized = normalizePathForNav(path);
   const navByPath = {
+    '/admin/activity': 'activity',
     '/admin/preload': 'preload-admin',
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
@@ -163,6 +165,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/admin/users/')) {
     return 'users';
+  }
+
+  if (normalized.startsWith('/admin/activity/')) {
+    return 'activity';
   }
 
   if (normalized.startsWith('/admin/preload/')) {
@@ -351,6 +357,10 @@ function createApp({
 
     if (pathName === '/admin/users' || pathName.startsWith('/admin/users/')) {
       return 'users';
+    }
+
+    if (pathName === '/admin/activity' || pathName.startsWith('/admin/activity/')) {
+      return 'activity';
     }
 
     if (pathName === '/admin/preload' || pathName.startsWith('/admin/preload/')) {
@@ -930,6 +940,49 @@ function createApp({
 
       recordCurrentUserActivity(req, 'admin_action');
       res.redirect(303, `/admin/preload?message=${message}`);
+    })
+  );
+
+  app.get(
+    '/admin/activity',
+    requireAuth('users'),
+    asyncRoute(async (req, res) => {
+      if (!authEnabled || !activity) {
+        res
+          .status(200)
+          .type('html')
+          .send(renderUserActivityDashboard({ database, disabled: true, ...viewContext(req) }));
+        return;
+      }
+
+      try {
+        const to = formatDateUTC(now());
+        const fromDate = now();
+
+        fromDate.setUTCDate(fromDate.getUTCDate() - (DEFAULT_USER_ACTIVITY_RETENTION_DAYS - 1));
+
+        const users = await accounts.listUsers();
+        const overview = activity.getActivityOverview({
+          from: formatDateUTC(fromDate),
+          to,
+          users
+        });
+
+        recordCurrentUserActivity(req, 'page_view');
+        res
+          .status(200)
+          .type('html')
+          .send(renderUserActivityDashboard({ database, overview, ...viewContext(req) }));
+      } catch (error) {
+        sendError(
+          res,
+          502,
+          'Activity Store Error',
+          error && error.message,
+          'activity',
+          viewContext(req)
+        );
+      }
     })
   );
 

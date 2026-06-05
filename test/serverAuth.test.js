@@ -419,6 +419,103 @@ test('managed users only access granted sections', async () => {
   });
 });
 
+test('admin can open /admin/activity', async () => {
+  const activityStore = createActivitySpy();
+  let capturedOverviewInput = null;
+
+  activityStore.getActivityOverview = (input) => {
+    capturedOverviewInput = input;
+    return {
+      from: input.from,
+      to: input.to,
+      retentionDays: 90,
+      users: [
+        {
+          id: 'env-admin',
+          email: 'admin@example.test',
+          name: 'Env Admin',
+          role: 'admin',
+          status: 'active',
+          lastEventAt: '2026-06-05T10:00:00.000Z',
+          activeDays30: 1,
+          activeDays90: 1,
+          days: [{ date: '2026-06-05', level: 'view', viewEvents: 1, workEvents: 0, sections: ['activity'] }],
+          recentEvents: []
+        }
+      ]
+    };
+  };
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const adminLogin = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const activityPage = await fetchText(baseUrl, '/admin/activity', {
+      headers: {
+        cookie: cookieFrom(adminLogin)
+      }
+    });
+
+    assert.equal(activityPage.response.status, 200);
+    assert.match(activityPage.text, /Активность пользователей/);
+    assert.equal(capturedOverviewInput.from, '2026-03-08');
+    assert.equal(capturedOverviewInput.to, '2026-06-05');
+    assert.ok(capturedOverviewInput.users.some((user) => user.id === 'env-admin'));
+    assert.ok(
+      activityStore.events.some((event) => (
+        event.eventType === 'page_view' &&
+        event.path === '/admin/activity' &&
+        event.section === 'activity'
+      ))
+    );
+  }, {
+    activityStore,
+    now: () => new Date('2026-06-05T12:00:00.000Z')
+  });
+});
+
+test('/admin/activity is admin-only', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await userStore.createUser({
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables', 'preload-admin'],
+      password: 'AnalystPass123'
+    });
+
+    const analystLogin = await login(baseUrl, 'analyst@example.test', 'AnalystPass123');
+    const activityPage = await fetchText(baseUrl, '/admin/activity', {
+      headers: {
+        cookie: cookieFrom(analystLogin)
+      }
+    });
+
+    assert.equal(activityPage.response.status, 403);
+    assert.match(activityPage.text, /Недостаточно прав/);
+  });
+});
+
+test('/admin/activity renders sanitized store errors', async () => {
+  const activityStore = createActivitySpy();
+
+  activityStore.getActivityOverview = () => {
+    throw new Error('store failed with EnvAdminPass123');
+  };
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const adminLogin = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const activityPage = await fetchText(baseUrl, '/admin/activity', {
+      headers: {
+        cookie: cookieFrom(adminLogin)
+      }
+    });
+
+    assert.equal(activityPage.response.status, 502);
+    assert.match(activityPage.text, /Activity Store Error/);
+    assert.match(activityPage.text, /store failed with \[redacted\]/);
+    assert.doesNotMatch(activityPage.text, /EnvAdminPass123/);
+  }, { activityStore });
+});
+
 test('dashboard section fragments respect sql-inspector permission', async () => {
   await withAuthServer(async ({ baseUrl, userStore }) => {
     await userStore.createUser({

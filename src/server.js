@@ -19,6 +19,10 @@ const {
 const { createPreloadService } = require('./preloadService');
 const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
 const {
+  createUserActivityStore,
+  DEFAULT_USER_ACTIVITY_RETENTION_DAYS
+} = require('./userActivityStore');
+const {
   CITY_ANALYSIS_SECTIONS,
   cityAnalysisCachePathFromEnv,
   createCityAnalysisCache,
@@ -73,6 +77,7 @@ const {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
@@ -148,6 +153,7 @@ function normalizePathForNav(path) {
 function activeNavForPath(path) {
   const normalized = normalizePathForNav(path);
   const navByPath = {
+    '/admin/activity': 'activity',
     '/admin/preload': 'preload-admin',
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
@@ -159,6 +165,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/admin/users/')) {
     return 'users';
+  }
+
+  if (normalized.startsWith('/admin/activity/')) {
+    return 'activity';
   }
 
   if (normalized.startsWith('/admin/preload/')) {
@@ -297,7 +307,9 @@ function createApp({
   workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null }),
   preloadService = null,
   userStore = null,
-  sessionManager = null
+  sessionManager = null,
+  activityStore = null,
+  now = () => new Date()
 }) {
   const app = express();
   const database = config.clickhouse.database;
@@ -321,9 +333,147 @@ function createApp({
         secret: authConfig.sessionSecret || undefined
       })
     : null);
+  const activity = authEnabled ? activityStore : null;
+
+  app.locals.activityStore = activity;
 
   app.disable('x-powered-by');
   app.use(express.urlencoded({ extended: false }));
+
+  function sanitizedPath(req) {
+    return req.path || '/';
+  }
+
+  function sectionForPath(pathName) {
+    if (pathName === '/login' || pathName === '/logout') {
+      return 'auth';
+    }
+
+    if (pathName === '/admin/users' || pathName.startsWith('/admin/users/')) {
+      return 'users';
+    }
+
+    if (pathName === '/admin/activity' || pathName.startsWith('/admin/activity/')) {
+      return 'activity';
+    }
+
+    if (pathName === '/admin/preload' || pathName.startsWith('/admin/preload/')) {
+      return 'preload-admin';
+    }
+
+    if (pathName === '/' || pathName === '/tables' || pathName.startsWith('/tables/')) {
+      return 'tables';
+    }
+
+    if (pathName === '/dashboards/sales-by-project' || pathName.startsWith('/dashboards/sales-by-project/')) {
+      return 'sales-by-project';
+    }
+
+    if (pathName === '/dashboards/city-analysis' || pathName.startsWith('/dashboards/city-analysis/')) {
+      return 'city-analysis';
+    }
+
+    if (pathName === '/dashboards/heatmap' || pathName.startsWith('/dashboards/heatmap/')) {
+      return 'heatmap';
+    }
+
+    if (pathName === '/dashboards/workplace-analysis' || pathName.startsWith('/dashboards/workplace-analysis/')) {
+      return 'workplace-analysis';
+    }
+
+    if (pathName === '/dashboards/worker-cancellations' || pathName.startsWith('/dashboards/worker-cancellations/')) {
+      return 'worker-cancellations';
+    }
+
+    return 'other';
+  }
+
+  function isProgressiveSectionPath(pathName) {
+    return pathName === '/section' || pathName.endsWith('/section');
+  }
+
+  function isExportPath(pathName) {
+    return pathName === '/export' || pathName.endsWith('/export');
+  }
+
+  function isDetailPath(pathName) {
+    return !isExportPath(pathName) && (
+      pathName === '/gigers' ||
+      pathName.endsWith('/gigers') ||
+      pathName === '/details' ||
+      pathName.endsWith('/details')
+    );
+  }
+
+  function requestHasFilters(req) {
+    return Object.keys(req.query || {}).some((key) => key !== 'section');
+  }
+
+  function activityEventType(req) {
+    const method = req.method;
+    const pathName = sanitizedPath(req);
+
+    if (method === 'POST' && pathName === '/login') {
+      return 'login';
+    }
+
+    if (method === 'POST' && pathName === '/logout') {
+      return 'logout';
+    }
+
+    if (method === 'POST' && pathName.startsWith('/admin/')) {
+      return 'admin_action';
+    }
+
+    if (method !== 'GET') {
+      return '';
+    }
+
+    if (isProgressiveSectionPath(pathName)) {
+      return '';
+    }
+
+    if (isExportPath(pathName)) {
+      return 'export';
+    }
+
+    if (isDetailPath(pathName)) {
+      return 'detail_open';
+    }
+
+    if (pathName.startsWith('/dashboards/') && requestHasFilters(req)) {
+      return 'dashboard_filter';
+    }
+
+    return 'page_view';
+  }
+
+  function recordActivity(req, user, eventType) {
+    if (!activity || !user || !eventType) {
+      return;
+    }
+
+    const pathName = sanitizedPath(req);
+
+    try {
+      activity.recordEvent({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        eventType,
+        method: req.method,
+        path: pathName,
+        section: sectionForPath(pathName),
+        occurredAt: now().toISOString()
+      });
+    } catch (error) {
+      console.warn(`Activity event recording failed: ${sanitizeForResponse(error && error.message, config)}`);
+    }
+  }
+
+  function recordCurrentUserActivity(req, eventType) {
+    recordActivity(req, req.auth && req.auth.user, eventType);
+  }
 
   function viewContext(req) {
     if (!req || !req.auth) {
@@ -432,6 +582,41 @@ function createApp({
     });
   }
 
+  function requireAdmin() {
+    return asyncRoute(async (req, res, next) => {
+      if (!authEnabled) {
+        next();
+        return;
+      }
+
+      const auth = await loadRequestAuth(req);
+
+      if (!auth) {
+        if (req.method === 'GET') {
+          res.redirect(302, `/login?returnTo=${encodeURIComponent(req.originalUrl || '/')}`);
+          return;
+        }
+
+        sendError(res, 401, 'Unauthorized', 'Требуется вход в систему');
+        return;
+      }
+
+      if (auth.user.role !== 'admin') {
+        sendError(
+          res,
+          403,
+          'Недостаточно прав',
+          'Недостаточно прав для выбранного раздела.',
+          activeNavForPath(req.path),
+          viewContext(req)
+        );
+        return;
+      }
+
+      next();
+    });
+  }
+
   function verifyCsrf(req, res, activeNav = 'users') {
     if (!authEnabled) {
       return true;
@@ -485,6 +670,10 @@ function createApp({
   async function sendAccountManagement(req, res, statusCode = 200, options = {}) {
     const users = await accounts.listUsers();
 
+    if (options.recordActivity) {
+      recordCurrentUserActivity(req, activityEventType(req));
+    }
+
     res
       .status(statusCode)
       .type('html')
@@ -514,6 +703,10 @@ function createApp({
     if (!preloads) {
       sendPreloadUnavailable(req, res);
       return;
+    }
+
+    if (options.recordActivity) {
+      recordCurrentUserActivity(req, activityEventType(req));
     }
 
     res
@@ -551,6 +744,8 @@ function createApp({
       client.getColumns(tableName),
       client.getPreview(tableName)
     ]);
+
+    recordCurrentUserActivity(req, activityEventType(req));
 
     res
       .status(200)
@@ -617,6 +812,7 @@ function createApp({
 
       const session = sessions.createSession(user);
 
+      recordActivity(req, user, 'login');
       res.setHeader('Set-Cookie', session.cookieHeader);
       res.redirect(303, returnTo);
     })
@@ -630,6 +826,7 @@ function createApp({
         return;
       }
 
+      recordCurrentUserActivity(req, 'logout');
       res.setHeader('Set-Cookie', sessions.destroySession(req));
       res.redirect(303, '/login');
     })
@@ -640,7 +837,8 @@ function createApp({
     requireAuth('users'),
     asyncRoute(async (req, res) => {
       await sendAccountManagement(req, res, 200, {
-        message: accountMessage(req.query.message)
+        message: accountMessage(req.query.message),
+        recordActivity: true
       });
     })
   );
@@ -662,6 +860,7 @@ function createApp({
           password: req.body.password
         });
 
+        recordCurrentUserActivity(req, 'admin_action');
         res.redirect(303, '/admin/users?message=created');
       } catch (error) {
         await sendAccountManagement(req, res, 400, {
@@ -688,6 +887,7 @@ function createApp({
           password: req.body.password
         });
 
+        recordCurrentUserActivity(req, 'admin_action');
         res.redirect(303, '/admin/users?message=updated');
       } catch (error) {
         await sendAccountManagement(req, res, 400, {
@@ -708,6 +908,7 @@ function createApp({
       try {
         await accounts.deleteUser(req.params.id);
 
+        recordCurrentUserActivity(req, 'admin_action');
         res.redirect(303, '/admin/users?message=deleted');
       } catch (error) {
         await sendAccountManagement(req, res, 400, {
@@ -722,7 +923,8 @@ function createApp({
     requireAuth('preload-admin'),
     asyncRoute(async (req, res) => {
       await sendPreloadManagement(req, res, 200, {
-        message: preloadMessage(req.query.message)
+        message: preloadMessage(req.query.message),
+        recordActivity: true
       });
     })
   );
@@ -742,6 +944,7 @@ function createApp({
 
       preloads.saveSchedule(preloadScheduleFromBody(req.body));
 
+      recordCurrentUserActivity(req, 'admin_action');
       res.redirect(303, '/admin/preload?message=schedule-saved');
     })
   );
@@ -764,7 +967,54 @@ function createApp({
         ? 'already-running'
         : 'run-started';
 
+      recordCurrentUserActivity(req, 'admin_action');
       res.redirect(303, `/admin/preload?message=${message}`);
+    })
+  );
+
+  app.get(
+    '/admin/activity',
+    requireAdmin(),
+    asyncRoute(async (req, res) => {
+      if (!authEnabled || !activity) {
+        res
+          .status(200)
+          .type('html')
+          .send(renderUserActivityDashboard({ database, disabled: true, ...viewContext(req) }));
+        return;
+      }
+
+      try {
+        const currentDate = now();
+        const to = formatDateUTC(currentDate);
+        const fromDate = new Date(currentDate.getTime());
+
+        fromDate.setUTCDate(fromDate.getUTCDate() - (DEFAULT_USER_ACTIVITY_RETENTION_DAYS - 1));
+
+        activity.pruneOldEvents(DEFAULT_USER_ACTIVITY_RETENTION_DAYS);
+
+        const users = await accounts.listUsers();
+        const overview = activity.getActivityOverview({
+          from: formatDateUTC(fromDate),
+          to,
+          users
+        });
+
+        recordCurrentUserActivity(req, 'page_view');
+        res
+          .status(200)
+          .type('html')
+          .send(renderUserActivityDashboard({ database, overview, ...viewContext(req) }));
+      } catch (error) {
+        sendError(
+          res,
+          502,
+          'Activity Store Error',
+          error && error.message,
+          'activity',
+          viewContext(req)
+        );
+      }
     })
   );
 
@@ -774,6 +1024,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const tables = await client.listTables();
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res.status(200).type('html').send(renderHome({ database, tables, ...viewContext(req) }));
     })
   );
@@ -784,6 +1035,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const dashboard = await loadSalesByProjectDashboardShell(client, req.query);
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res
         .status(200)
         .type('html')
@@ -838,6 +1090,7 @@ function createApp({
         cache: cityAnalysisCache
       });
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res
         .status(200)
         .type('html')
@@ -852,6 +1105,7 @@ function createApp({
       try {
         const details = await loadCityAnalysisGigerDetails(client, req.query, new Date());
 
+        recordCurrentUserActivity(req, activityEventType(req));
         res
           .status(200)
           .type('html')
@@ -877,6 +1131,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const details = await loadCityAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
 
+      recordCurrentUserActivity(req, activityEventType(req));
       sendGigerDetailsWorkbook(res, details, 'city-analysis-gigers.xls');
     })
   );
@@ -930,6 +1185,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const dashboard = await loadHeatmapDashboardShell(client, req.query, new Date());
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res
         .status(200)
         .type('html')
@@ -981,6 +1237,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const dashboard = await loadWorkplaceAnalysisDashboardShell(client, req.query, new Date());
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res
         .status(200)
         .type('html')
@@ -995,6 +1252,7 @@ function createApp({
       try {
         const details = await loadWorkplaceAnalysisGigerDetails(client, req.query, new Date());
 
+        recordCurrentUserActivity(req, activityEventType(req));
         res
           .status(200)
           .type('html')
@@ -1020,6 +1278,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const details = await loadWorkplaceAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
 
+      recordCurrentUserActivity(req, activityEventType(req));
       sendGigerDetailsWorkbook(res, details, 'workplace-analysis-gigers.xls');
     })
   );
@@ -1093,6 +1352,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const dashboard = await loadWorkplacePointDashboardShell(client, req.query);
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res
         .status(200)
         .type('html')
@@ -1151,6 +1411,7 @@ function createApp({
       try {
         const details = await loadWorkplacePointGigerDetails(client, req.query, new Date());
 
+        recordCurrentUserActivity(req, activityEventType(req));
         res
           .status(200)
           .type('html')
@@ -1176,6 +1437,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const details = await loadWorkplacePointGigerDetails(client, { ...req.query, export: '1' }, new Date());
 
+      recordCurrentUserActivity(req, activityEventType(req));
       sendGigerDetailsWorkbook(res, details, 'workplace-point-gigers.xls');
     })
   );
@@ -1187,6 +1449,7 @@ function createApp({
       try {
         const details = await loadWorkplacePointDayDetails(client, req.query, new Date());
 
+        recordCurrentUserActivity(req, activityEventType(req));
         res
           .status(200)
           .type('html')
@@ -1208,6 +1471,7 @@ function createApp({
     asyncRoute(async (req, res) => {
       const dashboard = await loadWorkerCancellationsDashboardShell(client, req.query, new Date());
 
+      recordCurrentUserActivity(req, activityEventType(req));
       res
         .status(200)
         .type('html')
@@ -1266,6 +1530,7 @@ function createApp({
       try {
         const details = await loadWorkerCancellationsDetails(client, req.query, new Date());
 
+        recordCurrentUserActivity(req, activityEventType(req));
         res
           .status(200)
           .type('html')
@@ -1313,6 +1578,7 @@ function start(options = {}) {
     ClientClass = ClickHouseClient,
     createAppFn = createApp,
     createPreloadServiceFn = createPreloadService,
+    createUserActivityStoreFn = createUserActivityStore,
     logger = console
   } = options;
   const config = loadConfigFn(env);
@@ -1328,6 +1594,7 @@ function start(options = {}) {
     filePath: workplaceDirectoryCachePathFromEnv(env)
   });
   let preloadService = null;
+  let activityStore = null;
 
   function warn(message) {
     if (logger && typeof logger.warn === 'function') {
@@ -1337,6 +1604,34 @@ function start(options = {}) {
 
     if (logger && typeof logger.log === 'function') {
       logger.log(message);
+    }
+  }
+
+  function closeResource(resource, label) {
+    if (!resource || typeof resource.close !== 'function') {
+      return null;
+    }
+
+    try {
+      const closeResult = resource.close();
+
+      if (closeResult && typeof closeResult.catch === 'function') {
+        return closeResult.catch((error) => {
+          warn(`${label} close failed: ${sanitizeForResponse(error && error.message, config)}`);
+        });
+      }
+    } catch (error) {
+      warn(`${label} close failed: ${sanitizeForResponse(error && error.message, config)}`);
+    }
+
+    return null;
+  }
+
+  function attachStartupCleanup(error, cleanupResults) {
+    const cleanupPromises = cleanupResults.filter((result) => result && typeof result.then === 'function');
+
+    if (cleanupPromises.length > 0 && error && typeof error === 'object') {
+      error.startupCleanup = Promise.allSettled(cleanupPromises);
     }
   }
 
@@ -1350,15 +1645,40 @@ function start(options = {}) {
     warn(`Preload service disabled: ${sanitizeForResponse(error && error.message, config)}`);
   }
 
-  const app = createAppFn({
-    config,
-    client,
-    activeGigersCache,
-    cityAnalysisCache,
-    dashboardSectionCache,
-    workplaceDirectoryCache,
-    preloadService
-  });
+  try {
+    activityStore = config.auth && config.auth.enabled === true
+      ? createUserActivityStoreFn({
+          filePath: config.activity && config.activity.storePath
+        })
+      : null;
+  } catch (error) {
+    const cleanup = closeResource(preloadService, 'Preload service');
+
+    attachStartupCleanup(error, [cleanup]);
+    throw error;
+  }
+
+  let app;
+
+  try {
+    app = createAppFn({
+      config,
+      client,
+      activeGigersCache,
+      cityAnalysisCache,
+      dashboardSectionCache,
+      workplaceDirectoryCache,
+      preloadService,
+      activityStore
+    });
+  } catch (error) {
+    const activityCleanup = closeResource(activityStore, 'User activity store');
+    const preloadCleanup = closeResource(preloadService, 'Preload service');
+
+    attachStartupCleanup(error, [activityCleanup, preloadCleanup]);
+    throw error;
+  }
+
   const server = app.listen(config.port, () => {
     const address = server.address();
     const port = address && typeof address === 'object' ? address.port : config.port;
@@ -1370,30 +1690,15 @@ function start(options = {}) {
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
 
-    if (!preloadService || typeof preloadService.close !== 'function') {
-      return;
-    }
-
-    try {
-      const closeResult = preloadService.close();
-
-      if (closeResult && typeof closeResult.catch === 'function') {
-        closeResult.catch((error) => {
-          warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
-        });
-      }
-    } catch (error) {
-      warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
-    }
+    closeResource(activityStore, 'User activity store');
+    closeResource(preloadService, 'Preload service');
   });
 
   return server;
 }
 
 if (require.main === module) {
-  try {
-    start();
-  } catch (error) {
+  async function handleStartupError(error) {
     let config;
 
     try {
@@ -1409,7 +1714,21 @@ if (require.main === module) {
     }
 
     console.error(sanitizeForResponse(error && error.message, config));
-    process.exit(1);
+    process.exitCode = 1;
+
+    if (error && error.startupCleanup && typeof error.startupCleanup.then === 'function') {
+      try {
+        await error.startupCleanup;
+      } catch (_) {
+        // closeResource already logs sanitized close errors.
+      }
+    }
+  }
+
+  try {
+    start();
+  } catch (error) {
+    handleStartupError(error);
   }
 }
 

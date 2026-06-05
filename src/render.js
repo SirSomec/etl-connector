@@ -66,6 +66,12 @@ const NAV_LINKS = [
     permission: 'users'
   },
   {
+    href: '/admin/activity',
+    label: 'Активность',
+    id: 'activity',
+    permission: 'admin-only'
+  },
+  {
     href: '/admin/preload',
     label: 'Предзагрузка',
     id: 'preload-admin',
@@ -82,7 +88,13 @@ function navLinksForUser(currentUser) {
     return [];
   }
 
-  return NAV_LINKS.filter((link) => hasPermission(currentUser, link.permission));
+  return NAV_LINKS.filter((link) => {
+    if (link.permission === 'admin-only') {
+      return currentUser.role === 'admin';
+    }
+
+    return hasPermission(currentUser, link.permission);
+  });
 }
 
 function renderHiddenCsrf(csrfToken) {
@@ -561,6 +573,186 @@ function layout({
 
     .account-delete-form {
       margin-top: 8px;
+    }
+
+    .activity-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px 16px;
+      margin-bottom: 10px;
+    }
+
+    .activity-period {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .activity-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 7px 12px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .activity-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .activity-users {
+      display: grid;
+      gap: 8px;
+    }
+
+    .activity-user-row {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .activity-user-row[open] {
+      border-color: #b6c7d6;
+    }
+
+    .activity-user-summary {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.35fr) minmax(92px, auto) minmax(92px, auto) minmax(220px, 1fr) repeat(3, minmax(92px, auto));
+      gap: 8px 12px;
+      align-items: center;
+      min-height: 52px;
+      padding: 9px 12px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .activity-user-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .activity-user-summary:hover,
+    .activity-user-summary:focus {
+      background: #f5f8fb;
+      outline: none;
+    }
+
+    .activity-user-name {
+      min-width: 0;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .activity-user-email {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+      overflow-wrap: anywhere;
+    }
+
+    .activity-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      padding: 3px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f3f5f7;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .activity-metric {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .activity-metric strong {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .activity-day-strip {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      min-width: 0;
+      overflow-x: auto;
+      padding: 2px 0;
+    }
+
+    .activity-day {
+      flex: 0 0 7px;
+      width: 7px;
+      height: 18px;
+      border: 1px solid #d2d9e2;
+      border-radius: 2px;
+      background: #eef2f6;
+    }
+
+    .activity-day[data-activity-level="view"] {
+      border-color: #95b8d8;
+      background: #b9d8f0;
+    }
+
+    .activity-day[data-activity-level="work"] {
+      border-color: #78b58d;
+      background: #8fd0a3;
+    }
+
+    .activity-day[data-activity-level="intense"] {
+      border-color: #bf7b4d;
+      background: #e49a5e;
+    }
+
+    .activity-day[data-activity-level="none"] {
+      border-color: #d2d9e2;
+      background: #eef2f6;
+    }
+
+    .activity-details {
+      padding: 0 12px 12px;
+    }
+
+    .activity-event-table {
+      min-width: 720px;
+    }
+
+    .activity-event-table th,
+    .activity-event-table td {
+      padding: 7px 8px;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .activity-path-cell {
+      max-width: 420px;
+      overflow-wrap: anywhere;
+    }
+
+    .activity-disabled {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
     }
 
     .field {
@@ -2314,6 +2506,19 @@ function layout({
       .point-detail-grid {
         grid-template-columns: 1fr;
       }
+
+      .activity-user-summary {
+        grid-template-columns: minmax(180px, 1fr) minmax(90px, auto) minmax(90px, auto);
+      }
+
+      .activity-day-strip {
+        grid-column: 1 / -1;
+        width: 100%;
+      }
+
+      .activity-event-table {
+        min-width: 640px;
+      }
     }
 
     @media (max-width: 820px) {
@@ -2332,6 +2537,14 @@ function layout({
 
       .nav-list {
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+
+      .activity-user-summary {
+        grid-template-columns: 1fr;
+      }
+
+      .activity-day-strip {
+        width: 100%;
       }
     }
 
@@ -3336,6 +3549,168 @@ function renderPreloadManagement({
     database,
     content,
     activeNav: 'preload-admin',
+    currentUser,
+    csrfToken
+  });
+}
+
+const ACTIVITY_LEVEL_LABELS = {
+  none: 'нет событий',
+  view: 'просмотр',
+  work: 'работа',
+  intense: 'интенсивно'
+};
+
+const ACTIVITY_EVENT_LABELS = {
+  login: 'Вход',
+  logout: 'Выход',
+  page_view: 'Просмотр',
+  dashboard_filter: 'Фильтр дашборда',
+  detail_open: 'Детализация',
+  export: 'Экспорт',
+  admin_action: 'Админ-действие'
+};
+
+const ACTIVITY_STATUS_LABELS = {
+  active: 'активен',
+  rare: 'редко',
+  silent: 'молчит',
+  new: 'новый'
+};
+
+function normalizeActivityLevel(level) {
+  const text = String(level || 'none');
+
+  return Object.prototype.hasOwnProperty.call(ACTIVITY_LEVEL_LABELS, text) ? text : 'none';
+}
+
+function activityEventLabel(eventType) {
+  const text = String(eventType || '');
+
+  return ACTIVITY_EVENT_LABELS[text] || text || '-';
+}
+
+function activityStatusLabel(status) {
+  const text = String(status || '');
+
+  return ACTIVITY_STATUS_LABELS[text] || text || '-';
+}
+
+function renderActivityLegend() {
+  return `<div class="activity-legend" aria-label="Легенда активности">
+  ${Object.entries(ACTIVITY_LEVEL_LABELS).map(([level, label]) => `<span class="activity-legend-item"><span class="activity-day" data-activity-level="${escapeHtml(level)}"></span>${escapeHtml(label)}</span>`).join('')}
+</div>`;
+}
+
+function renderActivityDay(day) {
+  const safeDay = day || {};
+  const level = normalizeActivityLevel(safeDay.level);
+  const sections = Array.isArray(safeDay.sections) ? safeDay.sections : [];
+  const titleParts = [
+    safeDay.date || '-',
+    ACTIVITY_LEVEL_LABELS[level],
+    `просмотры: ${safeDay.viewEvents || 0}`,
+    `рабочие действия: ${safeDay.workEvents || 0}`
+  ];
+
+  if (sections.length > 0) {
+    titleParts.push(`разделы: ${sections.join(', ')}`);
+  }
+
+  const title = titleParts.join(' · ');
+
+  return `<span class="activity-day" data-activity-level="${escapeHtml(level)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
+}
+
+function renderActivityDayStrip(days) {
+  const safeDays = Array.isArray(days) ? days : [];
+
+  return `<div class="activity-day-strip" aria-label="Активность за 90 дней">${safeDays.map(renderActivityDay).join('')}</div>`;
+}
+
+function renderActivityEventRows(events) {
+  const safeEvents = Array.isArray(events) ? events : [];
+
+  if (safeEvents.length === 0) {
+    return '<tr><td colspan="4">Последних действий нет.</td></tr>';
+  }
+
+  return safeEvents.map((event) => `<tr>
+    <td class="nowrap-cell">${escapeHtml(event && event.occurredAt ? event.occurredAt : '-')}</td>
+    <td>${escapeHtml(activityEventLabel(event && event.eventType))}</td>
+    <td>${escapeHtml(event && event.section ? event.section : '-')}</td>
+    <td class="activity-path-cell">${escapeHtml(event && event.path ? event.path : '-')}</td>
+  </tr>`).join('');
+}
+
+function renderActivityUserRow(user) {
+  const safeUser = user || {};
+  const title = String(safeUser.name || '').trim() || String(safeUser.email || '').trim() || String(safeUser.id || '').trim() || 'Без имени';
+  const email = String(safeUser.email || '').trim();
+  const emailHtml = email && email !== title
+    ? `<span class="activity-user-email">${escapeHtml(email)}</span>`
+    : '';
+
+  return `<details class="activity-user-row">
+  <summary class="activity-user-summary">
+    <div class="activity-user-name">${escapeHtml(title)}${emailHtml}</div>
+    <span class="activity-pill">${escapeHtml(safeUser.role || '-')}</span>
+    <span class="activity-pill">${escapeHtml(activityStatusLabel(safeUser.status))}</span>
+    ${renderActivityDayStrip(safeUser.days)}
+    <div class="activity-metric"><strong>${escapeHtml(safeUser.lastEventAt || '-')}</strong>последнее действие</div>
+    <div class="activity-metric"><strong>${escapeHtml(safeUser.activeDays30 || 0)}</strong>активных дней за 30</div>
+    <div class="activity-metric"><strong>${escapeHtml(safeUser.activeDays90 || 0)}</strong>активных дней за 90</div>
+  </summary>
+  <div class="activity-details">
+    <div class="table-scroll">
+      <table class="activity-event-table">
+        <thead><tr><th>Время</th><th>Тип</th><th>Раздел</th><th>Путь</th></tr></thead>
+        <tbody>${renderActivityEventRows(safeUser.recentEvents)}</tbody>
+      </table>
+    </div>
+  </div>
+</details>`;
+}
+
+function renderUserActivityDashboard({
+  database,
+  currentUser,
+  csrfToken = '',
+  overview = null,
+  disabled = false
+}) {
+  const safeOverview = overview || {};
+  const users = Array.isArray(safeOverview.users) ? safeOverview.users : [];
+  const period = safeOverview.from && safeOverview.to
+    ? `${safeOverview.from} - ${safeOverview.to}`
+    : 'последние 90 дней';
+  const body = disabled
+    ? `<section class="section">
+  <div class="activity-disabled">
+    <strong>Авторизация отключена или хранилище активности недоступно</strong>
+    <p>Экран доступен без данных, потому что активность пользователей собирается только при включенной авторизации и подключенном store.</p>
+  </div>
+</section>`
+    : `<section class="section">
+  <div class="activity-users">${users.map(renderActivityUserRow).join('') || '<p class="empty">Нет данных активности.</p>'}</div>
+</section>`;
+  const content = `<section class="section">
+  <div class="activity-head">
+    <div>
+      <h1>Активность пользователей</h1>
+      <p class="technical-note">Это пользователи аналитического сервиса, а не пользователи MyGig.</p>
+    </div>
+    <div class="activity-period">${escapeHtml(period)}</div>
+  </div>
+  ${renderActivityLegend()}
+</section>
+${body}`;
+
+  return layout({
+    title: 'Активность пользователей',
+    database,
+    content,
+    activeNav: 'activity',
     currentUser,
     csrfToken
   });
@@ -7645,6 +8020,7 @@ module.exports = {
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
+  renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,

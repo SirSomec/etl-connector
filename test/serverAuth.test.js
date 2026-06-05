@@ -80,6 +80,24 @@ function createFakePreloadService() {
   };
 }
 
+function createActivitySpy() {
+  return {
+    events: [],
+    prunedRetentions: [],
+    recordEvent(event) {
+      this.events.push(event);
+    },
+    pruneOldEvents(retentionDays) {
+      this.prunedRetentions.push(retentionDays);
+      return 0;
+    },
+    getActivityOverview() {
+      return { from: '2026-03-08', to: '2026-06-05', retentionDays: 90, users: [] };
+    },
+    close() {}
+  };
+}
+
 function authConfig(filePath) {
   return {
     port: 0,
@@ -124,7 +142,7 @@ async function closeServer(server) {
   });
 }
 
-async function withAuthServer(callback) {
+async function withAuthServer(callback, overrides = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-auth-test-'));
   const filePath = path.join(tempDir, 'users.json');
   const config = authConfig(filePath);
@@ -148,7 +166,9 @@ async function withAuthServer(callback) {
     client,
     userStore,
     sessionManager,
-    preloadService: createFakePreloadService()
+    preloadService: createFakePreloadService(),
+    activityStore: createActivitySpy(),
+    ...overrides
   });
   const server = http.createServer(app);
 
@@ -401,6 +421,130 @@ test('managed users only access granted sections', async () => {
   });
 });
 
+test('admin can open /admin/activity', async () => {
+  const activityStore = createActivitySpy();
+  let capturedOverviewInput = null;
+  let nowCalls = 0;
+  const nowValues = [
+    new Date('2026-06-05T10:00:00.000Z'),
+    new Date('2026-06-05T23:59:59.999Z'),
+    new Date('2026-06-06T00:00:00.000Z')
+  ];
+  const currentNow = () => {
+    const value = nowValues[nowCalls] || nowValues[nowValues.length - 1];
+
+    nowCalls += 1;
+    return new Date(value.getTime());
+  };
+
+  activityStore.getActivityOverview = (input) => {
+    capturedOverviewInput = input;
+    return {
+      from: input.from,
+      to: input.to,
+      retentionDays: 90,
+      users: [
+        {
+          id: 'env-admin',
+          email: 'admin@example.test',
+          name: 'Env Admin',
+          role: 'admin',
+          status: 'active',
+          lastEventAt: '2026-06-05T10:00:00.000Z',
+          activeDays30: 1,
+          activeDays90: 1,
+          days: [{ date: '2026-06-05', level: 'view', viewEvents: 1, workEvents: 0, sections: ['activity'] }],
+          recentEvents: []
+        }
+      ]
+    };
+  };
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const adminLogin = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const activityPage = await fetchText(baseUrl, '/admin/activity', {
+      headers: {
+        cookie: cookieFrom(adminLogin)
+      }
+    });
+
+    assert.equal(activityPage.response.status, 200);
+    assert.match(activityPage.text, /Активность пользователей/);
+    assert.equal(capturedOverviewInput.from, '2026-03-08');
+    assert.equal(capturedOverviewInput.to, '2026-06-05');
+    assert.ok(capturedOverviewInput.users.some((user) => user.id === 'env-admin'));
+    const activityPageEvents = activityStore.events.filter((event) => (
+      event.eventType === 'page_view' &&
+      event.path === '/admin/activity' &&
+      event.section === 'activity'
+    ));
+
+    assert.equal(activityPageEvents.length, 1);
+    assert.deepEqual(activityStore.prunedRetentions, [90]);
+    assert.equal(nowCalls, 3);
+  }, {
+    activityStore,
+    now: currentNow
+  });
+});
+
+test('/admin/activity is admin-only by role', async () => {
+  const activityStore = createActivitySpy();
+  const wideAnalyst = {
+    id: 'wide-analyst',
+    email: 'wide-analyst@example.test',
+    name: 'Wide Analyst',
+    role: 'analyst',
+    permissions: ['tables', 'preload-admin', 'users']
+  };
+  const userStore = {
+    async listUsers() {
+      return [wideAnalyst];
+    },
+    async findByEmail(email) {
+      return email === wideAnalyst.email ? wideAnalyst : null;
+    },
+    async verifyCredentials(email, password) {
+      return email === wideAnalyst.email && password === 'AnalystPass123' ? wideAnalyst : null;
+    }
+  };
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const analystLogin = await login(baseUrl, 'wide-analyst@example.test', 'AnalystPass123');
+    const activityPage = await fetchText(baseUrl, '/admin/activity', {
+      headers: {
+        cookie: cookieFrom(analystLogin)
+      }
+    });
+
+    assert.equal(activityPage.response.status, 403);
+    assert.match(activityPage.text, /Недостаточно прав/);
+    assert.equal(activityStore.events.filter((event) => event.path === '/admin/activity').length, 0);
+  }, { activityStore, userStore });
+});
+
+test('/admin/activity renders sanitized store errors', async () => {
+  const activityStore = createActivitySpy();
+
+  activityStore.getActivityOverview = () => {
+    throw new Error('store failed with EnvAdminPass123');
+  };
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const adminLogin = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const activityPage = await fetchText(baseUrl, '/admin/activity', {
+      headers: {
+        cookie: cookieFrom(adminLogin)
+      }
+    });
+
+    assert.equal(activityPage.response.status, 502);
+    assert.match(activityPage.text, /Activity Store Error/);
+    assert.match(activityPage.text, /store failed with \[redacted\]/);
+    assert.doesNotMatch(activityPage.text, /EnvAdminPass123/);
+  }, { activityStore });
+});
+
 test('dashboard section fragments respect sql-inspector permission', async () => {
   await withAuthServer(async ({ baseUrl, userStore }) => {
     await userStore.createUser({
@@ -439,6 +583,126 @@ test('dashboard section fragments respect sql-inspector permission', async () =>
     assert.match(sql.text, /data-sql-inspector-open/);
     assert.match(sql.text, /shift_facts/);
   });
+});
+
+test('auth server records login page view and logout activity', async () => {
+  const activityStore = createActivitySpy();
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const loginResponse = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const cookie = cookieFrom(loginResponse);
+    const home = await fetchText(baseUrl, '/', {
+      headers: {
+        cookie
+      }
+    });
+    const csrfToken = csrfFrom(home.text);
+    const logout = await fetchText(baseUrl, '/logout', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({ csrfToken })
+    });
+
+    assert.equal(logout.response.status, 303);
+    assert.deepEqual(activityStore.events.map((event) => event.eventType), ['login', 'page_view', 'logout']);
+    assert.equal(activityStore.events[0].userId, 'env-admin');
+    assert.equal(activityStore.events[1].path, '/');
+    assert.equal(activityStore.events[1].section, 'tables');
+  }, { activityStore });
+});
+
+test('auth server records dashboard filter detail export and admin actions without progressive sections', async () => {
+  const activityStore = createActivitySpy();
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const loginResponse = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const cookie = cookieFrom(loginResponse);
+    const usersPage = await fetchText(baseUrl, '/admin/users', {
+      headers: {
+        cookie
+      }
+    });
+    const csrfToken = csrfFrom(usersPage.text);
+    const dashboard = await fetchText(
+      baseUrl,
+      '/dashboards/sales-by-project?period=month&from=2026-05-01&to=2026-05-31',
+      {
+        headers: {
+          cookie
+        }
+      }
+    );
+    const section = await fetchText(baseUrl, '/dashboards/sales-by-project/section?section=summary&period=month', {
+      headers: {
+        cookie
+      }
+    });
+    const details = await fetchText(
+      baseUrl,
+      '/dashboards/city-analysis/gigers?city=Москва&metric=total-located-users',
+      {
+        headers: {
+          cookie
+        }
+      }
+    );
+    const exported = await fetchText(
+      baseUrl,
+      '/dashboards/city-analysis/gigers/export?city=Москва&metric=total-located-users',
+      {
+        headers: {
+          cookie
+        }
+      }
+    );
+    const scheduled = await fetchText(baseUrl, '/admin/preload/schedule', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken,
+        enabled: '1',
+        scheduleTime: '03:00',
+        refreshDays: '45'
+      })
+    });
+
+    assert.equal(dashboard.response.status, 200);
+    assert.equal(section.response.status, 200);
+    assert.equal(details.response.status, 200);
+    assert.equal(exported.response.status, 200);
+    assert.equal(scheduled.response.status, 303);
+    assert.deepEqual(activityStore.events.map((event) => event.eventType), [
+      'login',
+      'page_view',
+      'dashboard_filter',
+      'detail_open',
+      'export',
+      'admin_action'
+    ]);
+    assert.equal(activityStore.events.some((event) => event.path.includes('/section')), false);
+    assert.equal(activityStore.events[2].path, '/dashboards/sales-by-project');
+  }, { activityStore });
+});
+
+test('auth server ignores anonymous requests and health checks for activity', async () => {
+  const activityStore = createActivitySpy();
+
+  await withAuthServer(async ({ baseUrl }) => {
+    const health = await fetchText(baseUrl, '/healthz');
+    const anonymous = await fetchText(baseUrl, '/', { redirect: 'manual' });
+
+    assert.equal(health.response.status, 200);
+    assert.equal(anonymous.response.status, 302);
+    assert.deepEqual(activityStore.events, []);
+  }, { activityStore });
 });
 
 test('sanitizeForResponse redacts auth secrets', () => {

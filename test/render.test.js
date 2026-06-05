@@ -14,6 +14,7 @@ const {
   renderPreloadManagement,
   renderSalesByProjectDashboard,
   renderTable,
+  renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
@@ -229,6 +230,78 @@ test('renderPreloadManagement filters preload navigation by permission', () => {
   assert.doesNotMatch(withoutPermissionHtml, /href="\/admin\/preload"/);
   assert.match(withPermissionHtml, /href="\/admin\/preload"/);
   assert.match(withPermissionHtml, /class="nav-link active" href="\/admin\/preload"/);
+});
+
+test('renderUserActivityDashboard renders escaped matrix and disabled state', () => {
+  const html = renderUserActivityDashboard({
+    database: 'etl',
+    overview: {
+      from: '2026-03-08',
+      to: '2026-06-05',
+      retentionDays: 90,
+      users: [
+        {
+          id: 'user-1',
+          email: 'analyst<script>@example.test',
+          name: 'Analyst <One>',
+          role: 'analyst',
+          status: 'active',
+          lastEventAt: '2026-06-05T10:00:00.000Z',
+          activeDays30: 3,
+          activeDays90: 3,
+          days: [
+            { date: '2026-06-03', level: 'view', viewEvents: 1, workEvents: 0, sections: ['tables'] },
+            { date: '2026-06-04', level: 'work', viewEvents: 0, workEvents: 1, sections: ['workplace-analysis'] },
+            { date: '2026-06-05', level: 'intense', viewEvents: 0, workEvents: 6, sections: ['activity'] }
+          ],
+          recentEvents: [
+            {
+              occurredAt: '2026-06-05T10:00:00.000Z',
+              eventType: 'dashboard_filter',
+              section: 'workplace-analysis',
+              path: '/dashboards/workplace-analysis?<bad>'
+            }
+          ]
+        }
+      ]
+    }
+  });
+  const disabledHtml = renderUserActivityDashboard({
+    database: 'etl',
+    disabled: true
+  });
+
+  assert.match(html, /Активность пользователей/);
+  assert.match(html, /class="nav-link active" href="\/admin\/activity"/);
+  assert.match(html, /Analyst &lt;One&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /analyst&lt;script&gt;@example\.test/);
+  assert.match(html, /data-activity-level="intense"/);
+  assert.match(html, /\/dashboards\/workplace-analysis\?&lt;bad&gt;/);
+  assert.match(
+    html,
+    /@media \(max-width: 1120px\) \{[\s\S]*\.activity-user-summary \{[\s\S]*grid-template-columns: minmax\(180px, 1fr\) minmax\(90px, auto\) minmax\(90px, auto\);[\s\S]*\.activity-day-strip \{[\s\S]*grid-column: 1 \/ -1;/
+  );
+  assert.match(disabledHtml, /Авторизация отключена/);
+});
+
+test('admin-only activity navigation is visible only to admins', () => {
+  const adminHtml = renderHome({
+    database: 'etl',
+    tables: ['mg_orders'],
+    currentUser: { role: 'admin', permissions: [] }
+  });
+  const analystHtml = renderHome({
+    database: 'etl',
+    tables: ['mg_orders'],
+    currentUser: {
+      role: 'analyst',
+      permissions: ['tables', 'users', 'preload-admin', 'admin-only']
+    }
+  });
+
+  assert.match(adminHtml, /href="\/admin\/activity"/);
+  assert.doesNotMatch(analystHtml, /href="\/admin\/activity"/);
 });
 
 test('renderWorkerCancellationsDashboard renders filters and progressive table loading state', () => {

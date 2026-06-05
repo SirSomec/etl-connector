@@ -96,22 +96,20 @@ function startOfNextDateUTC(date) {
 }
 
 function normalizeEvent(input) {
-  const occurredAt = parseDateTime(input && input.occurredAt, 'occurredAt').toISOString();
-
   return {
     userId: normalizeText(input && input.userId),
     email: normalizeEmail(input && input.email),
-    role: normalizeText(input && input.role),
+    role: normalizeText(input && input.role) || 'analyst',
     eventType: normalizeText(input && input.eventType),
-    method: normalizeText(input && input.method),
+    method: normalizeText(input && input.method).toUpperCase(),
     path: normalizeText(input && input.path),
     section: normalizeText(input && input.section),
-    occurredAt
+    occurredAt: normalizeText(input && input.occurredAt)
   };
 }
 
 function assertEvent(event) {
-  for (const key of ['userId', 'email', 'eventType', 'occurredAt']) {
+  for (const key of ['userId', 'email', 'eventType', 'method', 'path', 'section', 'occurredAt']) {
     if (!event[key]) {
       throw new Error(`Activity event requires ${key}`);
     }
@@ -132,9 +130,7 @@ CREATE TABLE IF NOT EXISTS user_activity_events (
   method TEXT NOT NULL,
   path TEXT NOT NULL,
   section TEXT NOT NULL,
-  occurred_at TEXT NOT NULL,
-  occurred_date TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  occurred_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_activity_events_occurred_at
@@ -142,9 +138,6 @@ CREATE INDEX IF NOT EXISTS idx_user_activity_events_occurred_at
 
 CREATE INDEX IF NOT EXISTS idx_user_activity_events_user_time
   ON user_activity_events (user_id, occurred_at);
-
-CREATE INDEX IF NOT EXISTS idx_user_activity_events_user_date
-  ON user_activity_events (user_id, occurred_date);
 `);
 }
 
@@ -159,7 +152,7 @@ function normalizeDbEvent(row) {
     path: row.path,
     section: row.section,
     occurredAt: row.occurred_at,
-    occurredDate: row.occurred_date
+    occurredDate: row.occurred_at.slice(0, 10)
   };
 }
 
@@ -219,19 +212,16 @@ function createUserActivityStore({
     return Number(result.changes || 0);
   }
 
-  function pruneOldEventsForUser(userId, days = retentionDays) {
-    db.prepare('DELETE FROM user_activity_events WHERE user_id = ? AND occurred_at < ?').run(userId, cutoffIso(days));
-  }
-
   function recordEvent(input) {
     const event = normalizeEvent(input);
     assertEvent(event);
-    pruneOldEventsForUser(event.userId, retentionDays);
+    event.occurredAt = parseDateTime(event.occurredAt, 'occurredAt').toISOString();
+    pruneOldEvents(retentionDays);
 
     db.prepare(`
 INSERT INTO user_activity_events (
-  user_id, email, role, event_type, method, path, section, occurred_at, occurred_date, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  user_id, email, role, event_type, method, path, section, occurred_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `).run(
       event.userId,
       event.email,
@@ -240,9 +230,7 @@ INSERT INTO user_activity_events (
       event.method,
       event.path,
       event.section,
-      event.occurredAt,
-      event.occurredAt.slice(0, 10),
-      now().toISOString()
+      event.occurredAt
     );
   }
 

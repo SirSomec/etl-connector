@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
 
 const {
   DEFAULT_USER_ACTIVITY_RETENTION_DAYS,
@@ -13,14 +14,43 @@ const {
 async function withTempStore(callback) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'activity-store-'));
   const filePath = path.join(tempDir, 'activity.sqlite');
+  let store;
 
   try {
-    await callback(createUserActivityStore({
+    store = createUserActivityStore({
       filePath,
       now: () => new Date('2026-06-05T12:00:00.000Z')
-    }), filePath);
+    });
+    await callback(store, filePath);
   } finally {
+    if (store) {
+      try {
+        store.close();
+      } catch {
+        // The test may close the store itself before inspecting the file.
+      }
+    }
     await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function readStoreSchema(filePath) {
+  const db = new DatabaseSync(filePath);
+
+  try {
+    return {
+      columns: db
+        .prepare('PRAGMA table_info(user_activity_events)')
+        .all()
+        .map((row) => row.name),
+      indexes: db
+        .prepare('PRAGMA index_list(user_activity_events)')
+        .all()
+        .map((row) => row.name)
+        .sort()
+    };
+  } finally {
+    db.close();
   }
 }
 
@@ -109,6 +139,20 @@ test('user activity store prunes events older than retention window', async () =
       section: 'tables',
       occurredAt: '2026-02-01T10:00:00.000Z'
     });
+    const removed = store.pruneOldEvents(90);
+
+    assert.equal(removed, 1);
+
+    store.recordEvent({
+      userId: 'stale-other-user',
+      email: 'stale@example.test',
+      role: 'analyst',
+      eventType: 'page_view',
+      method: 'GET',
+      path: '/',
+      section: 'tables',
+      occurredAt: '2026-02-02T10:00:00.000Z'
+    });
     store.recordEvent({
       userId: 'fresh-user',
       email: 'fresh@example.test',
@@ -120,19 +164,58 @@ test('user activity store prunes events older than retention window', async () =
       occurredAt: '2026-06-01T10:00:00.000Z'
     });
 
-    const removed = store.pruneOldEvents(90);
+    const removedAfterRecord = store.pruneOldEvents(90);
     const overview = store.getActivityOverview({
       from: '2026-01-01',
       to: '2026-06-05',
       users: [
         { id: 'old-user', email: 'old@example.test', role: 'analyst' },
+        { id: 'stale-other-user', email: 'stale@example.test', role: 'analyst' },
         { id: 'fresh-user', email: 'fresh@example.test', role: 'analyst' }
       ]
     });
 
-    assert.equal(removed, 1);
+    assert.equal(removedAfterRecord, 0);
     assert.equal(overview.users.find((user) => user.id === 'old-user').activeDays90, 0);
+    assert.equal(overview.users.find((user) => user.id === 'stale-other-user').activeDays90, 0);
     assert.equal(overview.users.find((user) => user.id === 'fresh-user').activeDays90, 1);
+
+    store.close();
+  });
+});
+
+test('user activity store uses spec schema', async () => {
+  await withTempStore(async (store, filePath) => {
+    store.close();
+
+    const schema = readStoreSchema(filePath);
+
+    assert.deepEqual(schema.columns, [
+      'id',
+      'user_id',
+      'email',
+      'role',
+      'event_type',
+      'method',
+      'path',
+      'section',
+      'occurred_at'
+    ]);
+    assert.deepEqual(schema.indexes, [
+      'idx_user_activity_events_occurred_at',
+      'idx_user_activity_events_user_time'
+    ]);
+  });
+});
+
+test('user activity store rejects events missing required request fields', async () => {
+  await withTempStore(async (store) => {
+    assert.throws(() => store.recordEvent({
+      userId: 'user-1',
+      email: 'analyst@example.test',
+      eventType: 'page_view',
+      occurredAt: '2026-06-01T10:00:00.000Z'
+    }), /Activity event requires method/);
 
     store.close();
   });

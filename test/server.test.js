@@ -2164,6 +2164,70 @@ test('start closes preload service when user activity store creation fails', () 
   assert.doesNotMatch(warningMessages[0], /super-secret/);
 });
 
+test('start exposes async preload cleanup when user activity store creation fails', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: true
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  let preloadServiceClosed = false;
+  let thrownError = null;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  try {
+    start({
+      loadConfigFn: () => config,
+      ClientClass: FakeClient,
+      createPreloadServiceFn: () => ({
+        close() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              preloadServiceClosed = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createUserActivityStoreFn: () => {
+        throw new Error('activity store open failed with password super-secret');
+      },
+      createAppFn: () => http.createServer(),
+      logger: {
+        log() {},
+        warn() {}
+      }
+    });
+  } catch (error) {
+    thrownError = error;
+  }
+
+  assert.match(thrownError && thrownError.message, /activity store open failed with password super-secret/);
+  assert.equal(preloadServiceClosed, false);
+  assert.equal(typeof thrownError.startupCleanup.then, 'function');
+
+  await thrownError.startupCleanup;
+
+  assert.equal(preloadServiceClosed, true);
+});
+
 test('start closes activity and preload services when app creation fails', () => {
   const config = {
     port: 0,
@@ -2216,6 +2280,82 @@ test('start closes activity and preload services when app creation fails', () =>
     }),
     /app creation failed with password super-secret/
   );
+
+  assert.equal(activityStoreClosed, true);
+  assert.equal(preloadServiceClosed, true);
+});
+
+test('start exposes async activity and preload cleanup when app creation fails', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: true
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  let activityStoreClosed = false;
+  let preloadServiceClosed = false;
+  let thrownError = null;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  try {
+    start({
+      loadConfigFn: () => config,
+      ClientClass: FakeClient,
+      createPreloadServiceFn: () => ({
+        close() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              preloadServiceClosed = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createUserActivityStoreFn: () => ({
+        close() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              activityStoreClosed = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createAppFn: () => {
+        throw new Error('app creation failed with password super-secret');
+      },
+      logger: {
+        log() {},
+        warn() {}
+      }
+    });
+  } catch (error) {
+    thrownError = error;
+  }
+
+  assert.match(thrownError && thrownError.message, /app creation failed with password super-secret/);
+  assert.equal(activityStoreClosed, false);
+  assert.equal(preloadServiceClosed, false);
+  assert.equal(typeof thrownError.startupCleanup.then, 'function');
+
+  await thrownError.startupCleanup;
 
   assert.equal(activityStoreClosed, true);
   assert.equal(preloadServiceClosed, true);

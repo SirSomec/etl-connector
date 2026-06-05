@@ -1607,19 +1607,29 @@ function start(options = {}) {
 
   function closeResource(resource, label) {
     if (!resource || typeof resource.close !== 'function') {
-      return;
+      return null;
     }
 
     try {
       const closeResult = resource.close();
 
       if (closeResult && typeof closeResult.catch === 'function') {
-        closeResult.catch((error) => {
+        return closeResult.catch((error) => {
           warn(`${label} close failed: ${sanitizeForResponse(error && error.message, config)}`);
         });
       }
     } catch (error) {
       warn(`${label} close failed: ${sanitizeForResponse(error && error.message, config)}`);
+    }
+
+    return null;
+  }
+
+  function attachStartupCleanup(error, cleanupResults) {
+    const cleanupPromises = cleanupResults.filter((result) => result && typeof result.then === 'function');
+
+    if (cleanupPromises.length > 0 && error && typeof error === 'object') {
+      error.startupCleanup = Promise.allSettled(cleanupPromises);
     }
   }
 
@@ -1640,7 +1650,9 @@ function start(options = {}) {
         })
       : null;
   } catch (error) {
-    closeResource(preloadService, 'Preload service');
+    const cleanup = closeResource(preloadService, 'Preload service');
+
+    attachStartupCleanup(error, [cleanup]);
     throw error;
   }
 
@@ -1658,8 +1670,10 @@ function start(options = {}) {
       activityStore
     });
   } catch (error) {
-    closeResource(activityStore, 'User activity store');
-    closeResource(preloadService, 'Preload service');
+    const activityCleanup = closeResource(activityStore, 'User activity store');
+    const preloadCleanup = closeResource(preloadService, 'Preload service');
+
+    attachStartupCleanup(error, [activityCleanup, preloadCleanup]);
     throw error;
   }
 
@@ -1682,9 +1696,7 @@ function start(options = {}) {
 }
 
 if (require.main === module) {
-  try {
-    start();
-  } catch (error) {
+  async function handleStartupError(error) {
     let config;
 
     try {
@@ -1700,7 +1712,21 @@ if (require.main === module) {
     }
 
     console.error(sanitizeForResponse(error && error.message, config));
-    process.exit(1);
+    process.exitCode = 1;
+
+    if (error && error.startupCleanup && typeof error.startupCleanup.then === 'function') {
+      try {
+        await error.startupCleanup;
+      } catch (_) {
+        // closeResource already logs sanitized close errors.
+      }
+    }
+  }
+
+  try {
+    start();
+  } catch (error) {
+    handleStartupError(error);
   }
 }
 

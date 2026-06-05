@@ -83,10 +83,12 @@ function createFakePreloadService() {
 function createActivitySpy() {
   return {
     events: [],
+    prunedRetentions: [],
     recordEvent(event) {
       this.events.push(event);
     },
-    pruneOldEvents() {
+    pruneOldEvents(retentionDays) {
+      this.prunedRetentions.push(retentionDays);
       return 0;
     },
     getActivityOverview() {
@@ -478,6 +480,7 @@ test('admin can open /admin/activity', async () => {
     ));
 
     assert.equal(activityPageEvents.length, 1);
+    assert.deepEqual(activityStore.prunedRetentions, [90]);
     assert.equal(nowCalls, 3);
   }, {
     activityStore,

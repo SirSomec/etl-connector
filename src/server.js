@@ -991,6 +991,8 @@ function createApp({
 
         fromDate.setUTCDate(fromDate.getUTCDate() - (DEFAULT_USER_ACTIVITY_RETENTION_DAYS - 1));
 
+        activity.pruneOldEvents(DEFAULT_USER_ACTIVITY_RETENTION_DAYS);
+
         const users = await accounts.listUsers();
         const overview = activity.getActivityOverview({
           from: formatDateUTC(fromDate),

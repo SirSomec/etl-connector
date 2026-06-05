@@ -221,6 +221,70 @@ test('user activity store rejects events missing required request fields', async
   });
 });
 
+test('user activity store keeps rare status for retained view activity outside requested range', async () => {
+  await withTempStore(async (store) => {
+    store.recordEvent({
+      userId: 'range-view-user',
+      email: 'range-view@example.test',
+      role: 'analyst',
+      eventType: 'page_view',
+      method: 'GET',
+      path: '/',
+      section: 'tables',
+      occurredAt: '2026-05-20T08:00:00.000Z'
+    });
+
+    const overview = store.getActivityOverview({
+      from: '2026-06-05',
+      to: '2026-06-05',
+      users: [
+        { id: 'range-view-user', email: 'range-view@example.test', role: 'analyst' }
+      ]
+    });
+    const user = overview.users.find((item) => item.id === 'range-view-user');
+
+    assert.equal(user.status, 'rare');
+    assert.equal(user.lastEventAt, '2026-05-20T08:00:00.000Z');
+    assert.equal(user.activeDays30, 1);
+    assert.equal(user.activeDays90, 0);
+    assert.equal(user.recentEvents.length, 0);
+
+    store.close();
+  });
+});
+
+test('user activity store keeps active status for recent work outside requested range', async () => {
+  await withTempStore(async (store) => {
+    store.recordEvent({
+      userId: 'range-work-user',
+      email: 'range-work@example.test',
+      role: 'analyst',
+      eventType: 'dashboard_filter',
+      method: 'GET',
+      path: '/dashboards/workplace-analysis',
+      section: 'workplace-analysis',
+      occurredAt: '2026-06-01T10:00:00.000Z'
+    });
+
+    const overview = store.getActivityOverview({
+      from: '2026-06-05',
+      to: '2026-06-05',
+      users: [
+        { id: 'range-work-user', email: 'range-work@example.test', role: 'analyst' }
+      ]
+    });
+    const user = overview.users.find((item) => item.id === 'range-work-user');
+
+    assert.equal(user.status, 'active');
+    assert.equal(user.lastEventAt, '2026-06-01T10:00:00.000Z');
+    assert.equal(user.activeDays30, 1);
+    assert.equal(user.activeDays90, 0);
+    assert.equal(user.recentEvents.length, 0);
+
+    store.close();
+  });
+});
+
 test('userActivityStorePathFromEnv supports override and data default', () => {
   assert.equal(
     userActivityStorePathFromEnv({ USER_ACTIVITY_STORE_PATH: 'C:\\activity\\store.sqlite' }),

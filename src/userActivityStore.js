@@ -249,7 +249,8 @@ ORDER BY occurred_at DESC, id DESC
     const day14Start = formatDateUTC(addDaysUTC(toDate, -13));
     const day30StartDate = addDaysUTC(toDate, -29);
     const day30Start = formatDateUTC(day30StartDate);
-    const eventWindowStart = minDateUTC(fromDate, day30StartDate, parseDateOnly(day14Start));
+    const retentionStartDate = addDaysUTC(toDate, -(retentionDays - 1));
+    const eventWindowStart = minDateUTC(fromDate, retentionStartDate);
     const events = listEventsBetween(eventWindowStart, toDate);
     const userRows = [];
     const userById = new Map();
@@ -341,7 +342,7 @@ ORDER BY occurred_at DESC, id DESC
           .filter((day) => day.date >= day14Start && day.date <= to && ['work', 'intense'].includes(classifyDay(day)))
           .length;
         const recentEvents = requestedEvents.slice(0, 8);
-        const lastEventAt = recentEvents.length > 0 ? recentEvents[0].occurredAt : '';
+        const lastEventAt = userEvents.length > 0 ? userEvents[0].occurredAt : '';
 
         return {
           id: user.id,

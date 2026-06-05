@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 
 const { activeNavForPath, createApp, sanitizeForResponse, start } = require('../src/server');
 
@@ -1852,6 +1855,35 @@ test('POST /admin/preload/run rejects invalid manual date ranges', async () => {
   assert.deepEqual(preloadService.calls, []);
 });
 
+test('createApp does not create a user activity store when none is supplied', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-app-activity-'));
+  const app = createApp({
+    config: {
+      ...baseConfig(),
+      auth: {
+        enabled: true
+      },
+      activity: {
+        storePath: path.join(tempDir, 'activity.sqlite')
+      }
+    },
+    client: createFakeClient(),
+    userStore: {},
+    sessionManager: {},
+    activityStore: null
+  });
+
+  try {
+    assert.equal(app.locals.activityStore, null);
+  } finally {
+    if (app.locals.activityStore && typeof app.locals.activityStore.close === 'function') {
+      app.locals.activityStore.close();
+    }
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('start uses injectable dependencies and logs the listening port without secrets', async () => {
   const config = {
     port: 0,
@@ -2007,6 +2039,186 @@ test('start wires user activity store path and closes it with server', async () 
   }
 
   assert.equal(activityStore.closed, true);
+});
+
+test('start logs sanitized activity close failures and still closes preload service', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: true
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  const warningMessages = [];
+  let preloadServiceClosed = false;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  const server = start({
+    loadConfigFn: () => config,
+    ClientClass: FakeClient,
+    createPreloadServiceFn: () => ({
+      close() {
+        preloadServiceClosed = true;
+      }
+    }),
+    createUserActivityStoreFn: () => ({
+      close() {
+        throw new Error('activity close failed with password super-secret');
+      }
+    }),
+    createAppFn: () => http.createServer((req, res) => {
+      res.setHeader('content-type', 'text/plain');
+      res.end('started');
+    }),
+    logger: {
+      log() {},
+      warn(message) {
+        warningMessages.push(message);
+      }
+    }
+  });
+
+  try {
+    await waitForListening(server);
+  } finally {
+    await closeServer(server);
+  }
+
+  assert.equal(preloadServiceClosed, true);
+  assert.equal(warningMessages.length, 1);
+  assert.match(warningMessages[0], /User activity store close failed: activity close failed with password \[redacted\]/);
+  assert.doesNotMatch(warningMessages[0], /super-secret/);
+});
+
+test('start closes preload service when user activity store creation fails', () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: true
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  const warningMessages = [];
+  let preloadServiceClosed = false;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  assert.throws(
+    () => start({
+      loadConfigFn: () => config,
+      ClientClass: FakeClient,
+      createPreloadServiceFn: () => ({
+        close() {
+          preloadServiceClosed = true;
+          throw new Error('preload close failed with password super-secret');
+        }
+      }),
+      createUserActivityStoreFn: () => {
+        throw new Error('activity store open failed with password super-secret');
+      },
+      createAppFn: () => http.createServer(),
+      logger: {
+        log() {},
+        warn(message) {
+          warningMessages.push(message);
+        }
+      }
+    }),
+    /activity store open failed with password super-secret/
+  );
+
+  assert.equal(preloadServiceClosed, true);
+  assert.equal(warningMessages.length, 1);
+  assert.match(warningMessages[0], /Preload service close failed: preload close failed with password \[redacted\]/);
+  assert.doesNotMatch(warningMessages[0], /super-secret/);
+});
+
+test('start closes activity and preload services when app creation fails', () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: true
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  let activityStoreClosed = false;
+  let preloadServiceClosed = false;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  assert.throws(
+    () => start({
+      loadConfigFn: () => config,
+      ClientClass: FakeClient,
+      createPreloadServiceFn: () => ({
+        close() {
+          preloadServiceClosed = true;
+        }
+      }),
+      createUserActivityStoreFn: () => ({
+        close() {
+          activityStoreClosed = true;
+        }
+      }),
+      createAppFn: () => {
+        throw new Error('app creation failed with password super-secret');
+      },
+      logger: {
+        log() {},
+        warn() {}
+      }
+    }),
+    /app creation failed with password super-secret/
+  );
+
+  assert.equal(activityStoreClosed, true);
+  assert.equal(preloadServiceClosed, true);
 });
 
 test('start does not create user activity store when auth is disabled', async () => {

@@ -333,13 +333,7 @@ function createApp({
         secret: authConfig.sessionSecret || undefined
       })
     : null);
-  const activity = authEnabled
-    ? activityStore || createUserActivityStore({
-        filePath: config.activity && config.activity.storePath,
-        retentionDays: DEFAULT_USER_ACTIVITY_RETENTION_DAYS,
-        now
-      })
-    : null;
+  const activity = authEnabled ? activityStore : null;
 
   app.locals.activityStore = activity;
 
@@ -1598,6 +1592,7 @@ function start(options = {}) {
     filePath: workplaceDirectoryCachePathFromEnv(env)
   });
   let preloadService = null;
+  let activityStore = null;
 
   function warn(message) {
     if (logger && typeof logger.warn === 'function') {
@@ -1607,6 +1602,24 @@ function start(options = {}) {
 
     if (logger && typeof logger.log === 'function') {
       logger.log(message);
+    }
+  }
+
+  function closeResource(resource, label) {
+    if (!resource || typeof resource.close !== 'function') {
+      return;
+    }
+
+    try {
+      const closeResult = resource.close();
+
+      if (closeResult && typeof closeResult.catch === 'function') {
+        closeResult.catch((error) => {
+          warn(`${label} close failed: ${sanitizeForResponse(error && error.message, config)}`);
+        });
+      }
+    } catch (error) {
+      warn(`${label} close failed: ${sanitizeForResponse(error && error.message, config)}`);
     }
   }
 
@@ -1620,22 +1633,36 @@ function start(options = {}) {
     warn(`Preload service disabled: ${sanitizeForResponse(error && error.message, config)}`);
   }
 
-  const activityStore = config.auth && config.auth.enabled
-    ? createUserActivityStoreFn({
-        filePath: config.activity && config.activity.storePath
-      })
-    : null;
+  try {
+    activityStore = config.auth && config.auth.enabled === true
+      ? createUserActivityStoreFn({
+          filePath: config.activity && config.activity.storePath
+        })
+      : null;
+  } catch (error) {
+    closeResource(preloadService, 'Preload service');
+    throw error;
+  }
 
-  const app = createAppFn({
-    config,
-    client,
-    activeGigersCache,
-    cityAnalysisCache,
-    dashboardSectionCache,
-    workplaceDirectoryCache,
-    preloadService,
-    activityStore
-  });
+  let app;
+
+  try {
+    app = createAppFn({
+      config,
+      client,
+      activeGigersCache,
+      cityAnalysisCache,
+      dashboardSectionCache,
+      workplaceDirectoryCache,
+      preloadService,
+      activityStore
+    });
+  } catch (error) {
+    closeResource(activityStore, 'User activity store');
+    closeResource(preloadService, 'Preload service');
+    throw error;
+  }
+
   const server = app.listen(config.port, () => {
     const address = server.address();
     const port = address && typeof address === 'object' ? address.port : config.port;
@@ -1647,33 +1674,8 @@ function start(options = {}) {
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
 
-    if (preloadService && typeof preloadService.close === 'function') {
-      try {
-        const closeResult = preloadService.close();
-
-        if (closeResult && typeof closeResult.catch === 'function') {
-          closeResult.catch((error) => {
-            warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
-          });
-        }
-      } catch (error) {
-        warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
-      }
-    }
-
-    if (activityStore && typeof activityStore.close === 'function') {
-      try {
-        const closeResult = activityStore.close();
-
-        if (closeResult && typeof closeResult.catch === 'function') {
-          closeResult.catch((error) => {
-            warn(`User activity store close failed: ${sanitizeForResponse(error && error.message, config)}`);
-          });
-        }
-      } catch (error) {
-        warn(`User activity store close failed: ${sanitizeForResponse(error && error.message, config)}`);
-      }
-    }
+    closeResource(activityStore, 'User activity store');
+    closeResource(preloadService, 'Preload service');
   });
 
   return server;

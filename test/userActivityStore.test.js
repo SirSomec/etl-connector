@@ -11,7 +11,7 @@ const {
   userActivityStorePathFromEnv
 } = require('../src/userActivityStore');
 
-async function withTempStore(callback) {
+async function withTempStore(callback, { now = () => new Date('2026-06-05T12:00:00.000Z') } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'activity-store-'));
   const filePath = path.join(tempDir, 'activity.sqlite');
   let store;
@@ -19,7 +19,7 @@ async function withTempStore(callback) {
   try {
     store = createUserActivityStore({
       filePath,
-      now: () => new Date('2026-06-05T12:00:00.000Z')
+      now
     });
     await callback(store, filePath);
   } finally {
@@ -128,6 +128,8 @@ test('user activity store records events and builds overview levels', async () =
 });
 
 test('user activity store prunes events older than retention window', async () => {
+  let currentNow = new Date('2026-02-10T12:00:00.000Z');
+
   await withTempStore(async (store) => {
     store.recordEvent({
       userId: 'old-user',
@@ -139,6 +141,7 @@ test('user activity store prunes events older than retention window', async () =
       section: 'tables',
       occurredAt: '2026-02-01T10:00:00.000Z'
     });
+    currentNow = new Date('2026-06-05T12:00:00.000Z');
     const removed = store.pruneOldEvents(90);
 
     assert.equal(removed, 1);
@@ -179,6 +182,39 @@ test('user activity store prunes events older than retention window', async () =
     assert.equal(overview.users.find((user) => user.id === 'old-user').activeDays90, 0);
     assert.equal(overview.users.find((user) => user.id === 'stale-other-user').activeDays90, 0);
     assert.equal(overview.users.find((user) => user.id === 'fresh-user').activeDays90, 1);
+
+    store.close();
+  }, { now: () => currentNow });
+});
+
+test('user activity store does not retain backdated events older than retention window', async () => {
+  await withTempStore(async (store) => {
+    store.recordEvent({
+      userId: 'backdated-user',
+      email: 'backdated@example.test',
+      role: 'analyst',
+      eventType: 'page_view',
+      method: 'GET',
+      path: '/',
+      section: 'tables',
+      occurredAt: '2026-02-02T10:00:00.000Z'
+    });
+
+    const removed = store.pruneOldEvents(90);
+    const overview = store.getActivityOverview({
+      from: '2026-01-01',
+      to: '2026-06-05',
+      users: [
+        { id: 'backdated-user', email: 'backdated@example.test', role: 'analyst' }
+      ]
+    });
+    const user = overview.users.find((item) => item.id === 'backdated-user');
+
+    assert.equal(removed, 0);
+    assert.equal(user.status, 'new');
+    assert.equal(user.activeDays30, 0);
+    assert.equal(user.activeDays90, 0);
+    assert.equal(user.recentEvents.length, 0);
 
     store.close();
   });
@@ -246,7 +282,8 @@ test('user activity store keeps rare status for retained view activity outside r
     assert.equal(user.status, 'rare');
     assert.equal(user.lastEventAt, '2026-05-20T08:00:00.000Z');
     assert.equal(user.activeDays30, 1);
-    assert.equal(user.activeDays90, 0);
+    assert.equal(user.activeDays90, 1);
+    assert.equal(user.days.find((day) => day.date === '2026-06-05').level, 'none');
     assert.equal(user.recentEvents.length, 0);
 
     store.close();
@@ -278,8 +315,83 @@ test('user activity store keeps active status for recent work outside requested 
     assert.equal(user.status, 'active');
     assert.equal(user.lastEventAt, '2026-06-01T10:00:00.000Z');
     assert.equal(user.activeDays30, 1);
-    assert.equal(user.activeDays90, 0);
+    assert.equal(user.activeDays90, 1);
+    assert.equal(user.days.find((day) => day.date === '2026-06-05').level, 'none');
     assert.equal(user.recentEvents.length, 0);
+
+    store.close();
+  });
+});
+
+test('user activity store keeps silent status for 90-day activity outside last 30 days', async () => {
+  await withTempStore(async (store) => {
+    store.recordEvent({
+      userId: 'ninety-day-user',
+      email: 'ninety-day@example.test',
+      role: 'analyst',
+      eventType: 'page_view',
+      method: 'GET',
+      path: '/',
+      section: 'tables',
+      occurredAt: '2026-03-20T08:00:00.000Z'
+    });
+
+    const overview = store.getActivityOverview({
+      from: '2026-06-05',
+      to: '2026-06-05',
+      users: [
+        { id: 'ninety-day-user', email: 'ninety-day@example.test', role: 'analyst' }
+      ]
+    });
+    const user = overview.users.find((item) => item.id === 'ninety-day-user');
+
+    assert.equal(user.status, 'silent');
+    assert.equal(user.lastEventAt, '2026-03-20T08:00:00.000Z');
+    assert.equal(user.activeDays30, 0);
+    assert.equal(user.activeDays90, 1);
+    assert.equal(user.days.find((day) => day.date === '2026-06-05').level, 'none');
+    assert.equal(user.recentEvents.length, 0);
+
+    store.close();
+  });
+});
+
+test('user activity store strips query strings and hashes from persisted paths', async () => {
+  await withTempStore(async (store) => {
+    store.recordEvent({
+      userId: 'path-user',
+      email: 'path@example.test',
+      role: 'analyst',
+      eventType: 'page_view',
+      method: 'GET',
+      path: '/dashboard?token=secret#x',
+      section: 'tables',
+      occurredAt: '2026-06-05T10:00:00.000Z'
+    });
+    store.recordEvent({
+      userId: 'path-user',
+      email: 'path@example.test',
+      role: 'analyst',
+      eventType: 'admin_action',
+      method: 'POST',
+      path: 'https://example.test/admin/users?password=x#section',
+      section: 'accounts',
+      occurredAt: '2026-06-05T10:01:00.000Z'
+    });
+
+    const overview = store.getActivityOverview({
+      from: '2026-06-05',
+      to: '2026-06-05',
+      users: [
+        { id: 'path-user', email: 'path@example.test', role: 'admin' }
+      ]
+    });
+    const user = overview.users.find((item) => item.id === 'path-user');
+
+    assert.deepEqual(user.recentEvents.map((event) => event.path), [
+      '/admin/users',
+      '/dashboard'
+    ]);
 
     store.close();
   });

@@ -21,6 +21,26 @@ function normalizeEmail(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function normalizePath(value) {
+  const text = normalizeText(value);
+
+  if (!text) {
+    return '';
+  }
+
+  try {
+    return new URL(text, 'http://activity.local').pathname || '/';
+  } catch {
+    const pathname = text.split('#')[0].split('?')[0];
+
+    if (!pathname) {
+      return '/';
+    }
+
+    return pathname.startsWith('/') ? pathname : `/${pathname}`;
+  }
+}
+
 function formatDateUTC(date) {
   return [
     date.getUTCFullYear(),
@@ -102,7 +122,7 @@ function normalizeEvent(input) {
     role: normalizeText(input && input.role) || 'analyst',
     eventType: normalizeText(input && input.eventType),
     method: normalizeText(input && input.method).toUpperCase(),
-    path: normalizeText(input && input.path),
+    path: normalizePath(input && input.path),
     section: normalizeText(input && input.section),
     occurredAt: normalizeText(input && input.occurredAt)
   };
@@ -204,19 +224,29 @@ function createUserActivityStore({
     return cutoff.toISOString();
   }
 
-  function pruneOldEvents(days = retentionDays) {
+  function pruneEventsBefore(cutoff) {
     const result = db
       .prepare('DELETE FROM user_activity_events WHERE occurred_at < ?')
-      .run(cutoffIso(days));
+      .run(cutoff);
 
     return Number(result.changes || 0);
+  }
+
+  function pruneOldEvents(days = retentionDays) {
+    return pruneEventsBefore(cutoffIso(days));
   }
 
   function recordEvent(input) {
     const event = normalizeEvent(input);
     assertEvent(event);
     event.occurredAt = parseDateTime(event.occurredAt, 'occurredAt').toISOString();
-    pruneOldEvents(retentionDays);
+    const cutoff = cutoffIso(retentionDays);
+
+    pruneEventsBefore(cutoff);
+
+    if (event.occurredAt < cutoff) {
+      return;
+    }
 
     db.prepare(`
 INSERT INTO user_activity_events (
@@ -249,6 +279,7 @@ ORDER BY occurred_at DESC, id DESC
     const day14Start = formatDateUTC(addDaysUTC(toDate, -13));
     const day30StartDate = addDaysUTC(toDate, -29);
     const day30Start = formatDateUTC(day30StartDate);
+    const day90Start = formatDateUTC(addDaysUTC(toDate, -89));
     const retentionStartDate = addDaysUTC(toDate, -(retentionDays - 1));
     const eventWindowStart = minDateUTC(fromDate, retentionStartDate);
     const events = listEventsBetween(eventWindowStart, toDate);
@@ -337,7 +368,9 @@ ORDER BY occurred_at DESC, id DESC
         const activeDays30 = [...daysByDate.values()]
           .filter((day) => day.date >= day30Start && day.date <= to && classifyDay(day) !== 'none')
           .length;
-        const activeDays90 = days.filter((day) => day.level !== 'none').length;
+        const activeDays90 = [...daysByDate.values()]
+          .filter((day) => day.date >= day90Start && day.date <= to && classifyDay(day) !== 'none')
+          .length;
         const workDays14 = [...daysByDate.values()]
           .filter((day) => day.date >= day14Start && day.date <= to && ['work', 'intense'].includes(classifyDay(day)))
           .length;

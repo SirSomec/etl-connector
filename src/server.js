@@ -1582,6 +1582,7 @@ function start(options = {}) {
     ClientClass = ClickHouseClient,
     createAppFn = createApp,
     createPreloadServiceFn = createPreloadService,
+    createUserActivityStoreFn = createUserActivityStore,
     logger = console
   } = options;
   const config = loadConfigFn(env);
@@ -1619,6 +1620,12 @@ function start(options = {}) {
     warn(`Preload service disabled: ${sanitizeForResponse(error && error.message, config)}`);
   }
 
+  const activityStore = config.auth && config.auth.enabled
+    ? createUserActivityStoreFn({
+        filePath: config.activity && config.activity.storePath
+      })
+    : null;
+
   const app = createAppFn({
     config,
     client,
@@ -1626,7 +1633,8 @@ function start(options = {}) {
     cityAnalysisCache,
     dashboardSectionCache,
     workplaceDirectoryCache,
-    preloadService
+    preloadService,
+    activityStore
   });
   const server = app.listen(config.port, () => {
     const address = server.address();
@@ -1639,20 +1647,32 @@ function start(options = {}) {
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
 
-    if (!preloadService || typeof preloadService.close !== 'function') {
-      return;
+    if (preloadService && typeof preloadService.close === 'function') {
+      try {
+        const closeResult = preloadService.close();
+
+        if (closeResult && typeof closeResult.catch === 'function') {
+          closeResult.catch((error) => {
+            warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
+          });
+        }
+      } catch (error) {
+        warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
+      }
     }
 
-    try {
-      const closeResult = preloadService.close();
+    if (activityStore && typeof activityStore.close === 'function') {
+      try {
+        const closeResult = activityStore.close();
 
-      if (closeResult && typeof closeResult.catch === 'function') {
-        closeResult.catch((error) => {
-          warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
-        });
+        if (closeResult && typeof closeResult.catch === 'function') {
+          closeResult.catch((error) => {
+            warn(`User activity store close failed: ${sanitizeForResponse(error && error.message, config)}`);
+          });
+        }
+      } catch (error) {
+        warn(`User activity store close failed: ${sanitizeForResponse(error && error.message, config)}`);
       }
-    } catch (error) {
-      warn(`Preload service close failed: ${sanitizeForResponse(error && error.message, config)}`);
     }
   });
 

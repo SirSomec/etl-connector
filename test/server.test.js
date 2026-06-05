@@ -1933,6 +1933,143 @@ test('start uses injectable dependencies and logs the listening port without sec
   assert.equal(preloadServiceClosed, true);
 });
 
+test('start wires user activity store path and closes it with server', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: true
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  const activityStoreCalls = [];
+  let createAppArgs;
+  let activityStore;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  const server = start({
+    loadConfigFn: () => config,
+    ClientClass: FakeClient,
+    createPreloadServiceFn: () => null,
+    createUserActivityStoreFn: (args) => {
+      activityStoreCalls.push(args);
+
+      activityStore = {
+        closed: false,
+        close() {
+          this.closed = true;
+        }
+      };
+
+      return activityStore;
+    },
+    createAppFn: (args) => {
+      createAppArgs = args;
+
+      return http.createServer((req, res) => {
+        res.setHeader('content-type', 'text/plain');
+        res.end(args.activityStore === activityStore ? 'activity' : 'missing');
+      });
+    },
+    logger: {
+      log() {}
+    }
+  });
+
+  try {
+    await waitForListening(server);
+
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    const text = await response.text();
+
+    assert.equal(text, 'activity');
+    assert.deepEqual(activityStoreCalls, [{ filePath: config.activity.storePath }]);
+    assert.equal(createAppArgs.activityStore, activityStore);
+    assert.equal(activityStore.closed, false);
+  } finally {
+    await closeServer(server);
+  }
+
+  assert.equal(activityStore.closed, true);
+});
+
+test('start does not create user activity store when auth is disabled', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    auth: {
+      enabled: false
+    },
+    activity: {
+      storePath: 'C:\\activity\\user-activity.sqlite'
+    }
+  };
+  let createAppArgs;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  const server = start({
+    loadConfigFn: () => config,
+    ClientClass: FakeClient,
+    createPreloadServiceFn: () => null,
+    createUserActivityStoreFn: () => {
+      throw new Error('activity store should not be created');
+    },
+    createAppFn: (args) => {
+      createAppArgs = args;
+
+      return http.createServer((req, res) => {
+        res.setHeader('content-type', 'text/plain');
+        res.end(args.activityStore === null ? 'no-activity' : 'activity');
+      });
+    },
+    logger: {
+      log() {}
+    }
+  });
+
+  try {
+    await waitForListening(server);
+
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    const text = await response.text();
+
+    assert.equal(text, 'no-activity');
+    assert.equal(createAppArgs.activityStore, null);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test('start falls back without preload service when preload creation fails', async () => {
   const config = {
     port: 0,

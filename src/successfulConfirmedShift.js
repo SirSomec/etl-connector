@@ -14,17 +14,23 @@ function positiveFactIntervalCondition(alias) {
   ].join(' AND ');
 }
 
+function numericFieldExpression(alias, field) {
+  const value = sqlField(alias, field);
+
+  return `toFloat64OrZero(ifNull(toString(${value}), ''))`;
+}
+
 function positiveAccrualCondition(alias) {
-  const hours = sqlField(alias, 'hours');
-  const payment = sqlField(alias, 'payment');
-  const salaryPerJob = sqlField(alias, 'salary_per_job');
-  const salaryPerHour = sqlField(alias, 'salary_per_hour');
+  const hours = numericFieldExpression(alias, 'hours');
+  const payment = numericFieldExpression(alias, 'payment');
+  const salaryPerJob = numericFieldExpression(alias, 'salary_per_job');
+  const salaryPerHour = numericFieldExpression(alias, 'salary_per_hour');
 
   return [
-    `ifNull(${hours}, 0) > 0`,
-    `ifNull(${payment}, 0) > 0`,
-    `ifNull(${salaryPerJob}, 0) > 0`,
-    `ifNull(${salaryPerHour}, 0) * ifNull(${hours}, 0) > 0`,
+    `${hours} > 0`,
+    `${payment} > 0`,
+    `${salaryPerJob} > 0`,
+    `${salaryPerHour} * ${hours} > 0`,
     `(${positiveFactIntervalCondition(alias)})`
   ].join(' OR ');
 }
@@ -38,6 +44,7 @@ function successfulConfirmedShiftFlagExpression(alias) {
 }
 
 module.exports = {
+  numericFieldExpression,
   successfulConfirmedShiftCondition,
   successfulConfirmedShiftFlagExpression
 };

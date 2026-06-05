@@ -1,4 +1,7 @@
-const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+const {
+  numericFieldExpression,
+  successfulConfirmedShiftFlagExpression
+} = require('./successfulConfirmedShift');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
@@ -884,9 +887,11 @@ function radiusWorkersQuery() {
 }
 
 function plannedHoursExpression(alias = 'fo', startField = 'order_start', finishField = 'order_finish') {
+  const hours = numericFieldExpression(alias, 'hours');
+
   return `if(
-      ifNull(${alias}.hours, 0) > 0,
-      toNullable(toFloat64(${alias}.hours)),
+      ${hours} > 0,
+      toNullable(${hours}),
       if(
         ${alias}.${finishField} > ${alias}.${startField},
         toNullable(dateDiff('minute', ${alias}.${startField}, ${alias}.${finishField}) / 60.0),

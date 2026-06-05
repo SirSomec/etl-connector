@@ -451,6 +451,8 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls[3].query.includes('INNER JOIN top_workplaces AS tw'), true);
   assert.equal(calls[3].query.includes('FROM mg_jobs AS j'), true);
   assert.equal(calls[3].query.includes('AS is_successful_confirmed_shift'), true);
+  assert.equal(calls[3].query.includes("toFloat64OrZero(ifNull(toString(j.payment), '')) > 0"), true);
+  assert.equal(calls[3].query.includes('ifNull(j.payment, 0) > 0'), false);
   assert.equal(calls[3].query.includes('completed_job.is_successful_confirmed_shift = 1'), true);
   assert.equal(calls[3].query.includes('sla_ordered_shifts'), true);
   assert.equal(calls[3].query.includes('sla_completed_shifts'), true);

@@ -335,10 +335,11 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   }
 
   for (const operation of ['workplace point summary', 'workplace point daily']) {
-    assert.equal(
-      calls.find((call) => call.operation === operation).query.includes('mg_job_history'),
-      true
-    );
+    const query = calls.find((call) => call.operation === operation).query;
+
+    assert.equal(query.includes('mg_job_history'), true);
+    assert.equal(query.includes("toFloat64OrZero(ifNull(toString(j.hours), ''))"), true);
+    assert.equal(query.includes('ifNull(j.hours, 0) > 0'), false);
   }
 
   assert.equal(

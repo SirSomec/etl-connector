@@ -220,6 +220,40 @@ test('user activity store does not retain backdated events older than retention 
   });
 });
 
+test('user activity overview ignores stale events from old requested dates', async () => {
+  let currentNow = new Date('2026-01-02T12:00:00.000Z');
+
+  await withTempStore(async (store) => {
+    store.recordEvent({
+      userId: 'stale-overview-user',
+      email: 'stale-overview@example.test',
+      role: 'analyst',
+      eventType: 'page_view',
+      method: 'GET',
+      path: '/',
+      section: 'tables',
+      occurredAt: '2026-01-01T10:00:00.000Z'
+    });
+    currentNow = new Date('2026-06-05T12:00:00.000Z');
+
+    const overview = store.getActivityOverview({
+      from: '2026-01-01',
+      to: '2026-06-05',
+      users: [
+        { id: 'stale-overview-user', email: 'stale-overview@example.test', role: 'analyst' }
+      ]
+    });
+    const user = overview.users.find((item) => item.id === 'stale-overview-user');
+
+    assert.equal(user.activeDays90, 0);
+    assert.equal(user.status, 'new');
+    assert.equal(user.lastEventAt, '');
+    assert.equal(user.days.find((day) => day.date === '2026-01-01').level, 'none');
+
+    store.close();
+  }, { now: () => currentNow });
+});
+
 test('user activity store uses spec schema', async () => {
   await withTempStore(async (store, filePath) => {
     store.close();

@@ -81,10 +81,6 @@ function addDaysUTC(date, days) {
   return next;
 }
 
-function minDateUTC(...dates) {
-  return new Date(Math.min(...dates.map((date) => date.getTime())));
-}
-
 function assertValidDateRange(from, to) {
   const fromDate = parseDateOnly(from);
   const toDate = parseDateOnly(to);
@@ -281,7 +277,7 @@ ORDER BY occurred_at DESC, id DESC
     const day30Start = formatDateUTC(day30StartDate);
     const day90Start = formatDateUTC(addDaysUTC(toDate, -89));
     const retentionStartDate = addDaysUTC(toDate, -(retentionDays - 1));
-    const eventWindowStart = minDateUTC(fromDate, retentionStartDate);
+    const eventWindowStart = retentionStartDate;
     const events = listEventsBetween(eventWindowStart, toDate);
     const userRows = [];
     const userById = new Map();

@@ -2266,7 +2266,7 @@ function layout({
     .point-metric-value {
       min-width: 0;
       margin-top: 2px;
-      font-size: 15px;
+      font-size: 12px;
       font-weight: 700;
       white-space: nowrap;
       overflow: hidden;

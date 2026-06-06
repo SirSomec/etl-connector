@@ -2100,7 +2100,7 @@ test('renderWorkplaceAnalysisDashboard keeps point metric values on one line', (
     }
   });
 
-  assert.match(html, /\.point-metric-value\s*\{[^}]*white-space:\s*nowrap;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;/);
+  assert.match(html, /\.point-metric-value\s*\{[^}]*font-size:\s*12px;[\s\S]*?white-space:\s*nowrap;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;/);
   assert.doesNotMatch(html, /\.point-metric-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
   assert.match(html, />100\.0%<\/div>/);
 });

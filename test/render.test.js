@@ -305,6 +305,79 @@ test('admin-only activity navigation is visible only to admins', () => {
   assert.doesNotMatch(analystHtml, /href="\/admin\/activity"/);
 });
 
+test('renderWorkplaceAnalysisDashboard renders unified dashboard header and active filter chips', () => {
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        rangeDays: 15,
+        client: ['Brand A'],
+        city: ['Москва'],
+        region: [],
+        profession: ['Комплектовщик'],
+        orderType: ['regular'],
+        jobStatus: [],
+        contractor: [],
+        search: 'Ленина',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        sort: 'orders',
+        limit: 12,
+        page: 1,
+        pinnedWorkplaceIds: []
+      },
+      filterOptions: {
+        client: ['Brand A'],
+        city: ['Москва'],
+        region: [],
+        profession: ['Комплектовщик'],
+        orderType: ['regular'],
+        jobStatus: [],
+        contractor: []
+      },
+      context: { sortLabel: 'по заказу' },
+      points: [],
+      attentionPoints: [],
+      pagination: { page: 1, limit: 12, totalWorkplaces: 0, totalPages: 1, hasPrevious: false, hasNext: false },
+      attentionPagination: { page: 1, pageSize: 15, totalWorkplaces: 0, totalPages: 1, hasPrevious: false, hasNext: false }
+    }
+  });
+
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /dashboard-eyebrow/);
+  assert.match(html, /Анализ точек/);
+  assert.match(html, /Период: 2026-06-01 - 2026-06-15/);
+  assert.match(html, /active-filter-chips/);
+  assert.match(html, /Brand A/);
+  assert.match(html, /Москва/);
+  assert.match(html, /Комплектовщик/);
+  assert.match(html, /Ленина/);
+});
+
+test('renderWorkerCancellationsDashboard renders unified loading state', () => {
+  const html = renderWorkerCancellationsDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        page: 1,
+        pageSize: 100,
+        sort: 'workerCancellations24h',
+        direction: 'desc'
+      }
+    }
+  });
+
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /dashboard-loading-state/);
+  assert.match(html, /Загружается/);
+});
+
 test('renderWorkerCancellationsDashboard renders filters and progressive table loading state', () => {
   const html = renderWorkerCancellationsDashboard({
     database: 'etl',
@@ -321,7 +394,8 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
     }
   });
 
-  assert.match(html, /<h1>Отмены гигерами<\/h1>/);
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /Отмены гигерами/);
   assert.match(html, /class="nav-link active" href="\/dashboards\/worker-cancellations"/);
   assert.match(html, /<form class="filter-bar" action="\/dashboards\/worker-cancellations" method="get">/);
   assert.match(html, /<input id="from" name="from" type="date" value="2026-05-01">/);

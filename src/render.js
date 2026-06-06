@@ -175,6 +175,83 @@ function renderMetricPanelHead(title, metricId, currentUser) {
 </div>`;
 }
 
+function renderDashboardHeader({
+  title,
+  eyebrow = 'Дашборд',
+  period = '',
+  details = []
+}) {
+  const detailItems = [period, ...details]
+    .filter((item) => String(item || '').trim() !== '')
+    .map((item) => `<span>${escapeHtml(item)}</span>`)
+    .join('');
+
+  return `<div class="dashboard-header">
+  <div>
+    <div class="dashboard-eyebrow">${escapeHtml(eyebrow)}</div>
+    <h1>${escapeHtml(title)}</h1>
+  </div>
+  ${detailItems ? `<div class="dashboard-meta">${detailItems}</div>` : ''}
+</div>`;
+}
+
+function activeFilterChipItems(filters = {}) {
+  const items = [];
+  const pushArray = (label, values) => {
+    for (const value of Array.isArray(values) ? values : []) {
+      if (String(value || '').trim() !== '') {
+        items.push(`${label}: ${value}`);
+      }
+    }
+  };
+
+  pushArray('Бренд', filters.client);
+  pushArray('Город', filters.city);
+  pushArray('Регион', filters.region);
+  pushArray('Профессия', filters.profession);
+  pushArray('Тип заказа', (filters.orderType || []).map(orderTypeLabel));
+  pushArray('Статус', filters.jobStatus);
+  pushArray('Контрагент', filters.contractor);
+
+  if (String(filters.search || '').trim() !== '') {
+    items.push(`Поиск: ${filters.search}`);
+  }
+
+  if (filters.includeDeletedOrders) {
+    items.push('Удаленные включены');
+  }
+
+  if (filters.includeHiddenOrders) {
+    items.push('Скрытые включены');
+  }
+
+  return items;
+}
+
+function renderActiveFilterChips(filters = {}) {
+  const items = activeFilterChipItems(filters);
+
+  if (items.length === 0) {
+    return '<div class="active-filter-chips"><span class="filter-chip muted-chip">Фильтры не выбраны</span></div>';
+  }
+
+  return `<div class="active-filter-chips">${items
+    .map((item) => `<span class="filter-chip">${escapeHtml(item)}</span>`)
+    .join('')}</div>`;
+}
+
+function renderDashboardLoadingState(label = 'Загружается') {
+  return `<div class="dashboard-loading-state"><p class="loading">${escapeHtml(label)}</p></div>`;
+}
+
+function renderDashboardEmptyState(label) {
+  return `<div class="dashboard-empty-state"><p class="empty">${escapeHtml(label)}</p></div>`;
+}
+
+function renderDashboardErrorState(message) {
+  return `<div class="dashboard-error-state"><div class="error">${escapeHtml(message)}</div></div>`;
+}
+
 function layout({
   title,
   database,
@@ -409,6 +486,72 @@ function layout({
     h2 {
       font-size: 20px;
       line-height: 1.25;
+    }
+
+    .dashboard-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px 18px;
+      margin-bottom: 12px;
+    }
+
+    .dashboard-eyebrow {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .dashboard-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dashboard-meta span {
+      overflow-wrap: anywhere;
+    }
+
+    .active-filter-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: -6px 0 14px;
+    }
+
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid #c7d4df;
+      border-radius: 999px;
+      background: #f6f9fb;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .muted-chip {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .dashboard-loading-state,
+    .dashboard-empty-state,
+    .dashboard-error-state {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
     }
 
     p {
@@ -5916,13 +6059,17 @@ function renderWorkerCancellationsDashboard({
     ? `<div data-dashboard-fragment-url="${escapeHtml(workerCancellationsSectionUrl(filters, 'workers'))}">
   <section class="section">
     <h2>Исполнители</h2>
-    <p class="loading">Загружается</p>
+    ${renderDashboardLoadingState()}
   </section>
 </div>`
     : renderWorkerCancellationsDashboardSection({ dashboard, section: 'workers', currentUser });
   const content = `<section class="section">
-  <h1>Отмены гигерами</h1>
-  <p class="technical-note">Период по плановому старту смены.</p>
+  ${renderDashboardHeader({
+    title: 'Отмены гигерами',
+    eyebrow: 'Операции',
+    period: `Период: ${filters.from} - ${filters.to}`,
+    details: ['Период по плановому старту смены']
+  })}
 </section>
 <section class="section">
   <form class="filter-bar" action="/dashboards/worker-cancellations" method="get">
@@ -6646,7 +6793,7 @@ function renderWorkplaceAnalysisDashboard({
     ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'points'))}">
   <section class="section">
     <h2>Точки</h2>
-    <p class="loading">Загружается</p>
+    ${renderDashboardLoadingState()}
   </section>
 </div>`
     : renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
@@ -6654,14 +6801,19 @@ function renderWorkplaceAnalysisDashboard({
     ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'attention'))}">
   <section class="section">
     <h2>Точки, требующие внимания</h2>
-    <p class="loading">Загружается</p>
+    ${renderDashboardLoadingState()}
   </section>
 </div>`
     : renderWorkplaceAttentionSection(dashboard, currentUser);
   const content = `<section class="section">
-  <h1>Анализ точек</h1>
+  ${renderDashboardHeader({
+    title: 'Анализ точек',
+    eyebrow: 'Операции',
+    period: `Период: ${filters.from} - ${filters.to}`,
+    details: [`Дней: ${filters.rangeDays}`, dashboard.context && dashboard.context.sortLabel ? dashboard.context.sortLabel : '']
+  })}
+  ${renderActiveFilterChips(filters)}
   <p class="technical-note">Стабильность = доля дней с плановым заказом по mg_orders.amount.</p>
-  <p class="context-line">Период: ${escapeHtml(filters.from)} - ${escapeHtml(filters.to)} · дней: ${escapeHtml(filters.rangeDays)} · ${escapeHtml(dashboard.context.sortLabel)}</p>
 </section>
 <section class="section">
   <form class="filter-bar" action="/dashboards/workplace-analysis" method="get">

@@ -15,7 +15,6 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const FILTER_OPTION_KEYS = ['client', 'profession', 'orderType', 'jobStatus', 'contractor'];
 const CITY_ANALYSIS_CACHE_VERSION = 2;
-const CITY_ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CITY_ANALYSIS_CACHE_PATH = path.join(process.cwd(), 'data', 'city-analysis-cache.json');
 const CITY_ANALYSIS_SECTION_NAMES = [
   'summary-demand',
@@ -391,8 +390,19 @@ async function writeCityAnalysisCacheFile(filePath, entries) {
   await writeFileAtomically(filePath, `${JSON.stringify(data)}\n`, 'utf8');
 }
 
+function timeMs(value) {
+  const number = value instanceof Date ? value.getTime() : Number(value);
+
+  return Number.isFinite(number) ? number : Date.now();
+}
+
+function endOfUtcDayMs(timestamp) {
+  const date = new Date(timeMs(timestamp));
+
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+}
+
 function createCityAnalysisCache({
-  ttlMs = CITY_ANALYSIS_CACHE_TTL_MS,
   now = () => Date.now(),
   filePath = null
 } = {}) {
@@ -430,6 +440,19 @@ function createCityAnalysisCache({
     await fileLoadPromise;
   }
 
+  function pruneExpiredEntries(current) {
+    let changed = false;
+
+    for (const [key, entry] of entries) {
+      if (entry && entry.value !== undefined && Number.isFinite(entry.expiresAt) && entry.expiresAt <= current) {
+        entries.delete(key);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
   async function persistEntries() {
     if (!filePath) {
       return;
@@ -439,18 +462,43 @@ function createCityAnalysisCache({
   }
 
   return {
+    async pruneExpired(currentValue = now()) {
+      await loadFileEntries();
+
+      const pruned = pruneExpiredEntries(timeMs(currentValue));
+
+      if (pruned) {
+        await persistEntries();
+      }
+
+      return pruned;
+    },
+
     async getOrLoad(key, loader) {
       await loadFileEntries();
 
-      const current = now();
+      const current = timeMs(now());
+      const pruned = pruneExpiredEntries(current);
       const cached = entries.get(key);
 
       if (cached && cached.value !== undefined && cached.expiresAt > current) {
+        if (pruned) {
+          await persistEntries();
+        }
+
         return cached.value;
       }
 
       if (cached && cached.promise) {
+        if (pruned) {
+          await persistEntries();
+        }
+
         return cached.promise;
+      }
+
+      if (pruned) {
+        await persistEntries();
       }
 
       const promise = Promise.resolve()
@@ -459,7 +507,7 @@ function createCityAnalysisCache({
           async (value) => {
             entries.set(key, {
               value,
-              expiresAt: now() + ttlMs
+              expiresAt: endOfUtcDayMs(now())
             });
 
             await persistEntries();
@@ -474,7 +522,7 @@ function createCityAnalysisCache({
 
       entries.set(key, {
         promise,
-        expiresAt: current + ttlMs
+        expiresAt: endOfUtcDayMs(current)
       });
 
       return promise;

@@ -5,12 +5,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  DASHBOARD_SECTION_CACHE_TTL_MS,
   createDashboardSectionCache,
   dashboardSectionCachePathFromEnv
 } = require('../src/dashboardSectionCache');
 
-test('dashboard section cache reuses fresh values for 10 hours and reloads stale values', async () => {
+test('dashboard section cache keeps values only until the end of the UTC day', async () => {
   let timestamp = Date.parse('2026-06-15T10:00:00.000Z');
   let loads = 0;
   const cache = createDashboardSectionCache({ now: () => timestamp });
@@ -18,13 +17,16 @@ test('dashboard section cache reuses fresh values for 10 hours and reloads stale
   const first = await cache.getOrLoad('key', async () => ({ value: ++loads }));
   const second = await cache.getOrLoad('key', async () => ({ value: ++loads }));
 
-  timestamp += DASHBOARD_SECTION_CACHE_TTL_MS + 1;
+  timestamp = Date.parse('2026-06-15T23:59:59.999Z');
+  const beforeMidnight = await cache.getOrLoad('key', async () => ({ value: ++loads }));
+
+  timestamp = Date.parse('2026-06-16T00:00:00.000Z');
 
   const third = await cache.getOrLoad('key', async () => ({ value: ++loads }));
 
-  assert.equal(DASHBOARD_SECTION_CACHE_TTL_MS, 10 * 60 * 60 * 1000);
   assert.deepEqual(first, { value: 1 });
   assert.deepEqual(second, { value: 1 });
+  assert.deepEqual(beforeMidnight, { value: 1 });
   assert.deepEqual(third, { value: 2 });
 });
 
@@ -43,12 +45,67 @@ test('dashboard section cache persists fresh values across cache recreation', as
 
     const secondCache = createDashboardSectionCache({
       filePath,
-      now: () => Date.parse('2026-06-15T11:00:00.000Z')
+      now: () => Date.parse('2026-06-15T23:30:00.000Z')
     });
     const restored = await secondCache.getOrLoad('persisted', async () => ({ value: ++loads }));
 
     assert.deepEqual(restored, { value: 1 });
     assert.equal(loads, 1);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('dashboard section cache prunes expired persisted entries after UTC midnight', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-section-cache-'));
+  const filePath = path.join(tempDir, 'cache.json');
+  let loads = 0;
+
+  try {
+    const firstCache = createDashboardSectionCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z')
+    });
+
+    await firstCache.getOrLoad('expired-a', async () => ({ value: ++loads }));
+    await firstCache.getOrLoad('expired-b', async () => ({ value: ++loads }));
+
+    const secondCache = createDashboardSectionCache({
+      filePath,
+      now: () => Date.parse('2026-06-16T09:00:00.000Z')
+    });
+
+    const fresh = await secondCache.getOrLoad('fresh', async () => ({ value: ++loads }));
+    const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+    assert.deepEqual(fresh, { value: 3 });
+    assert.deepEqual(Object.keys(data.entries).sort(), ['fresh']);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('dashboard section cache can prune expired persisted entries without loading a fresh value', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-section-cache-'));
+  const filePath = path.join(tempDir, 'cache.json');
+
+  try {
+    const firstCache = createDashboardSectionCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z')
+    });
+
+    await firstCache.getOrLoad('expired', async () => ({ value: 1 }));
+
+    const secondCache = createDashboardSectionCache({
+      filePath,
+      now: () => Date.parse('2026-06-16T00:00:00.000Z')
+    });
+    const pruned = await secondCache.pruneExpired();
+    const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+    assert.equal(pruned, true);
+    assert.deepEqual(data.entries, {});
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

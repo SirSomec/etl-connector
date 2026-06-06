@@ -318,7 +318,7 @@ test('loadSalesByProjectDashboardSection loads and caches summary independently'
     'sales by project shifts summary'
   ]);
 
-  timestamp += 10 * 60 * 60 * 1000 + 1;
+  timestamp = Date.parse('2026-06-02T00:00:00.000Z');
 
   await loadSalesByProjectDashboardSection(
     client,

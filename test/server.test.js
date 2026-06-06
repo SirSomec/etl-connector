@@ -5,7 +5,14 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const { activeNavForPath, createApp, sanitizeForResponse, start } = require('../src/server');
+const {
+  activeNavForPath,
+  createApp,
+  millisecondsUntilNextUtcDay,
+  sanitizeForResponse,
+  scheduleDailyCacheCleanup,
+  start
+} = require('../src/server');
 
 function baseConfig() {
   return {
@@ -411,6 +418,74 @@ function formBody(values) {
 function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
 }
+
+function flushMicrotasks() {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+test('millisecondsUntilNextUtcDay returns delay to next UTC midnight', () => {
+  assert.equal(
+    millisecondsUntilNextUtcDay(new Date('2026-06-15T10:00:00.000Z')),
+    14 * 60 * 60 * 1000
+  );
+  assert.equal(millisecondsUntilNextUtcDay(new Date('2026-06-15T23:59:59.999Z')), 1);
+});
+
+test('scheduleDailyCacheCleanup prunes caches on start and schedules UTC midnight cleanup', async () => {
+  let nowValue = new Date('2026-06-15T10:00:00.000Z');
+  const pruneCalls = [];
+  const timers = [];
+  const clearedTimers = [];
+  const cleanup = scheduleDailyCacheCleanup({
+    caches: [
+      {
+        async pruneExpired(current) {
+          pruneCalls.push(current.toISOString());
+        }
+      }
+    ],
+    now: () => nowValue,
+    setTimeoutFn(callback, delay) {
+      const timer = {
+        callback,
+        delay,
+        unrefCalled: false,
+        unref() {
+          this.unrefCalled = true;
+        }
+      };
+
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutFn(timer) {
+      clearedTimers.push(timer);
+    },
+    logger: {
+      warn() {}
+    }
+  });
+
+  await flushMicrotasks();
+
+  assert.deepEqual(pruneCalls, ['2026-06-15T10:00:00.000Z']);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 14 * 60 * 60 * 1000);
+  assert.equal(timers[0].unrefCalled, true);
+
+  nowValue = new Date('2026-06-16T00:00:00.000Z');
+  await timers[0].callback();
+
+  assert.deepEqual(pruneCalls, ['2026-06-15T10:00:00.000Z', '2026-06-16T00:00:00.000Z']);
+  assert.equal(timers.length, 2);
+  assert.equal(timers[1].delay, 24 * 60 * 60 * 1000);
+
+  cleanup.stop();
+
+  assert.deepEqual(clearedTimers, [timers[1]]);
+});
 
 test('GET / renders available tables from metadata', async () => {
   const client = createFakeClient();

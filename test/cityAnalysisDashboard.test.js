@@ -462,7 +462,7 @@ test('loadCityAnalysisDashboardShell keeps selected city page light', async () =
   assert.equal(Object.prototype.hasOwnProperty.call(calls[1].params, 'param_salary_from'), false);
 });
 
-test('loadCityAnalysisDashboardSection loads small summary fragments and caches them for a day', async () => {
+test('loadCityAnalysisDashboardSection keeps cached fragments until the end of the UTC day', async () => {
   let timestamp = Date.parse('2026-06-15T10:00:00.000Z');
   const cache = createCityAnalysisCache({ now: () => timestamp });
   const calls = [];
@@ -507,7 +507,17 @@ test('loadCityAnalysisDashboardSection loads small summary fragments and caches 
   assert.equal(calls[0].params.param_clients, "['Brand A']");
   assert.equal(calls[0].query.includes('appmetrica_sessions'), false);
 
-  timestamp += 24 * 60 * 60 * 1000 + 1;
+  timestamp = Date.parse('2026-06-15T23:59:59.999Z');
+
+  await loadCityAnalysisDashboardSection(
+    client,
+    input,
+    'summary-demand',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { cache }
+  );
+
+  timestamp = Date.parse('2026-06-16T00:00:00.000Z');
 
   await loadCityAnalysisDashboardSection(
     client,
@@ -564,6 +574,61 @@ test('loadCityAnalysisDashboardSection can reuse persisted city cache after cach
     assert.equal(restored.summary.orderedShifts, 41);
     assert.equal(restored.summary.activeOrderRequests, 9);
     assert.deepEqual(calls.map((call) => call.operation), ['city analysis summary demand']);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('city analysis cache prunes expired persisted entries after UTC midnight', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'city-analysis-cache-'));
+  const filePath = path.join(tempDir, 'cache.json');
+  let loads = 0;
+
+  try {
+    const firstCache = createCityAnalysisCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z')
+    });
+
+    await firstCache.getOrLoad('expired-a', async () => ({ value: ++loads }));
+    await firstCache.getOrLoad('expired-b', async () => ({ value: ++loads }));
+
+    const secondCache = createCityAnalysisCache({
+      filePath,
+      now: () => Date.parse('2026-06-16T09:00:00.000Z')
+    });
+
+    const fresh = await secondCache.getOrLoad('fresh', async () => ({ value: ++loads }));
+    const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+    assert.deepEqual(fresh, { value: 3 });
+    assert.deepEqual(Object.keys(data.entries).sort(), ['fresh']);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('city analysis cache can prune expired persisted entries without loading a fresh value', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'city-analysis-cache-'));
+  const filePath = path.join(tempDir, 'cache.json');
+
+  try {
+    const firstCache = createCityAnalysisCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z')
+    });
+
+    await firstCache.getOrLoad('expired', async () => ({ value: 1 }));
+
+    const secondCache = createCityAnalysisCache({
+      filePath,
+      now: () => Date.parse('2026-06-16T00:00:00.000Z')
+    });
+    const pruned = await secondCache.pruneExpired();
+    const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+    assert.equal(pruned, true);
+    assert.deepEqual(data.entries, {});
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

@@ -5445,8 +5445,45 @@ function renderAttentionReason(reason) {
   return `<span class="attention-reason attention-reason-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
 }
 
-function renderAttentionReasons(reasons) {
-  const items = safeRows(reasons)
+function fallbackAttentionReasons(point = {}) {
+  const free7d = Number(point.free7d) || 0;
+  const ordered7d = Number(point.ordered7d) || 0;
+  const covered7d = Number(point.covered7d) || 0;
+  const maxDailyFree = Number(point.maxDailyFree) || 0;
+  const activeWorkers30d15km = Number(point.activeWorkers30d15km) || 0;
+  const explicitCoveragePercent = Number(point.coveragePercent);
+  const explicitActivePerFree = Number(point.activeWorkersPerFreeShift);
+  const coveragePercent = Number.isFinite(explicitCoveragePercent)
+    ? explicitCoveragePercent
+    : (ordered7d > 0 ? covered7d / ordered7d * 100 : 0);
+  const activePerFree = Number.isFinite(explicitActivePerFree)
+    ? explicitActivePerFree
+    : (free7d > 0 ? activeWorkers30d15km / free7d : 0);
+  const reasons = [];
+
+  if (free7d > 0) {
+    reasons.push({ kind: 'free-order', label: `Свободный заказ ${formatNumber(free7d)} за 7 дней` });
+  }
+
+  if ((ordered7d > 0 || Number.isFinite(explicitCoveragePercent)) && coveragePercent < 70) {
+    reasons.push({ kind: 'coverage', label: `Покрытие ${formatNumber(coveragePercent)}%` });
+  }
+
+  if (free7d > 0 && activePerFree < 1) {
+    reasons.push({ kind: 'active-base', label: `Актив ${formatNumber(activePerFree, 1)} на свободную смену` });
+  }
+
+  if (maxDailyFree >= 3) {
+    reasons.push({ kind: 'peak-day', label: `Пик ${formatNumber(maxDailyFree)} свободных смен в день` });
+  }
+
+  return reasons;
+}
+
+function renderAttentionReasons(reasons, point = {}) {
+  const explicitReasons = safeRows(reasons);
+  const effectiveReasons = explicitReasons.length > 0 ? explicitReasons : fallbackAttentionReasons(point);
+  const items = effectiveReasons
     .map(renderAttentionReason)
     .filter((item) => item !== '')
     .join('');
@@ -5651,7 +5688,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
           activeWorkersDetailUrl
         )}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
-        <td class="attention-reason-cell"><div class="attention-reasons">${renderAttentionReasons(point.riskReasons)}</div></td>
+        <td class="attention-reason-cell"><div class="attention-reasons">${renderAttentionReasons(point.riskReasons, point)}</div></td>
       </tr>`;
       }).join('')}
     </tbody>
@@ -5841,7 +5878,7 @@ function renderWorkerCancellationsTable(rows, filters, pagination, currentUser) 
           }
 
           if (column.key === 'riskReasons') {
-            return `<td><div class="attention-reasons">${renderAttentionReasons(row.riskReasons)}</div></td>`;
+            return `<td><div class="attention-reasons">${renderAttentionReasons(row.riskReasons, row)}</div></td>`;
           }
 
           const classAttribute = column.key === 'phone' ? ' class="phone-cell"' : '';

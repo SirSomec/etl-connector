@@ -13,6 +13,7 @@ const {
   renderHome,
   renderPreloadManagement,
   renderSalesByProjectDashboard,
+  renderSalesByProjectDashboardSection,
   renderTable,
   renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
@@ -305,6 +306,79 @@ test('admin-only activity navigation is visible only to admins', () => {
   assert.doesNotMatch(analystHtml, /href="\/admin\/activity"/);
 });
 
+test('renderWorkplaceAnalysisDashboard renders unified dashboard header and active filter chips', () => {
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        rangeDays: 15,
+        client: ['Brand A'],
+        city: ['Москва'],
+        region: [],
+        profession: ['Комплектовщик'],
+        orderType: ['regular'],
+        jobStatus: [],
+        contractor: [],
+        search: 'Ленина',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        sort: 'orders',
+        limit: 12,
+        page: 1,
+        pinnedWorkplaceIds: []
+      },
+      filterOptions: {
+        client: ['Brand A'],
+        city: ['Москва'],
+        region: [],
+        profession: ['Комплектовщик'],
+        orderType: ['regular'],
+        jobStatus: [],
+        contractor: []
+      },
+      context: { sortLabel: 'по заказу' },
+      points: [],
+      attentionPoints: [],
+      pagination: { page: 1, limit: 12, totalWorkplaces: 0, totalPages: 1, hasPrevious: false, hasNext: false },
+      attentionPagination: { page: 1, pageSize: 15, totalWorkplaces: 0, totalPages: 1, hasPrevious: false, hasNext: false }
+    }
+  });
+
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /dashboard-eyebrow/);
+  assert.match(html, /Анализ точек/);
+  assert.match(html, /Период: 2026-06-01 - 2026-06-15/);
+  assert.match(html, /active-filter-chips/);
+  assert.match(html, /Brand A/);
+  assert.match(html, /Москва/);
+  assert.match(html, /Комплектовщик/);
+  assert.match(html, /Ленина/);
+});
+
+test('renderWorkerCancellationsDashboard renders unified loading state', () => {
+  const html = renderWorkerCancellationsDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        page: 1,
+        pageSize: 100,
+        sort: 'workerCancellations24h',
+        direction: 'desc'
+      }
+    }
+  });
+
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /dashboard-loading-state/);
+  assert.match(html, /Загружается/);
+});
+
 test('renderWorkerCancellationsDashboard renders filters and progressive table loading state', () => {
   const html = renderWorkerCancellationsDashboard({
     database: 'etl',
@@ -321,7 +395,8 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
     }
   });
 
-  assert.match(html, /<h1>Отмены гигерами<\/h1>/);
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /Отмены гигерами/);
   assert.match(html, /class="nav-link active" href="\/dashboards\/worker-cancellations"/);
   assert.match(html, /<form class="filter-bar" action="\/dashboards\/worker-cancellations" method="get">/);
   assert.match(html, /<input id="from" name="from" type="date" value="2026-05-01">/);
@@ -438,6 +513,54 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
   assert.match(html, /Страница 1 из 3 · исполнителей: 125/);
   assert.match(html, /page=2/);
   assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerCancellationsDashboardSection renders operational risk columns with detail triggers and full phone', () => {
+  const html = renderWorkerCancellationsDashboardSection({
+    section: 'workers',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        pageSize: 50,
+        sort: 'workerCancellations24h',
+        direction: 'desc'
+      },
+      rows: [
+        {
+          workerId: 'worker-1',
+          fullName: 'Ivan Petrov',
+          phone: '+79990000000',
+          city: 'Moscow',
+          confirmedShifts: 10,
+          workerCancellations: 3,
+          workerCancellations24h: 3,
+          postStartCancellations: 1,
+          failedShifts: 0,
+          riskSeverity: 'high',
+          riskReasons: [
+            { kind: 'worker-cancellations-24h', label: '3 отмены менее чем за 24ч' },
+            { kind: 'post-start-cancellations', label: '1 отмена после старта' }
+          ]
+        }
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 50,
+        totalWorkers: 1,
+        totalPages: 1,
+        hasPrevious: false,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /risk-badge risk-high/);
+  assert.match(html, /3 отмены менее чем за 24ч/);
+  assert.match(html, /1 отмена после старта/);
+  assert.match(html, /data-worker-cancellation-detail-trigger/);
+  assert.match(html, /<td class="phone-cell">\+79990000000<\/td>/);
 });
 
 test('renderWorkerCancellationsDashboardSection preserves search and numeric filters in table links', () => {
@@ -836,6 +959,196 @@ test('renderSalesByProjectDashboard escapes values and renders metrics', () => {
   assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>bad<\/script>/);
   assert.match(html, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
+});
+
+test('renderSalesByProjectDashboard renders mini trends from existing trend rows in KPI cards', () => {
+  const dashboard = {
+    filters: {
+      period: 'day',
+      from: '2026-04-01',
+      to: '2026-04-03'
+    },
+    summary: {
+      orderedShifts: 33,
+      workedShifts: 24,
+      slaPercent: 72.7,
+      revenueRub: 25000,
+      uniqueWorkers: 12,
+      workplacesWithOrders: 4,
+      workplacesWithWorkedShifts: 3,
+      cancelledShifts: 2,
+      selfBookingPercent: 40,
+      avgWorkerRateHour: 350
+    },
+    trendRows: [
+      {
+        period: '2026-04-01',
+        orderedShifts: 10,
+        workedShifts: 7,
+        slaPercent: 70,
+        revenueRub: 7000,
+        cancelledShifts: 1
+      },
+      {
+        period: '2026-04-02',
+        orderedShifts: 8,
+        workedShifts: 6,
+        slaPercent: 75,
+        revenueRub: 6000,
+        cancelledShifts: 0
+      },
+      {
+        period: '2026-04-03',
+        orderedShifts: 15,
+        workedShifts: 11,
+        slaPercent: 73.3,
+        revenueRub: 12000,
+        cancelledShifts: 1
+      }
+    ],
+    brandRows: [],
+    statusRows: []
+  };
+  const html = renderSalesByProjectDashboard({ database: 'etl', dashboard });
+
+  assert.match(html, /class="mini-trend"/);
+  assert.match(html, /<polyline/);
+  assert.match(html, /aria-label="Динамика заказанных смен"/);
+  assert.match(html, /aria-label="Динамика выполненных смен"/);
+  assert.match(html, /data-mini-trend-target="orderedShifts"/);
+  assert.match(html, /data-mini-trend-target="workedShifts"/);
+  assert.match(html, /data-sales-trend-row data-ordered-shifts="10" data-worked-shifts="7"/);
+  assert.equal(countOccurrences(html, 'class="mini-trend"'), 2);
+
+  const onePointHtml = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      ...dashboard,
+      trendRows: dashboard.trendRows.slice(0, 1)
+    }
+  });
+
+  assert.doesNotMatch(onePointHtml, /class="mini-trend"/);
+});
+
+test('renderSalesByProjectDashboard progressive shell can hydrate KPI mini trends from trend fragment', () => {
+  const shellHtml = renderSalesByProjectDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-06-30'
+      },
+      summary: {},
+      trendRows: [],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+  const summaryHtml = renderSalesByProjectDashboardSection({
+    section: 'summary',
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-06-30'
+      },
+      summary: {
+        orderedShifts: 60,
+        workedShifts: 42
+      },
+      trendRows: [],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+  const trendHtml = renderSalesByProjectDashboardSection({
+    section: 'trend',
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-06-30'
+      },
+      summary: {},
+      trendRows: [
+        { period: '2026-04-01', orderedShifts: 10, workedShifts: 7 },
+        { period: '2026-05-01', orderedShifts: 20, workedShifts: 15 },
+        { period: '2026-06-01', orderedShifts: 30, workedShifts: 20 }
+      ],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(shellHtml, /data-dashboard-fragment-url="\/dashboards\/sales-by-project\/section\?section=summary/);
+  assert.match(shellHtml, /hydrateSalesMiniTrends/);
+  assert.match(summaryHtml, /data-mini-trend-target="orderedShifts"/);
+  assert.match(summaryHtml, /data-mini-trend-target="workedShifts"/);
+  assert.match(trendHtml, /data-sales-trend-row data-ordered-shifts="10" data-worked-shifts="7"/);
+});
+
+test('renderSalesByProjectDashboard normalizes invalid mini trend values', () => {
+  const html = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        period: 'day',
+        from: '2026-04-01',
+        to: '2026-04-06'
+      },
+      summary: {
+        orderedShifts: 8,
+        workedShifts: 5,
+        slaPercent: 62.5,
+        revenueRub: 5000,
+        uniqueWorkers: 4,
+        workplacesWithOrders: 2,
+        workplacesWithWorkedShifts: 2,
+        cancelledShifts: 1,
+        selfBookingPercent: 25,
+        avgWorkerRateHour: 300
+      },
+      trendRows: [
+        null,
+        {
+          period: '2026-04-01',
+          orderedShifts: Infinity,
+          workedShifts: -Infinity,
+          slaPercent: 0,
+          revenueRub: 0,
+          cancelledShifts: 0
+        },
+        {
+          period: '2026-04-02',
+          orderedShifts: 'not-a-number',
+          workedShifts: 'bad',
+          slaPercent: 0,
+          revenueRub: 0,
+          cancelledShifts: 0
+        },
+        {
+          period: '2026-04-03',
+          orderedShifts: '8',
+          workedShifts: 5,
+          slaPercent: 62.5,
+          revenueRub: 5000,
+          cancelledShifts: 1
+        }
+      ],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(html, /class="mini-trend"/);
+  assert.match(html, /<polyline/);
+  assert.equal(countOccurrences(html, 'class="mini-trend"'), 2);
+  assert.doesNotMatch(html, /NaN/);
+  assert.doesNotMatch(html, /Infinity/);
+  assert.doesNotMatch(html, /-Infinity/);
 });
 
 test('renderSalesByProjectDashboard shows SQL inspector only with permission', () => {
@@ -1365,7 +1678,8 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
           activeWorkersPerFreeShift: 0.5,
           activeWorkers30dByStatus15km: { ready: 2, booked: 1, worked: 0, other: 0 },
           totalWorkersByStatus15km: { ready: 8, booked: 2, worked: 1, other: 9 },
-          priorityReason: 'пик в ближайшие дни'
+          riskSeverity: 'medium',
+          riskReasons: [{ kind: 'free-order', label: 'пик в ближайшие дни' }]
         }
       ]
     }
@@ -1392,6 +1706,73 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
     /data-detail-url="\/dashboards\/workplace-analysis\/gigers\?[^"]*metric=attention-active-workers-30d-15km[^"]*status=ready[^"]*workplaceId=wp1/
   );
   assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
+});
+
+test('renderWorkplaceAnalysisDashboardSection renders attention risk badges, reasons, and detail links', () => {
+  const html = renderWorkplaceAnalysisDashboardSection({
+    section: 'attention',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        search: '',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        attentionPage: 1,
+        attentionPageSize: 15,
+        attentionSort: 'free7d',
+        attentionDirection: 'desc'
+      },
+      attentionPoints: [
+        {
+          workplaceId: 'wp-risk',
+          title: 'Точка риска',
+          clientTitle: 'Brand A',
+          address: 'Москва, Ленина 1',
+          free7d: 9,
+          ordered7d: 12,
+          covered7d: 3,
+          coveragePercent: 25,
+          maxDailyFree: 6,
+          nearestFreeDate: '2026-06-04',
+          activeWorkers30d15km: 2,
+          activeWorkersPerFreeShift: 0.2,
+          riskSeverity: 'high',
+          riskScore: 90,
+          attentionDetailDate: '2026-06-04',
+          riskReasons: [
+            { kind: 'free-order', label: 'Свободный заказ 9 за 7 дней' },
+            { kind: 'coverage', label: 'Покрытие 25%' },
+            { kind: 'active-base', label: 'Актив 0,2 на свободную смену' }
+          ]
+        }
+      ],
+      attentionPagination: {
+        page: 1,
+        pageSize: 15,
+        totalWorkplaces: 1,
+        totalPages: 1,
+        hasPrevious: false,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /risk-badge risk-high/);
+  assert.match(html, /Высокий/);
+  assert.match(html, /Свободный заказ 9 за 7 дней/);
+  assert.match(html, /Покрытие 25%/);
+  assert.match(html, /Актив 0,2 на свободную смену/);
+  assert.match(html, /\/dashboards\/workplace-analysis\/point\?workplaceId=wp-risk/);
+  assert.match(html, /2026-06-04/);
+  assert.doesNotMatch(html, /<html/);
 });
 
 test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention table without horizontal scroll', () => {
@@ -1641,6 +2022,83 @@ test('renderWorkplaceAnalysisDashboard renders pin checkboxes and preserves pinn
   assert.match(html, /<input name="pinnedWorkplaceId" type="checkbox" value="wp1" checked onchange="this\.form\.submit\(\)">/);
   assert.match(html, /<input name="pinnedWorkplaceId" type="checkbox" value="wp2" onchange="this\.form\.submit\(\)">/);
   assert.match(html, /href="\/dashboards\/workplace-analysis\?from=2026-06-01&amp;to=2026-06-03&amp;pinnedWorkplaceId=wp1&amp;client=Brand\+A&amp;profession=picker&amp;limit=10&amp;page=2">/);
+});
+
+test('renderWorkplacePointDashboard renders unified header and preserves point calendar actions', () => {
+  const html = renderWorkplacePointDashboard({
+    database: 'etl',
+    progressive: false,
+    dashboard: {
+      filters: {
+        workplaceId: 'wp-risk',
+        from: '2026-06-01',
+        to: '2026-06-15',
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        salaryFrom: null,
+        salaryTo: null,
+        includeDeletedOrders: false,
+        includeHiddenOrders: false
+      },
+      currentDate: '2026-06-04',
+      point: {
+        workplaceId: 'wp-risk',
+        title: 'Точка риска',
+        clientTitle: 'Brand A',
+        address: 'Москва, Ленина 1'
+      },
+      summary: {
+        orderedShifts: 12,
+        completedShifts: 3,
+        slaPercent: 25,
+        stabilityPercent: 40,
+        uniqueCompletedWorkers: 3,
+        uniqueBookedWorkers: 4,
+        ratingAvg: 4.2,
+        ratingCount: 5,
+        dropoffs24h: 2,
+        radius5km: 2,
+        radius10km: 4,
+        radius15km: 8,
+        radius20km: 12
+      },
+      dailyRows: [
+        {
+          date: '2026-06-04',
+          period: '2026-06-04',
+          orderedShifts: 6,
+          completedShifts: 1,
+          slaPercent: 16.666,
+          dropoffs24h: 2,
+          orderLeadAvgMinutes: 60,
+          orderLeadMinMinutes: 20
+        }
+      ],
+      professionRows: []
+    }
+  });
+
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /Карточка точки/);
+  assert.match(html, /Точка риска/);
+  assert.match(html, /Москва, Ленина 1/);
+  assert.match(html, /data-workplace-point-day-detail-trigger/);
+  assert.match(html, /data-sla-level="1"[^>]*data-risk-level="high"/);
+  assert.match(html, /data-risk-level="high"/);
+  assert.match(html, /2026-06-04/);
+
+  const lastSlaRuleIndex = html.indexOf('.point-calendar-cell[data-sla-level="5"]');
+  const highRiskRuleIndex = html.indexOf('.point-calendar-cell[data-risk-level="high"]');
+  const mediumRiskRuleIndex = html.indexOf('.point-calendar-cell[data-risk-level="medium"]');
+
+  assert.ok(lastSlaRuleIndex > -1);
+  assert.ok(highRiskRuleIndex > lastSlaRuleIndex);
+  assert.ok(mediumRiskRuleIndex > lastSlaRuleIndex);
 });
 
 test('renderWorkplacePointDashboard renders filters, point metrics, and compact charts', () => {

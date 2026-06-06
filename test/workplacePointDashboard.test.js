@@ -1094,7 +1094,11 @@ test('loadWorkplacePointDashboardShell loads metadata and filters only', async (
       calls.push({ query, params, operation });
 
       if (operation === 'workplace point metadata') {
-        return [{ workplace_id: 'wp1', workplace_title: 'Point 1', client_title: 'Brand' }];
+        return [{ workplace_id: 'wp1', workplace_title: 'Point 1', client_id: 'client-1' }];
+      }
+
+      if (operation === 'workplace point metadata client') {
+        return [{ client_title: 'Brand' }];
       }
 
       if (operation === 'workplace point filter options') {
@@ -1124,9 +1128,11 @@ test('loadWorkplacePointDashboardShell loads metadata and filters only', async (
 
   assert.deepEqual(calls.map((call) => call.operation), [
     'workplace point metadata',
+    'workplace point metadata client',
     'workplace point filter options'
   ]);
   assert.equal(dashboard.point.title, 'Point 1');
+  assert.equal(dashboard.point.clientTitle, 'Brand');
   assert.deepEqual(dashboard.filterOptions.profession, ['picker']);
   assert.deepEqual(dashboard.filters.profession, ['picker']);
   assert.deepEqual(dashboard.filters.orderType, ['regular']);
@@ -1134,6 +1140,61 @@ test('loadWorkplacePointDashboardShell loads metadata and filters only', async (
   assert.equal(dashboard.summary.orderedShifts, 0);
   assert.deepEqual(dashboard.dailyRows, []);
   assert.deepEqual(dashboard.professionRows, []);
+});
+
+test('loadWorkplacePointDashboardShell uses directory cache metadata before live metadata', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point metadata') {
+        throw new Error('Live metadata should not be called');
+      }
+
+      if (operation === 'workplace point filter options') {
+        return [
+          { filter: 'profession', value: 'picker' }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const workplaceDirectoryCache = {
+    async getById(cacheClient, workplaceId) {
+      assert.equal(cacheClient, client);
+      assert.equal(workplaceId, 'wp1');
+
+      return {
+        workplaceId: 'wp1',
+        title: 'Cached point',
+        technicalName: 'cached-technical',
+        clientTitle: 'Cached brand',
+        region: 'Region',
+        city: 'City',
+        street: 'Street'
+      };
+    }
+  };
+
+  const dashboard = await loadWorkplacePointDashboardShell(
+    client,
+    {
+      workplaceId: 'wp1',
+      from: '2026-06-01',
+      to: '2026-06-30',
+      profession: 'picker'
+    },
+    new Date('2026-06-15T12:00:00.000Z'),
+    { workplaceDirectoryCache }
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), ['workplace point filter options']);
+  assert.equal(dashboard.point.title, 'Cached point');
+  assert.equal(dashboard.point.clientTitle, 'Cached brand');
+  assert.equal(dashboard.point.address, 'City, Street');
+  assert.deepEqual(dashboard.filters.profession, ['picker']);
 });
 
 test('loadWorkplacePointDashboardSection loads and caches summary, charts, and radius independently', async () => {

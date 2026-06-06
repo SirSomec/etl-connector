@@ -175,6 +175,83 @@ function renderMetricPanelHead(title, metricId, currentUser) {
 </div>`;
 }
 
+function renderDashboardHeader({
+  title,
+  eyebrow = 'Дашборд',
+  period = '',
+  details = []
+}) {
+  const detailItems = [period, ...details]
+    .filter((item) => String(item || '').trim() !== '')
+    .map((item) => `<span>${escapeHtml(item)}</span>`)
+    .join('');
+
+  return `<div class="dashboard-header">
+  <div>
+    <div class="dashboard-eyebrow">${escapeHtml(eyebrow)}</div>
+    <h1>${escapeHtml(title)}</h1>
+  </div>
+  ${detailItems ? `<div class="dashboard-meta">${detailItems}</div>` : ''}
+</div>`;
+}
+
+function activeFilterChipItems(filters = {}) {
+  const items = [];
+  const pushArray = (label, values) => {
+    for (const value of Array.isArray(values) ? values : []) {
+      if (String(value || '').trim() !== '') {
+        items.push(`${label}: ${value}`);
+      }
+    }
+  };
+
+  pushArray('Бренд', filters.client);
+  pushArray('Город', filters.city);
+  pushArray('Регион', filters.region);
+  pushArray('Профессия', filters.profession);
+  pushArray('Тип заказа', (filters.orderType || []).map(orderTypeLabel));
+  pushArray('Статус', filters.jobStatus);
+  pushArray('Контрагент', filters.contractor);
+
+  if (String(filters.search || '').trim() !== '') {
+    items.push(`Поиск: ${filters.search}`);
+  }
+
+  if (filters.includeDeletedOrders) {
+    items.push('Удаленные включены');
+  }
+
+  if (filters.includeHiddenOrders) {
+    items.push('Скрытые включены');
+  }
+
+  return items;
+}
+
+function renderActiveFilterChips(filters = {}) {
+  const items = activeFilterChipItems(filters);
+
+  if (items.length === 0) {
+    return '<div class="active-filter-chips"><span class="filter-chip muted-chip">Фильтры не выбраны</span></div>';
+  }
+
+  return `<div class="active-filter-chips">${items
+    .map((item) => `<span class="filter-chip">${escapeHtml(item)}</span>`)
+    .join('')}</div>`;
+}
+
+function renderDashboardLoadingState(label = 'Загружается') {
+  return `<div class="dashboard-loading-state"><p class="loading">${escapeHtml(label)}</p></div>`;
+}
+
+function renderDashboardEmptyState(label) {
+  return `<div class="dashboard-empty-state"><p class="empty">${escapeHtml(label)}</p></div>`;
+}
+
+function renderDashboardErrorState(message) {
+  return `<div class="dashboard-error-state"><div class="error">${escapeHtml(message)}</div></div>`;
+}
+
 function layout({
   title,
   database,
@@ -409,6 +486,72 @@ function layout({
     h2 {
       font-size: 20px;
       line-height: 1.25;
+    }
+
+    .dashboard-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px 18px;
+      margin-bottom: 12px;
+    }
+
+    .dashboard-eyebrow {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .dashboard-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dashboard-meta span {
+      overflow-wrap: anywhere;
+    }
+
+    .active-filter-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: -6px 0 14px;
+    }
+
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid #c7d4df;
+      border-radius: 999px;
+      background: #f6f9fb;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .muted-chip {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .dashboard-loading-state,
+    .dashboard-empty-state,
+    .dashboard-error-state {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
     }
 
     p {
@@ -1282,15 +1425,19 @@ function layout({
     }
 
     .attention-point-cell {
-      width: 20%;
+      width: 18%;
+    }
+
+    .attention-risk-cell {
+      width: 8%;
     }
 
     .attention-stack-cell {
-      width: 13%;
+      width: 12%;
     }
 
     .attention-reason-cell {
-      width: 12%;
+      width: 14%;
     }
 
     .attention-table .muted {
@@ -1333,6 +1480,56 @@ function layout({
     .attention-status-line,
     .attention-profession-line {
       display: block;
+    }
+
+    .risk-badge,
+    .attention-reason {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .risk-high {
+      border-color: #d49386;
+      background: #fff0ed;
+      color: #9f2a1d;
+    }
+
+    .risk-medium {
+      border-color: #ddbf75;
+      background: #fff8e6;
+      color: #7a5400;
+    }
+
+    .risk-low {
+      border-color: #a8cdb6;
+      background: #effaf3;
+      color: #24613a;
+    }
+
+    .attention-reasons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .attention-reason {
+      background: #f6f9fb;
+      color: var(--text);
+      font-weight: 600;
+      white-space: normal;
+    }
+
+    .attention-reason-muted {
+      color: var(--muted);
+      font-weight: 400;
     }
 
     .phone-cell,
@@ -2140,7 +2337,7 @@ function layout({
       display: grid;
       grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 5px;
-      min-width: 0;
+      min-width: 560px;
     }
 
     .point-calendar-weekdays {
@@ -2217,6 +2414,16 @@ function layout({
     .point-calendar-cell[data-sla-level="5"] {
       border-color: rgba(34, 197, 94, 0.30);
       background: rgba(34, 197, 94, 0.18);
+    }
+
+    .point-calendar-cell[data-risk-level="high"] {
+      border-color: #d49386;
+      background: #fff7f5;
+    }
+
+    .point-calendar-cell[data-risk-level="medium"] {
+      border-color: #ddbf75;
+      background: #fffaf0;
     }
 
     .point-calendar-cell.is-current-day {
@@ -2297,6 +2504,15 @@ function layout({
 
     .mini-chart-fill.secondary {
       background: #4b5563;
+    }
+
+    .mini-trend {
+      display: block;
+      width: 100%;
+      max-width: 140px;
+      height: 36px;
+      margin-top: 8px;
+      color: var(--accent);
     }
 
     .compact-value-list {
@@ -2846,11 +3062,86 @@ function renderWorkplaceSuggestScript() {
 function renderDashboardProgressiveScript() {
   return `<script>
 (function () {
+  function normalizeTrendValue(value) {
+    var number = Number(value);
+
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function miniTrendSvg(values, label) {
+    if (values.length < 2) {
+      return '';
+    }
+
+    var width = 140;
+    var height = 36;
+    var paddingX = 2;
+    var paddingY = 3;
+    var chartWidth = width - paddingX * 2;
+    var chartHeight = height - paddingY * 2;
+    var minValue = Math.min.apply(Math, values);
+    var maxValue = Math.max.apply(Math, values);
+    var range = maxValue - minValue;
+    var points = values.map(function (value, index) {
+      var x = paddingX + (chartWidth * index) / (values.length - 1);
+      var y = range === 0
+        ? height / 2
+        : paddingY + ((maxValue - value) / range) * chartHeight;
+
+      return x.toFixed(2).replace(/\\.?0+$/, '') + ',' + y.toFixed(2).replace(/\\.?0+$/, '');
+    }).join(' ');
+
+    return '<svg class="mini-trend" viewBox="0 0 140 36" role="img" aria-label="Динамика ' + label + '">'
+      + '<polyline points="' + points + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>'
+      + '</svg>';
+  }
+
+  function hydrateSalesMiniTrends() {
+    var trendRows = Array.prototype.slice.call(document.querySelectorAll('[data-sales-trend-row]'));
+
+    if (trendRows.length < 2) {
+      return;
+    }
+
+    document.querySelectorAll('[data-mini-trend-target]').forEach(function (card) {
+      var target = card.getAttribute('data-mini-trend-target');
+      var label = card.getAttribute('data-mini-trend-label') || '';
+      var attribute = target === 'workedShifts' ? 'data-worked-shifts' : 'data-ordered-shifts';
+      var values = trendRows.map(function (row) {
+        return normalizeTrendValue(row.getAttribute(attribute));
+      });
+      var svg = miniTrendSvg(values, label);
+      var valueNode;
+      var subvalue;
+
+      if (svg === '') {
+        return;
+      }
+
+      subvalue = card.querySelector('.kpi-subvalue');
+
+      if (!subvalue) {
+        valueNode = card.querySelector('.kpi-value');
+        subvalue = document.createElement('div');
+        subvalue.className = 'kpi-subvalue';
+
+        if (valueNode && valueNode.parentNode) {
+          valueNode.parentNode.insertBefore(subvalue, valueNode.nextSibling);
+        } else {
+          card.appendChild(subvalue);
+        }
+      }
+
+      subvalue.innerHTML = svg;
+    });
+  }
+
   function replaceWithHtml(root, html) {
     var template = document.createElement('template');
 
     template.innerHTML = html;
     root.replaceWith(template.content);
+    hydrateSalesMiniTrends();
 
     if (typeof window.initHeatmapLeafletMaps === 'function') {
       window.initHeatmapLeafletMaps();
@@ -3989,18 +4280,28 @@ function renderKpiGrid(cards, currentUser) {
     .join('')}</div>`;
 }
 
-function renderKpiCards(summary, currentUser) {
+function renderKpiCards(summary, currentUser, trendRows = []) {
   const cards = [
-    ['Заказано смен', formatNumber(summary.orderedShifts)],
-    ['Отработано смен', formatNumber(summary.workedShifts)],
-    ['SLA', formatPercent(summary.slaPercent)],
-    ['Выручка, руб.', formatNumber(summary.revenueRub)],
-    ['Уникальные исполнители', formatNumber(summary.uniqueWorkers)],
-    ['ТТ с заказами', formatNumber(summary.workplacesWithOrders)],
-    ['ТТ с выполненными сменами', formatNumber(summary.workplacesWithWorkedShifts)],
-    ['Отмены', formatNumber(summary.cancelledShifts)],
-    ['Самоброни', formatPercent(summary.selfBookingPercent)],
-    ['Средняя ставка в час', formatNumber(summary.avgWorkerRateHour)]
+    {
+      label: 'Заказано смен',
+      value: formatNumber(summary.orderedShifts),
+      detailHtml: renderMiniTrend(trendRows, 'orderedShifts', 'заказанных смен'),
+      attributes: 'data-mini-trend-target="orderedShifts" data-mini-trend-label="заказанных смен"'
+    },
+    {
+      label: 'Отработано смен',
+      value: formatNumber(summary.workedShifts),
+      detailHtml: renderMiniTrend(trendRows, 'workedShifts', 'выполненных смен'),
+      attributes: 'data-mini-trend-target="workedShifts" data-mini-trend-label="выполненных смен"'
+    },
+    { label: 'SLA', value: formatPercent(summary.slaPercent) },
+    { label: 'Выручка, руб.', value: formatNumber(summary.revenueRub) },
+    { label: 'Уникальные исполнители', value: formatNumber(summary.uniqueWorkers) },
+    { label: 'ТТ с заказами', value: formatNumber(summary.workplacesWithOrders) },
+    { label: 'ТТ с выполненными сменами', value: formatNumber(summary.workplacesWithWorkedShifts) },
+    { label: 'Отмены', value: formatNumber(summary.cancelledShifts) },
+    { label: 'Самоброни', value: formatPercent(summary.selfBookingPercent) },
+    { label: 'Средняя ставка в час', value: formatNumber(summary.avgWorkerRateHour) }
   ];
 
   const metricIds = [
@@ -4017,9 +4318,11 @@ function renderKpiCards(summary, currentUser) {
   ];
 
   return renderKpiGrid(
-    cards.map(([label, value], index) => ({
-      label,
-      value,
+    cards.map((card, index) => ({
+      label: card.label,
+      value: card.value,
+      detailHtml: card.detailHtml,
+      attributes: card.attributes || '',
       metricId: metricIds[index]
     })),
     currentUser
@@ -4067,23 +4370,70 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, number));
 }
 
+function trendRowNumber(row, valueKey) {
+  const rawValue = row && typeof row === 'object' ? row[valueKey] : 0;
+  const number = Number(rawValue);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function trendRowValue(row, valueKey) {
+  return row && typeof row === 'object' ? row[valueKey] : '';
+}
+
+function renderMiniTrend(rows, valueKey, label) {
+  const values = safeRows(rows).map((row) => trendRowNumber(row, valueKey));
+
+  if (values.length < 2) {
+    return '';
+  }
+
+  const width = 140;
+  const height = 36;
+  const paddingX = 2;
+  const paddingY = 3;
+  const chartWidth = width - paddingX * 2;
+  const chartHeight = height - paddingY * 2;
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue;
+  const formatPoint = (number) => number.toFixed(2).replace(/\.?0+$/, '');
+  const points = values
+    .map((value, index) => {
+      const x = paddingX + (chartWidth * index) / (values.length - 1);
+      const y = range === 0
+        ? height / 2
+        : paddingY + ((maxValue - value) / range) * chartHeight;
+
+      return `${formatPoint(x)},${formatPoint(y)}`;
+    })
+    .join(' ');
+
+  return `<svg class="mini-trend" viewBox="0 0 ${escapeHtml(width)} ${escapeHtml(height)}" role="img" aria-label="Динамика ${escapeHtml(label)}">
+  <polyline points="${escapeHtml(points)}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+</svg>`;
+}
+
 function renderTrendRows(rows, currentUser) {
-  if (rows.length === 0) {
+  const trendRows = safeRows(rows);
+
+  if (trendRows.length === 0) {
     return renderEmptyDashboardTable();
   }
 
-  const maxWorked = Math.max(...rows.map((row) => Number(row.workedShifts) || 0), 0);
-  const bodyRows = rows
+  const maxWorked = Math.max(...trendRows.map((row) => trendRowNumber(row, 'workedShifts')), 0);
+  const bodyRows = trendRows
     .map((row) => {
-      const width = maxWorked > 0 ? clampPercent(((Number(row.workedShifts) || 0) / maxWorked) * 100) : 0;
+      const workedShifts = trendRowNumber(row, 'workedShifts');
+      const width = maxWorked > 0 ? clampPercent((workedShifts / maxWorked) * 100) : 0;
 
-      return `<tr>
-  <td>${escapeHtml(row.period)}</td>
-  ${numberCell(row.orderedShifts, 0, 'sales-by-project.trend.ordered-shifts', currentUser)}
-  ${numberCell(row.workedShifts, 0, 'sales-by-project.trend.worked-shifts', currentUser)}
-  ${percentCell(row.slaPercent, 'sales-by-project.trend.sla', currentUser)}
-  ${numberCell(row.revenueRub, 0, 'sales-by-project.trend.revenue-rub', currentUser)}
-  ${numberCell(row.cancelledShifts, 0, 'sales-by-project.trend.cancelled-shifts', currentUser)}
+      return `<tr data-sales-trend-row data-ordered-shifts="${escapeHtml(trendRowNumber(row, 'orderedShifts'))}" data-worked-shifts="${escapeHtml(workedShifts)}">
+  <td>${escapeHtml(trendRowValue(row, 'period'))}</td>
+  ${numberCell(trendRowNumber(row, 'orderedShifts'), 0, 'sales-by-project.trend.ordered-shifts', currentUser)}
+  ${numberCell(workedShifts, 0, 'sales-by-project.trend.worked-shifts', currentUser)}
+  ${percentCell(trendRowNumber(row, 'slaPercent'), 'sales-by-project.trend.sla', currentUser)}
+  ${numberCell(trendRowNumber(row, 'revenueRub'), 0, 'sales-by-project.trend.revenue-rub', currentUser)}
+  ${numberCell(trendRowNumber(row, 'cancelledShifts'), 0, 'sales-by-project.trend.cancelled-shifts', currentUser)}
   ${renderMetricInfoScope({
     tag: 'td',
     className: 'bar-cell',
@@ -4236,7 +4586,7 @@ function renderSalesByProjectDashboardSection({ dashboard, section, currentUser 
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
   ${renderDataSourceBadge(dashboard)}
-  ${renderKpiCards(dashboard.summary, currentUser)}
+  ${renderKpiCards(dashboard.summary, currentUser, dashboard.trendRows)}
 </section>`;
   }
 
@@ -4283,7 +4633,7 @@ function renderSalesByProjectDashboard({
     ? renderSalesByProjectProgressiveSections(filters)
     : `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
-  ${renderKpiCards(dashboard.summary, currentUser)}
+  ${renderKpiCards(dashboard.summary, currentUser, dashboard.trendRows)}
 </section>
 <section class="section">
   ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}
@@ -5055,6 +5405,7 @@ function workplaceAttentionSectionUrl(filters, overrides = {}) {
 
 const WORKPLACE_ATTENTION_COLUMNS = [
   { key: 'title', label: 'Точка', className: 'attention-point-cell' },
+  { key: 'riskSeverity', label: 'Риск', className: 'attention-risk-cell', sortable: false },
   { key: 'free7d', label: 'Своб. 7д', className: 'number-cell' },
   { key: 'nearestFreeDate', label: 'Ближ.', className: 'nowrap-cell' },
   { key: 'maxDailyFree', label: 'Пик', className: 'number-cell' },
@@ -5062,10 +5413,52 @@ const WORKPLACE_ATTENTION_COLUMNS = [
   { key: 'totalWorkers15km', label: 'База 15км', className: 'number-cell attention-stack-cell' },
   { key: 'activeWorkers30d15km', label: 'Актив 30д', className: 'number-cell attention-stack-cell' },
   { key: 'activeWorkersPerFreeShift', label: 'Акт/своб.', className: 'number-cell' },
-  { key: 'priorityReason', label: 'Причина', className: 'attention-reason-cell' }
+  { key: 'riskReasons', label: 'Причины', className: 'attention-reason-cell', sortable: false }
 ];
 
+function riskSeverityLabel(severity) {
+  if (severity === 'high') {
+    return 'Высокий';
+  }
+
+  if (severity === 'medium') {
+    return 'Средний';
+  }
+
+  return 'Низкий';
+}
+
+function renderRiskBadge(severity) {
+  const normalized = ['high', 'medium', 'low'].includes(severity) ? severity : 'low';
+
+  return `<span class="risk-badge risk-${escapeHtml(normalized)}">${escapeHtml(riskSeverityLabel(normalized))}</span>`;
+}
+
+function renderAttentionReason(reason) {
+  const kind = String(reason && reason.kind ? reason.kind : 'default');
+  const label = String(reason && reason.label ? reason.label : '');
+
+  if (label === '') {
+    return '';
+  }
+
+  return `<span class="attention-reason attention-reason-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
+}
+
+function renderAttentionReasons(reasons) {
+  const items = safeRows(reasons)
+    .map(renderAttentionReason)
+    .filter((item) => item !== '')
+    .join('');
+
+  return items === '' ? '<span class="attention-reason attention-reason-muted">Причина не рассчитана</span>' : items;
+}
+
 function renderAttentionSortableHeader(filters, column) {
+  if (column.sortable === false) {
+    return `<th class="${escapeHtml(column.className)}"><span>${escapeHtml(column.label)}</span></th>`;
+  }
+
   const currentSort = String(filters.attentionSort || 'attentionScore');
   const currentDirection = String(filters.attentionDirection || 'desc');
   const isActive = currentSort === column.key;
@@ -5234,6 +5627,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
 
         return `<tr>
         <td class="attention-point-cell"><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
+        <td class="attention-risk-cell">${renderRiskBadge(point.riskSeverity)}</td>
         ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser, 0, renderAttentionProfessionBreakdown(point.freeProfessions7d))}
         <td>${escapeHtml(point.nearestFreeDate || '')}</td>
         <td class="number-cell">${escapeHtml(formatNumber(point.maxDailyFree))}</td>
@@ -5257,7 +5651,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
           activeWorkersDetailUrl
         )}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
-        <td class="attention-reason-cell">${escapeHtml(point.priorityReason)}</td>
+        <td class="attention-reason-cell"><div class="attention-reasons">${renderAttentionReasons(point.riskReasons)}</div></td>
       </tr>`;
       }).join('')}
     </tbody>
@@ -5281,6 +5675,8 @@ const WORKER_CANCELLATION_PAGE_SIZES = [50, 100, 200, 500];
 const WORKER_CANCELLATION_COLUMNS = [
   { key: 'fullName', label: 'ФИО', numeric: false },
   { key: 'phone', label: 'Телефон', numeric: false },
+  { key: 'riskSeverity', label: 'Риск', numeric: false, sortable: false },
+  { key: 'riskReasons', label: 'Причины', numeric: false, sortable: false },
   { key: 'city', label: 'Город', numeric: false },
   { key: 'confirmedShifts', label: 'Выполнено', numeric: true },
   { key: 'workerCancellations', label: 'Отмены worker', numeric: true },
@@ -5355,6 +5751,10 @@ function workerCancellationsSortDirection(filters, column) {
 }
 
 function renderWorkerCancellationsHeaderCell(filters, column) {
+  if (column.sortable === false) {
+    return `<th><span>${escapeHtml(column.label)}</span></th>`;
+  }
+
   const isActive = String(filters.sort || '') === column.key;
   const direction = workerCancellationsSortDirection(filters, column);
   const href = workerCancellationsPageHref(filters, {
@@ -5434,6 +5834,14 @@ function renderWorkerCancellationsTable(rows, filters, pagination, currentUser) 
 
           if (column.numeric) {
             return renderWorkerCancellationMetricCell(row, filters, column, currentUser);
+          }
+
+          if (column.key === 'riskSeverity') {
+            return `<td>${renderRiskBadge(row.riskSeverity)}</td>`;
+          }
+
+          if (column.key === 'riskReasons') {
+            return `<td><div class="attention-reasons">${renderAttentionReasons(row.riskReasons)}</div></td>`;
           }
 
           const classAttribute = column.key === 'phone' ? ' class="phone-cell"' : '';
@@ -5916,13 +6324,17 @@ function renderWorkerCancellationsDashboard({
     ? `<div data-dashboard-fragment-url="${escapeHtml(workerCancellationsSectionUrl(filters, 'workers'))}">
   <section class="section">
     <h2>Исполнители</h2>
-    <p class="loading">Загружается</p>
+    ${renderDashboardLoadingState()}
   </section>
 </div>`
     : renderWorkerCancellationsDashboardSection({ dashboard, section: 'workers', currentUser });
   const content = `<section class="section">
-  <h1>Отмены гигерами</h1>
-  <p class="technical-note">Период по плановому старту смены.</p>
+  ${renderDashboardHeader({
+    title: 'Отмены гигерами',
+    eyebrow: 'Операции',
+    period: `Период: ${filters.from} - ${filters.to}`,
+    details: ['Период по плановому старту смены']
+  })}
 </section>
 <section class="section">
   <form class="filter-bar" action="/dashboards/worker-cancellations" method="get">
@@ -6271,12 +6683,20 @@ function renderPointCalendarCell(row, currentDateKey, filters) {
   const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
   const slaLevel = calendarSlaLevel(row);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
+  const dailySla = Number(row.slaPercent) || 0;
+  const dropoffs24h = Number(row.dropoffs24h) || 0;
+  const orderedShifts = Number(row.orderedShifts) || 0;
+  const riskLevel = orderedShifts > 0 && (dailySla < 50 || dropoffs24h > 0)
+    ? 'high'
+    : orderedShifts > 0 && dailySla < 80
+      ? 'medium'
+      : 'low';
   const isCurrentDay = currentDateKey && row.period === currentDateKey;
   const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
   const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
   const detailUrl = workplacePointDayDetailsUrl(filters || {}, row.period);
 
-  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
+  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}" data-risk-level="${escapeHtml(riskLevel)}">
   <button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
@@ -6294,6 +6714,14 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
   const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
   const slaLevel = calendarSlaLevel(row);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
+  const dailySla = Number(row.slaPercent) || 0;
+  const dropoffs24h = Number(row.dropoffs24h) || 0;
+  const orderedShifts = Number(row.orderedShifts) || 0;
+  const riskLevel = orderedShifts > 0 && (dailySla < 50 || dropoffs24h > 0)
+    ? 'high'
+    : orderedShifts > 0 && dailySla < 80
+      ? 'medium'
+      : 'low';
   const isCurrentDay = currentDateKey && row.period === currentDateKey;
   const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
   const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
@@ -6304,7 +6732,7 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
     : `<button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">`;
   const controlClose = hasSqlInspector ? '</div>' : '</button>';
 
-  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
+  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}" data-risk-level="${escapeHtml(riskLevel)}">
   ${controlOpen}
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
@@ -6546,11 +6974,13 @@ function renderWorkplacePointDashboard({
 </section>`;
   const content = `<section class="section">
   <a class="back-link" href="/dashboards/workplace-analysis">Анализ точек</a>
-  <div class="detail-header">
-    <h1>Детализация точки</h1>
-    <h2>${escapeHtml(point.title)}</h2>
-    <p class="context-line">${escapeHtml([point.clientTitle, point.city, point.region, point.address].filter(Boolean).join(' · '))}</p>
-  </div>
+  ${renderDashboardHeader({
+    title: point && point.title ? point.title : 'Карточка точки',
+    eyebrow: 'Карточка точки',
+    period: `Период: ${filters.from} - ${filters.to}`,
+    details: [point && point.clientTitle ? point.clientTitle : '', point && point.address ? point.address : '']
+  })}
+  ${renderActiveFilterChips(filters)}
 </section>
 <section class="section">
   <form class="filter-bar" action="/dashboards/workplace-analysis/point" method="get">
@@ -6646,7 +7076,7 @@ function renderWorkplaceAnalysisDashboard({
     ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'points'))}">
   <section class="section">
     <h2>Точки</h2>
-    <p class="loading">Загружается</p>
+    ${renderDashboardLoadingState()}
   </section>
 </div>`
     : renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
@@ -6654,14 +7084,19 @@ function renderWorkplaceAnalysisDashboard({
     ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'attention'))}">
   <section class="section">
     <h2>Точки, требующие внимания</h2>
-    <p class="loading">Загружается</p>
+    ${renderDashboardLoadingState()}
   </section>
 </div>`
     : renderWorkplaceAttentionSection(dashboard, currentUser);
   const content = `<section class="section">
-  <h1>Анализ точек</h1>
+  ${renderDashboardHeader({
+    title: 'Анализ точек',
+    eyebrow: 'Операции',
+    period: `Период: ${filters.from} - ${filters.to}`,
+    details: [`Дней: ${filters.rangeDays}`, dashboard.context && dashboard.context.sortLabel ? dashboard.context.sortLabel : '']
+  })}
+  ${renderActiveFilterChips(filters)}
   <p class="technical-note">Стабильность = доля дней с плановым заказом по mg_orders.amount.</p>
-  <p class="context-line">Период: ${escapeHtml(filters.from)} - ${escapeHtml(filters.to)} · дней: ${escapeHtml(filters.rangeDays)} · ${escapeHtml(dashboard.context.sortLabel)}</p>
 </section>
 <section class="section">
   <form class="filter-bar" action="/dashboards/workplace-analysis" method="get">

@@ -217,6 +217,82 @@ function phoneValue(value) {
   return text.replace(/^(\+?\d+)\.0$/, '$1');
 }
 
+function pluralizeRu(count, one, few, many) {
+  const value = Math.abs(Number(count) || 0);
+  const mod100 = value % 100;
+
+  if (mod100 >= 11 && mod100 <= 14) {
+    return many;
+  }
+
+  const mod10 = value % 10;
+
+  if (mod10 === 1) {
+    return one;
+  }
+
+  if (mod10 >= 2 && mod10 <= 4) {
+    return few;
+  }
+
+  return many;
+}
+
+function cancellationWord(count) {
+  return pluralizeRu(count, 'отмена', 'отмены', 'отмен');
+}
+
+function shiftWord(count) {
+  return pluralizeRu(count, 'смена', 'смены', 'смен');
+}
+
+function workerCancellationRiskReasons(row) {
+  const reasons = [];
+
+  if (row.workerCancellations24h > 0) {
+    reasons.push({
+      kind: 'worker-cancellations-24h',
+      label: `${row.workerCancellations24h} ${cancellationWord(row.workerCancellations24h)} менее чем за 24ч`
+    });
+  }
+
+  if (row.postStartCancellations > 0) {
+    reasons.push({
+      kind: 'post-start-cancellations',
+      label: `${row.postStartCancellations} ${cancellationWord(row.postStartCancellations)} после старта`
+    });
+  }
+
+  if (row.failedShifts > 0) {
+    reasons.push({
+      kind: 'failed-shifts',
+      label: `${row.failedShifts} failed-${shiftWord(row.failedShifts)}`
+    });
+  }
+
+  return reasons;
+}
+
+function workerCancellationRiskSeverity(row) {
+  if (
+    row.workerCancellations24h >= 3
+    || row.postStartCancellations > 0
+    || row.failedShifts >= 3
+  ) {
+    return 'high';
+  }
+
+  if (
+    row.workerCancellations24h > 0
+    || row.failedShifts > 0
+    || row.workerCancellations > 1
+  ) {
+    return 'medium';
+  }
+
+  return 'low';
+}
+
 function paginationFromTotal(filters, totalWorkers) {
   const safeTotal = numberValue(totalWorkers);
   const totalPages = Math.max(1, Math.ceil(safeTotal / filters.pageSize));
@@ -235,8 +311,7 @@ function mergeWorkerCancellationRows(filters, workerRows = [], totalRows = []) {
   const workers = workerRows.map((row) => {
     const workerId = String(row.worker_id || '');
     const fullName = textValue(row.full_name) || workerId;
-
-    return {
+    const worker = {
       workerId,
       fullName,
       phone: phoneValue(row.phone),
@@ -246,6 +321,12 @@ function mergeWorkerCancellationRows(filters, workerRows = [], totalRows = []) {
       workerCancellations24h: numberValue(row.worker_cancellations_24h),
       postStartCancellations: numberValue(row.post_start_cancellations),
       failedShifts: numberValue(row.failed_shifts)
+    };
+
+    return {
+      ...worker,
+      riskReasons: workerCancellationRiskReasons(worker),
+      riskSeverity: workerCancellationRiskSeverity(worker)
     };
   });
 

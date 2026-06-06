@@ -865,7 +865,7 @@ function reviewsQuery() {
     ifNull(formatDateTime(toTimeZone(r.createdAt, 'Europe/Moscow'), '%F %T'), '') AS created_at_local
   FROM mg_reviews AS r
   INNER JOIN mg_jobs AS j ON r.job = j._id
-  LEFT JOIN mg_workers AS w ON r.worker = w._id
+  LEFT JOIN mg_workers AS w ON coalesce(nullIf(ifNull(r.worker, ''), ''), nullIf(ifNull(j.worker, ''), ''), '') = w._id
   LEFT JOIN mg_users AS wu ON w.user = wu._id
   WHERE j.workplace = {workplace_id:String}
   ORDER BY r.createdAt DESC, r._id DESC

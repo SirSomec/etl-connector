@@ -248,7 +248,10 @@ test('loadWorkplacePointReviews loads point reviews with author contacts', async
   assert.equal(calls[0].params.param_workplace_id, 'wp1');
   assert.equal(calls[0].query.includes('FROM mg_reviews AS r'), true);
   assert.equal(calls[0].query.includes('INNER JOIN mg_jobs AS j ON r.job = j._id'), true);
-  assert.equal(calls[0].query.includes('LEFT JOIN mg_workers AS w ON r.worker = w._id'), true);
+  assert.equal(
+    calls[0].query.includes("LEFT JOIN mg_workers AS w ON coalesce(nullIf(ifNull(r.worker, ''), ''), nullIf(ifNull(j.worker, ''), ''), '') = w._id"),
+    true
+  );
   assert.equal(calls[0].query.includes('LEFT JOIN mg_employers'), false);
   assert.equal(calls[0].query.includes('r.employer'), false);
   assert.equal(calls[0].query.includes('ORDER BY r.createdAt DESC, r._id DESC'), true);

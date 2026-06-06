@@ -5532,6 +5532,8 @@ const WORKER_CANCELLATION_PAGE_SIZES = [50, 100, 200, 500];
 const WORKER_CANCELLATION_COLUMNS = [
   { key: 'fullName', label: 'ФИО', numeric: false },
   { key: 'phone', label: 'Телефон', numeric: false },
+  { key: 'riskSeverity', label: 'Риск', numeric: false, sortable: false },
+  { key: 'riskReasons', label: 'Причины', numeric: false, sortable: false },
   { key: 'city', label: 'Город', numeric: false },
   { key: 'confirmedShifts', label: 'Выполнено', numeric: true },
   { key: 'workerCancellations', label: 'Отмены worker', numeric: true },
@@ -5606,6 +5608,10 @@ function workerCancellationsSortDirection(filters, column) {
 }
 
 function renderWorkerCancellationsHeaderCell(filters, column) {
+  if (column.sortable === false) {
+    return `<th><span>${escapeHtml(column.label)}</span></th>`;
+  }
+
   const isActive = String(filters.sort || '') === column.key;
   const direction = workerCancellationsSortDirection(filters, column);
   const href = workerCancellationsPageHref(filters, {
@@ -5685,6 +5691,14 @@ function renderWorkerCancellationsTable(rows, filters, pagination, currentUser) 
 
           if (column.numeric) {
             return renderWorkerCancellationMetricCell(row, filters, column, currentUser);
+          }
+
+          if (column.key === 'riskSeverity') {
+            return `<td>${renderRiskBadge(row.riskSeverity)}</td>`;
+          }
+
+          if (column.key === 'riskReasons') {
+            return `<td><div class="attention-reasons">${renderAttentionReasons(row.riskReasons)}</div></td>`;
           }
 
           const classAttribute = column.key === 'phone' ? ' class="phone-cell"' : '';

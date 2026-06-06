@@ -217,6 +217,53 @@ function phoneValue(value) {
   return text.replace(/^(\+?\d+)\.0$/, '$1');
 }
 
+function workerCancellationRiskReasons(row) {
+  const reasons = [];
+
+  if (row.workerCancellations24h > 0) {
+    reasons.push({
+      kind: 'worker-cancellations-24h',
+      label: `${row.workerCancellations24h} отмены менее чем за 24ч`
+    });
+  }
+
+  if (row.postStartCancellations > 0) {
+    reasons.push({
+      kind: 'post-start-cancellations',
+      label: `${row.postStartCancellations} отмена после старта`
+    });
+  }
+
+  if (row.failedShifts > 0) {
+    reasons.push({
+      kind: 'failed-shifts',
+      label: `${row.failedShifts} failed-смен`
+    });
+  }
+
+  return reasons;
+}
+
+function workerCancellationRiskSeverity(row) {
+  if (
+    row.workerCancellations24h >= 3
+    || row.postStartCancellations > 0
+    || row.failedShifts >= 3
+  ) {
+    return 'high';
+  }
+
+  if (
+    row.workerCancellations24h > 0
+    || row.failedShifts > 0
+    || row.workerCancellations > 1
+  ) {
+    return 'medium';
+  }
+
+  return 'low';
+}
+
 function paginationFromTotal(filters, totalWorkers) {
   const safeTotal = numberValue(totalWorkers);
   const totalPages = Math.max(1, Math.ceil(safeTotal / filters.pageSize));
@@ -235,8 +282,7 @@ function mergeWorkerCancellationRows(filters, workerRows = [], totalRows = []) {
   const workers = workerRows.map((row) => {
     const workerId = String(row.worker_id || '');
     const fullName = textValue(row.full_name) || workerId;
-
-    return {
+    const worker = {
       workerId,
       fullName,
       phone: phoneValue(row.phone),
@@ -246,6 +292,12 @@ function mergeWorkerCancellationRows(filters, workerRows = [], totalRows = []) {
       workerCancellations24h: numberValue(row.worker_cancellations_24h),
       postStartCancellations: numberValue(row.post_start_cancellations),
       failedShifts: numberValue(row.failed_shifts)
+    };
+
+    return {
+      ...worker,
+      riskReasons: workerCancellationRiskReasons(worker),
+      riskSeverity: workerCancellationRiskSeverity(worker)
     };
   });
 

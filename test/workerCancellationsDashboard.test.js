@@ -180,7 +180,13 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
       workerCancellations: 4,
       workerCancellations24h: 3,
       postStartCancellations: 2,
-      failedShifts: 1
+      failedShifts: 1,
+      riskReasons: [
+        { kind: 'worker-cancellations-24h', label: '3 отмены менее чем за 24ч' },
+        { kind: 'post-start-cancellations', label: '2 отмена после старта' },
+        { kind: 'failed-shifts', label: '1 failed-смен' }
+      ],
+      riskSeverity: 'high'
     },
     {
       workerId: 'worker-2',
@@ -191,7 +197,11 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
       workerCancellations: 0,
       workerCancellations24h: 0,
       postStartCancellations: 0,
-      failedShifts: 5
+      failedShifts: 5,
+      riskReasons: [
+        { kind: 'failed-shifts', label: '5 failed-смен' }
+      ],
+      riskSeverity: 'high'
     }
   ]);
   assert.deepEqual(dashboard.pagination, {
@@ -202,6 +212,33 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
     hasPrevious: true,
     hasNext: true
   });
+});
+
+test('mergeWorkerCancellationRows assigns high risk for urgent worker cancellations', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-06-01',
+      to: '2026-06-03'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkerCancellationRows(filters, [
+    {
+      worker_id: 'worker-1',
+      full_name: 'Ivan Petrov',
+      worker_cancellations: '3',
+      worker_cancellations_24h: '3',
+      post_start_cancellations: '1',
+      failed_shifts: '0'
+    }
+  ], [{ total_workers: '1' }]);
+
+  assert.equal(dashboard.workers[0].riskSeverity, 'high');
+  assert.deepEqual(dashboard.workers[0].riskReasons.slice(0, 2), [
+    { kind: 'worker-cancellations-24h', label: '3 отмены менее чем за 24ч' },
+    { kind: 'post-start-cancellations', label: '1 отмена после старта' }
+  ]);
 });
 
 test('normalizeWorkerCancellationDetailInput accepts worker id and whitelisted metric', () => {

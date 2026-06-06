@@ -514,6 +514,54 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
   assert.doesNotMatch(html, /<html/);
 });
 
+test('renderWorkerCancellationsDashboardSection renders operational risk columns with detail triggers and full phone', () => {
+  const html = renderWorkerCancellationsDashboardSection({
+    section: 'workers',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        page: 1,
+        pageSize: 50,
+        sort: 'workerCancellations24h',
+        direction: 'desc'
+      },
+      rows: [
+        {
+          workerId: 'worker-1',
+          fullName: 'Ivan Petrov',
+          phone: '+79990000000',
+          city: 'Moscow',
+          confirmedShifts: 10,
+          workerCancellations: 3,
+          workerCancellations24h: 3,
+          postStartCancellations: 1,
+          failedShifts: 0,
+          riskSeverity: 'high',
+          riskReasons: [
+            { kind: 'worker-cancellations-24h', label: '3 отмены менее чем за 24ч' },
+            { kind: 'post-start-cancellations', label: '1 отмена после старта' }
+          ]
+        }
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 50,
+        totalWorkers: 1,
+        totalPages: 1,
+        hasPrevious: false,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /risk-badge risk-high/);
+  assert.match(html, /3 отмены менее чем за 24ч/);
+  assert.match(html, /1 отмена после старта/);
+  assert.match(html, /data-worker-cancellation-detail-trigger/);
+  assert.match(html, /<td class="phone-cell">\+79990000000<\/td>/);
+});
+
 test('renderWorkerCancellationsDashboardSection preserves search and numeric filters in table links', () => {
   const html = renderWorkerCancellationsDashboardSection({
     section: 'workers',

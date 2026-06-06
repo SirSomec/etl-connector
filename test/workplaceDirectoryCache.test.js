@@ -120,6 +120,35 @@ test('workplace directory cache persists refreshed rows for 7 days and refreshes
   assert.equal(calls.length, 2);
 });
 
+test('workplace directory cache returns a point by id from persisted entries', async () => {
+  const filePath = await tempCachePath();
+  const calls = [];
+  const cache = createWorkplaceDirectoryCache({ filePath });
+
+  await cache.refreshIfStale(fakeClient(
+    [
+      {
+        workplace_id: 'wp1',
+        workplace_title: 'Point 1',
+        technical_name: 'point-technical',
+        client_title: 'Brand A',
+        region: 'Region',
+        city: 'City',
+        street: 'Street'
+      }
+    ],
+    calls
+  ));
+
+  const recreated = createWorkplaceDirectoryCache({ filePath });
+  const entry = await recreated.getById(fakeClient([], calls), 'wp1');
+
+  assert.equal(entry.workplaceId, 'wp1');
+  assert.equal(entry.title, 'Point 1');
+  assert.equal(entry.clientTitle, 'Brand A');
+  assert.equal(calls.length, 1);
+});
+
 test('workplaceDirectoryCachePathFromEnv supports env override', () => {
   assert.equal(
     workplaceDirectoryCachePathFromEnv({ WORKPLACE_DIRECTORY_CACHE_PATH: 'C:\\cache\\workplaces.json' }),

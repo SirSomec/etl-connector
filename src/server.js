@@ -1354,7 +1354,12 @@ function createApp({
     '/dashboards/workplace-analysis/point',
     requireAuth('workplace-analysis'),
     asyncRoute(async (req, res) => {
-      const dashboard = await loadWorkplacePointDashboardShell(client, req.query);
+      const dashboard = await loadWorkplacePointDashboardShell(
+        client,
+        req.query,
+        new Date(),
+        { workplaceDirectoryCache }
+      );
 
       recordCurrentUserActivity(req, activityEventType(req));
       res

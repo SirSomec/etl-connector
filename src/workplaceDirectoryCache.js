@@ -319,6 +319,28 @@ function createWorkplaceDirectoryCache(options = {}) {
       return filterWorkplaceDirectorySuggestions(state.entries, query, limit);
     },
 
+    async getById(client, workplaceId) {
+      const id = cleanText(workplaceId);
+
+      if (id === '') {
+        return null;
+      }
+
+      await loadFromFile();
+
+      if (!isFresh()) {
+        if (state.entries.length > 0) {
+          refreshInBackground(client);
+        } else {
+          await refresh(client);
+        }
+      }
+
+      const entry = state.entries.find((item) => item.workplaceId === id);
+
+      return entry ? publicSuggestion(entry) : null;
+    },
+
     scheduleRefresh(client, { intervalMs = WORKPLACE_DIRECTORY_CACHE_TTL_MS } = {}) {
       const run = () => {
         this.refreshIfStale(client).catch(() => {});

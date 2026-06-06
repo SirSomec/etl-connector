@@ -648,15 +648,84 @@ function metadataQuery() {
     w._id AS workplace_id,
     ifNull(w.title, '') AS workplace_title,
     ifNull(w.technical_name, '') AS technical_name,
-    ifNull(c.title, '') AS client_title,
+    ifNull(w.client, '') AS client_id,
     ifNull(w.address__city, '') AS city,
     ifNull(w.address__region, '') AS region,
     ifNull(w.address__street, '') AS street
   FROM mg_workplaces AS w
-  LEFT JOIN mg_clients AS c ON w.client = c._id
   WHERE w._id = {workplace_id:String}
   LIMIT 1
   FORMAT JSONEachRow`;
+}
+
+function metadataClientQuery() {
+  return `SELECT
+    ifNull(title, '') AS client_title
+  FROM mg_clients
+  WHERE _id = {client_id:String}
+  LIMIT 1
+  FORMAT JSONEachRow`;
+}
+
+function metadataRowFromDirectoryEntry(entry) {
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    workplace_id: textValue(entry.workplaceId),
+    workplace_title: textValue(entry.title),
+    technical_name: textValue(entry.technicalName),
+    client_title: textValue(entry.clientTitle),
+    city: textValue(entry.city),
+    region: textValue(entry.region),
+    street: textValue(entry.street)
+  };
+}
+
+async function loadWorkplacePointMetadataRows(client, filters, options = {}) {
+  if (
+    options.workplaceDirectoryCache
+    && typeof options.workplaceDirectoryCache.getById === 'function'
+  ) {
+    try {
+      const directoryEntry = await options.workplaceDirectoryCache.getById(client, filters.workplaceId);
+      const cachedRow = metadataRowFromDirectoryEntry(directoryEntry);
+
+      if (cachedRow && cachedRow.workplace_id !== '') {
+        return [cachedRow];
+      }
+    } catch (_) {
+      // Directory cache is an optimization; live metadata remains the source of truth fallback.
+    }
+  }
+
+  const rows = await client.queryJSONEachRow(
+    metadataQuery(),
+    baseParams(filters),
+    'workplace point metadata'
+  );
+
+  if (rows.length === 0) {
+    return rows;
+  }
+
+  const clientId = textValue(rows[0].client_id);
+
+  if (clientId === '') {
+    return rows.map((row) => ({ ...row, client_title: '' }));
+  }
+
+  const clientRows = await client.queryJSONEachRow(
+    metadataClientQuery(),
+    { param_client_id: clientId },
+    'workplace point metadata client'
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    client_title: textValue((clientRows[0] || {}).client_title)
+  }));
 }
 
 function filterOptionsQuery(filters) {
@@ -1500,18 +1569,14 @@ function mergeWorkplacePointSection(filters, sectionRows, shellRows = {}) {
   });
 }
 
-async function loadWorkplacePointDashboardShell(client, input = {}, now = new Date()) {
+async function loadWorkplacePointDashboardShell(client, input = {}, now = new Date(), options = {}) {
   let filters = normalizeWorkplacePointFilters(input, now);
 
   if (filters.workplaceId === '') {
     throw httpError(400, 'Missing workplaceId');
   }
 
-  const metadataRows = await client.queryJSONEachRow(
-    metadataQuery(),
-    baseParams(filters),
-    'workplace point metadata'
-  );
+  const metadataRows = await loadWorkplacePointMetadataRows(client, filters, options);
 
   if (metadataRows.length === 0) {
     throw httpError(404, `Workplace not found: ${filters.workplaceId}`);

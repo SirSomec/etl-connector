@@ -183,8 +183,8 @@ test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pa
       failedShifts: 1,
       riskReasons: [
         { kind: 'worker-cancellations-24h', label: '3 отмены менее чем за 24ч' },
-        { kind: 'post-start-cancellations', label: '2 отмена после старта' },
-        { kind: 'failed-shifts', label: '1 failed-смен' }
+        { kind: 'post-start-cancellations', label: '2 отмены после старта' },
+        { kind: 'failed-shifts', label: '1 failed-смена' }
       ],
       riskSeverity: 'high'
     },
@@ -263,7 +263,7 @@ test('mergeWorkerCancellationRows assigns medium risk for worker cancellations w
 
   assert.equal(dashboard.workers[0].riskSeverity, 'medium');
   assert.deepEqual(dashboard.workers[0].riskReasons, [
-    { kind: 'worker-cancellations-24h', label: '1 отмены менее чем за 24ч' }
+    { kind: 'worker-cancellations-24h', label: '1 отмена менее чем за 24ч' }
   ]);
 });
 
@@ -289,7 +289,95 @@ test('mergeWorkerCancellationRows assigns medium risk for fewer than three faile
 
   assert.equal(dashboard.workers[0].riskSeverity, 'medium');
   assert.deepEqual(dashboard.workers[0].riskReasons, [
-    { kind: 'failed-shifts', label: '2 failed-смен' }
+    { kind: 'failed-shifts', label: '2 failed-смены' }
+  ]);
+});
+
+test('mergeWorkerCancellationRows uses Russian plural forms in risk reasons', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-06-01',
+      to: '2026-06-03'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkerCancellationRows(filters, [
+    {
+      worker_id: 'worker-24h-1',
+      worker_cancellations: '1',
+      worker_cancellations_24h: '1',
+      post_start_cancellations: '0',
+      failed_shifts: '0'
+    },
+    {
+      worker_id: 'worker-24h-2',
+      worker_cancellations: '2',
+      worker_cancellations_24h: '2',
+      post_start_cancellations: '0',
+      failed_shifts: '0'
+    },
+    {
+      worker_id: 'worker-24h-5',
+      worker_cancellations: '5',
+      worker_cancellations_24h: '5',
+      post_start_cancellations: '0',
+      failed_shifts: '0'
+    },
+    {
+      worker_id: 'worker-post-start-1',
+      worker_cancellations: '1',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '1',
+      failed_shifts: '0'
+    },
+    {
+      worker_id: 'worker-post-start-2',
+      worker_cancellations: '2',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '2',
+      failed_shifts: '0'
+    },
+    {
+      worker_id: 'worker-post-start-5',
+      worker_cancellations: '5',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '5',
+      failed_shifts: '0'
+    },
+    {
+      worker_id: 'worker-failed-1',
+      worker_cancellations: '0',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '0',
+      failed_shifts: '1'
+    },
+    {
+      worker_id: 'worker-failed-2',
+      worker_cancellations: '0',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '0',
+      failed_shifts: '2'
+    },
+    {
+      worker_id: 'worker-failed-5',
+      worker_cancellations: '0',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '0',
+      failed_shifts: '5'
+    }
+  ], [{ total_workers: '9' }]);
+
+  assert.deepEqual(dashboard.workers.map((worker) => worker.riskReasons[0].label), [
+    '1 отмена менее чем за 24ч',
+    '2 отмены менее чем за 24ч',
+    '5 отмен менее чем за 24ч',
+    '1 отмена после старта',
+    '2 отмены после старта',
+    '5 отмен после старта',
+    '1 failed-смена',
+    '2 failed-смены',
+    '5 failed-смен'
   ]);
 });
 

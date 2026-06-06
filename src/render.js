@@ -3062,11 +3062,86 @@ function renderWorkplaceSuggestScript() {
 function renderDashboardProgressiveScript() {
   return `<script>
 (function () {
+  function normalizeTrendValue(value) {
+    var number = Number(value);
+
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function miniTrendSvg(values, label) {
+    if (values.length < 2) {
+      return '';
+    }
+
+    var width = 140;
+    var height = 36;
+    var paddingX = 2;
+    var paddingY = 3;
+    var chartWidth = width - paddingX * 2;
+    var chartHeight = height - paddingY * 2;
+    var minValue = Math.min.apply(Math, values);
+    var maxValue = Math.max.apply(Math, values);
+    var range = maxValue - minValue;
+    var points = values.map(function (value, index) {
+      var x = paddingX + (chartWidth * index) / (values.length - 1);
+      var y = range === 0
+        ? height / 2
+        : paddingY + ((maxValue - value) / range) * chartHeight;
+
+      return x.toFixed(2).replace(/\\.?0+$/, '') + ',' + y.toFixed(2).replace(/\\.?0+$/, '');
+    }).join(' ');
+
+    return '<svg class="mini-trend" viewBox="0 0 140 36" role="img" aria-label="Динамика ' + label + '">'
+      + '<polyline points="' + points + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>'
+      + '</svg>';
+  }
+
+  function hydrateSalesMiniTrends() {
+    var trendRows = Array.prototype.slice.call(document.querySelectorAll('[data-sales-trend-row]'));
+
+    if (trendRows.length < 2) {
+      return;
+    }
+
+    document.querySelectorAll('[data-mini-trend-target]').forEach(function (card) {
+      var target = card.getAttribute('data-mini-trend-target');
+      var label = card.getAttribute('data-mini-trend-label') || '';
+      var attribute = target === 'workedShifts' ? 'data-worked-shifts' : 'data-ordered-shifts';
+      var values = trendRows.map(function (row) {
+        return normalizeTrendValue(row.getAttribute(attribute));
+      });
+      var svg = miniTrendSvg(values, label);
+      var valueNode;
+      var subvalue;
+
+      if (svg === '') {
+        return;
+      }
+
+      subvalue = card.querySelector('.kpi-subvalue');
+
+      if (!subvalue) {
+        valueNode = card.querySelector('.kpi-value');
+        subvalue = document.createElement('div');
+        subvalue.className = 'kpi-subvalue';
+
+        if (valueNode && valueNode.parentNode) {
+          valueNode.parentNode.insertBefore(subvalue, valueNode.nextSibling);
+        } else {
+          card.appendChild(subvalue);
+        }
+      }
+
+      subvalue.innerHTML = svg;
+    });
+  }
+
   function replaceWithHtml(root, html) {
     var template = document.createElement('template');
 
     template.innerHTML = html;
     root.replaceWith(template.content);
+    hydrateSalesMiniTrends();
 
     if (typeof window.initHeatmapLeafletMaps === 'function') {
       window.initHeatmapLeafletMaps();
@@ -4207,16 +4282,26 @@ function renderKpiGrid(cards, currentUser) {
 
 function renderKpiCards(summary, currentUser, trendRows = []) {
   const cards = [
-    ['Заказано смен', formatNumber(summary.orderedShifts), renderMiniTrend(trendRows, 'orderedShifts', 'заказанных смен')],
-    ['Отработано смен', formatNumber(summary.workedShifts), renderMiniTrend(trendRows, 'workedShifts', 'выполненных смен')],
-    ['SLA', formatPercent(summary.slaPercent)],
-    ['Выручка, руб.', formatNumber(summary.revenueRub)],
-    ['Уникальные исполнители', formatNumber(summary.uniqueWorkers)],
-    ['ТТ с заказами', formatNumber(summary.workplacesWithOrders)],
-    ['ТТ с выполненными сменами', formatNumber(summary.workplacesWithWorkedShifts)],
-    ['Отмены', formatNumber(summary.cancelledShifts)],
-    ['Самоброни', formatPercent(summary.selfBookingPercent)],
-    ['Средняя ставка в час', formatNumber(summary.avgWorkerRateHour)]
+    {
+      label: 'Заказано смен',
+      value: formatNumber(summary.orderedShifts),
+      detailHtml: renderMiniTrend(trendRows, 'orderedShifts', 'заказанных смен'),
+      attributes: 'data-mini-trend-target="orderedShifts" data-mini-trend-label="заказанных смен"'
+    },
+    {
+      label: 'Отработано смен',
+      value: formatNumber(summary.workedShifts),
+      detailHtml: renderMiniTrend(trendRows, 'workedShifts', 'выполненных смен'),
+      attributes: 'data-mini-trend-target="workedShifts" data-mini-trend-label="выполненных смен"'
+    },
+    { label: 'SLA', value: formatPercent(summary.slaPercent) },
+    { label: 'Выручка, руб.', value: formatNumber(summary.revenueRub) },
+    { label: 'Уникальные исполнители', value: formatNumber(summary.uniqueWorkers) },
+    { label: 'ТТ с заказами', value: formatNumber(summary.workplacesWithOrders) },
+    { label: 'ТТ с выполненными сменами', value: formatNumber(summary.workplacesWithWorkedShifts) },
+    { label: 'Отмены', value: formatNumber(summary.cancelledShifts) },
+    { label: 'Самоброни', value: formatPercent(summary.selfBookingPercent) },
+    { label: 'Средняя ставка в час', value: formatNumber(summary.avgWorkerRateHour) }
   ];
 
   const metricIds = [
@@ -4233,10 +4318,11 @@ function renderKpiCards(summary, currentUser, trendRows = []) {
   ];
 
   return renderKpiGrid(
-    cards.map(([label, value, detailHtml], index) => ({
-      label,
-      value,
-      detailHtml,
+    cards.map((card, index) => ({
+      label: card.label,
+      value: card.value,
+      detailHtml: card.detailHtml,
+      attributes: card.attributes || '',
       metricId: metricIds[index]
     })),
     currentUser
@@ -4341,7 +4427,7 @@ function renderTrendRows(rows, currentUser) {
       const workedShifts = trendRowNumber(row, 'workedShifts');
       const width = maxWorked > 0 ? clampPercent((workedShifts / maxWorked) * 100) : 0;
 
-      return `<tr>
+      return `<tr data-sales-trend-row data-ordered-shifts="${escapeHtml(trendRowNumber(row, 'orderedShifts'))}" data-worked-shifts="${escapeHtml(workedShifts)}">
   <td>${escapeHtml(trendRowValue(row, 'period'))}</td>
   ${numberCell(trendRowNumber(row, 'orderedShifts'), 0, 'sales-by-project.trend.ordered-shifts', currentUser)}
   ${numberCell(workedShifts, 0, 'sales-by-project.trend.worked-shifts', currentUser)}

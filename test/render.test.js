@@ -13,6 +13,7 @@ const {
   renderHome,
   renderPreloadManagement,
   renderSalesByProjectDashboard,
+  renderSalesByProjectDashboardSection,
   renderTable,
   renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
@@ -1014,6 +1015,9 @@ test('renderSalesByProjectDashboard renders mini trends from existing trend rows
   assert.match(html, /<polyline/);
   assert.match(html, /aria-label="Динамика заказанных смен"/);
   assert.match(html, /aria-label="Динамика выполненных смен"/);
+  assert.match(html, /data-mini-trend-target="orderedShifts"/);
+  assert.match(html, /data-mini-trend-target="workedShifts"/);
+  assert.match(html, /data-sales-trend-row data-ordered-shifts="10" data-worked-shifts="7"/);
   assert.equal(countOccurrences(html, 'class="mini-trend"'), 2);
 
   const onePointHtml = renderSalesByProjectDashboard({
@@ -1025,6 +1029,65 @@ test('renderSalesByProjectDashboard renders mini trends from existing trend rows
   });
 
   assert.doesNotMatch(onePointHtml, /class="mini-trend"/);
+});
+
+test('renderSalesByProjectDashboard progressive shell can hydrate KPI mini trends from trend fragment', () => {
+  const shellHtml = renderSalesByProjectDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-06-30'
+      },
+      summary: {},
+      trendRows: [],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+  const summaryHtml = renderSalesByProjectDashboardSection({
+    section: 'summary',
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-06-30'
+      },
+      summary: {
+        orderedShifts: 60,
+        workedShifts: 42
+      },
+      trendRows: [],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+  const trendHtml = renderSalesByProjectDashboardSection({
+    section: 'trend',
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-06-30'
+      },
+      summary: {},
+      trendRows: [
+        { period: '2026-04-01', orderedShifts: 10, workedShifts: 7 },
+        { period: '2026-05-01', orderedShifts: 20, workedShifts: 15 },
+        { period: '2026-06-01', orderedShifts: 30, workedShifts: 20 }
+      ],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(shellHtml, /data-dashboard-fragment-url="\/dashboards\/sales-by-project\/section\?section=summary/);
+  assert.match(shellHtml, /hydrateSalesMiniTrends/);
+  assert.match(summaryHtml, /data-mini-trend-target="orderedShifts"/);
+  assert.match(summaryHtml, /data-mini-trend-target="workedShifts"/);
+  assert.match(trendHtml, /data-sales-trend-row data-ordered-shifts="10" data-worked-shifts="7"/);
 });
 
 test('renderSalesByProjectDashboard normalizes invalid mini trend values', () => {

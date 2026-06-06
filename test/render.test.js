@@ -2043,8 +2043,13 @@ test('renderWorkplaceAnalysisDashboard keeps long point titles from stretching c
     }
   });
 
-  assert.match(html, /\.point-card-title-block\s*\{[^}]*flex:\s*1 1 auto;[\s\S]*?overflow:\s*hidden;/);
-  assert.match(html, /\.point-title\s*\{[^}]*-webkit-line-clamp:\s*2;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(html, /\.point-card-head\s*\{[^}]*display:\s*block;/);
+  assert.match(html, /\.point-pin-form\s*\{[^}]*float:\s*right;/);
+  assert.match(html, /\.point-title\s*\{[^}]*font-size:\s*11px;[\s\S]*?-webkit-line-clamp:\s*3;[\s\S]*?min-height:\s*calc\(3 \* 1\.25em\);[\s\S]*?overflow:\s*hidden;/);
+  assert.match(
+    html,
+    new RegExp(`<div class="point-card-head">\\s*<form[\\s\\S]*?<a class="point-card-link point-card-title-block"`)
+  );
   assert.match(html, new RegExp(`<div class="point-title" title="${escapeRegExp(escapeHtml(longTitle))}">${escapeRegExp(escapeHtml(longTitle))}</div>`));
 });
 

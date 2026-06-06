@@ -2195,24 +2195,29 @@ function layout({
     }
 
     .point-card-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 10px;
+      display: block;
+      min-width: 0;
       margin-bottom: 8px;
     }
 
+    .point-card-head::after {
+      content: "";
+      display: block;
+      clear: both;
+    }
+
     .point-card-title-block {
-      flex: 1 1 auto;
       min-width: 0;
       max-width: 100%;
-      overflow: hidden;
     }
 
     .point-title {
       display: -webkit-box;
+      font-size: 11px;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 3;
+      min-height: calc(3 * 1.25em);
+      max-height: calc(3 * 1.25em);
       font-weight: 700;
       line-height: 1.25;
       overflow: hidden;
@@ -2221,8 +2226,8 @@ function layout({
     }
 
     .point-pin-form {
-      flex: 0 0 auto;
-      margin: 0;
+      float: right;
+      margin: 0 0 4px 10px;
     }
 
     .point-pin-label {
@@ -4988,10 +4993,10 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
 
   return `<article class="${cardClass}">
   <div class="point-card-head">
+    ${renderPointPinForm(point, filters)}
     <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
       <div class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</div>
     </a>
-    ${renderPointPinForm(point, filters)}
   </div>
   <a class="point-card-link" href="${detailHref}" target="_blank" rel="noopener noreferrer">
     <div class="point-metrics">
@@ -5026,10 +5031,10 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
 
   return `<article class="${cardClass}">
   <div class="point-card-head">
+    ${renderPointPinForm(point, filters)}
     <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
       <div class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</div>
     </a>
-    ${renderPointPinForm(point, filters)}
   </div>
   ${bodyHtml}
 </article>`;

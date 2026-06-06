@@ -2337,7 +2337,7 @@ function layout({
       display: grid;
       grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 5px;
-      min-width: 0;
+      min-width: 560px;
     }
 
     .point-calendar-weekdays {

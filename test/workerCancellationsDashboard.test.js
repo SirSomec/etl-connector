@@ -241,6 +241,106 @@ test('mergeWorkerCancellationRows assigns high risk for urgent worker cancellati
   ]);
 });
 
+test('mergeWorkerCancellationRows assigns medium risk for worker cancellations within 24h', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-06-01',
+      to: '2026-06-03'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkerCancellationRows(filters, [
+    {
+      worker_id: 'worker-1',
+      full_name: 'Ivan Petrov',
+      worker_cancellations: '1',
+      worker_cancellations_24h: '1',
+      post_start_cancellations: '0',
+      failed_shifts: '0'
+    }
+  ], [{ total_workers: '1' }]);
+
+  assert.equal(dashboard.workers[0].riskSeverity, 'medium');
+  assert.deepEqual(dashboard.workers[0].riskReasons, [
+    { kind: 'worker-cancellations-24h', label: '1 отмены менее чем за 24ч' }
+  ]);
+});
+
+test('mergeWorkerCancellationRows assigns medium risk for fewer than three failed shifts', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-06-01',
+      to: '2026-06-03'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkerCancellationRows(filters, [
+    {
+      worker_id: 'worker-1',
+      full_name: 'Ivan Petrov',
+      worker_cancellations: '0',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '0',
+      failed_shifts: '2'
+    }
+  ], [{ total_workers: '1' }]);
+
+  assert.equal(dashboard.workers[0].riskSeverity, 'medium');
+  assert.deepEqual(dashboard.workers[0].riskReasons, [
+    { kind: 'failed-shifts', label: '2 failed-смен' }
+  ]);
+});
+
+test('mergeWorkerCancellationRows assigns medium risk for repeated worker cancellations without urgent reasons', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-06-01',
+      to: '2026-06-03'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkerCancellationRows(filters, [
+    {
+      worker_id: 'worker-1',
+      full_name: 'Ivan Petrov',
+      worker_cancellations: '2',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '0',
+      failed_shifts: '0'
+    }
+  ], [{ total_workers: '1' }]);
+
+  assert.equal(dashboard.workers[0].riskSeverity, 'medium');
+  assert.deepEqual(dashboard.workers[0].riskReasons, []);
+});
+
+test('mergeWorkerCancellationRows assigns low risk with no attention reasons by default', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-06-01',
+      to: '2026-06-03'
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkerCancellationRows(filters, [
+    {
+      worker_id: 'worker-1',
+      full_name: 'Ivan Petrov',
+      worker_cancellations: '1',
+      worker_cancellations_24h: '0',
+      post_start_cancellations: '0',
+      failed_shifts: '0'
+    }
+  ], [{ total_workers: '1' }]);
+
+  assert.equal(dashboard.workers[0].riskSeverity, 'low');
+  assert.deepEqual(dashboard.workers[0].riskReasons, []);
+});
+
 test('normalizeWorkerCancellationDetailInput accepts worker id and whitelisted metric', () => {
   const detailInput = normalizeWorkerCancellationDetailInput(
     {

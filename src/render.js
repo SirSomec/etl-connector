@@ -4284,8 +4284,19 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, number));
 }
 
+function trendRowNumber(row, valueKey) {
+  const rawValue = row && typeof row === 'object' ? row[valueKey] : 0;
+  const number = Number(rawValue);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function trendRowValue(row, valueKey) {
+  return row && typeof row === 'object' ? row[valueKey] : '';
+}
+
 function renderMiniTrend(rows, valueKey, label) {
-  const values = safeRows(rows).map((row) => Number(row[valueKey]) || 0);
+  const values = safeRows(rows).map((row) => trendRowNumber(row, valueKey));
 
   if (values.length < 2) {
     return '';
@@ -4318,22 +4329,25 @@ function renderMiniTrend(rows, valueKey, label) {
 }
 
 function renderTrendRows(rows, currentUser) {
-  if (rows.length === 0) {
+  const trendRows = safeRows(rows);
+
+  if (trendRows.length === 0) {
     return renderEmptyDashboardTable();
   }
 
-  const maxWorked = Math.max(...rows.map((row) => Number(row.workedShifts) || 0), 0);
-  const bodyRows = rows
+  const maxWorked = Math.max(...trendRows.map((row) => trendRowNumber(row, 'workedShifts')), 0);
+  const bodyRows = trendRows
     .map((row) => {
-      const width = maxWorked > 0 ? clampPercent(((Number(row.workedShifts) || 0) / maxWorked) * 100) : 0;
+      const workedShifts = trendRowNumber(row, 'workedShifts');
+      const width = maxWorked > 0 ? clampPercent((workedShifts / maxWorked) * 100) : 0;
 
       return `<tr>
-  <td>${escapeHtml(row.period)}</td>
-  ${numberCell(row.orderedShifts, 0, 'sales-by-project.trend.ordered-shifts', currentUser)}
-  ${numberCell(row.workedShifts, 0, 'sales-by-project.trend.worked-shifts', currentUser)}
-  ${percentCell(row.slaPercent, 'sales-by-project.trend.sla', currentUser)}
-  ${numberCell(row.revenueRub, 0, 'sales-by-project.trend.revenue-rub', currentUser)}
-  ${numberCell(row.cancelledShifts, 0, 'sales-by-project.trend.cancelled-shifts', currentUser)}
+  <td>${escapeHtml(trendRowValue(row, 'period'))}</td>
+  ${numberCell(trendRowNumber(row, 'orderedShifts'), 0, 'sales-by-project.trend.ordered-shifts', currentUser)}
+  ${numberCell(workedShifts, 0, 'sales-by-project.trend.worked-shifts', currentUser)}
+  ${percentCell(trendRowNumber(row, 'slaPercent'), 'sales-by-project.trend.sla', currentUser)}
+  ${numberCell(trendRowNumber(row, 'revenueRub'), 0, 'sales-by-project.trend.revenue-rub', currentUser)}
+  ${numberCell(trendRowNumber(row, 'cancelledShifts'), 0, 'sales-by-project.trend.cancelled-shifts', currentUser)}
   ${renderMetricInfoScope({
     tag: 'td',
     className: 'bar-cell',

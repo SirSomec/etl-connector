@@ -1027,6 +1027,67 @@ test('renderSalesByProjectDashboard renders mini trends from existing trend rows
   assert.doesNotMatch(onePointHtml, /class="mini-trend"/);
 });
 
+test('renderSalesByProjectDashboard normalizes invalid mini trend values', () => {
+  const html = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        period: 'day',
+        from: '2026-04-01',
+        to: '2026-04-06'
+      },
+      summary: {
+        orderedShifts: 8,
+        workedShifts: 5,
+        slaPercent: 62.5,
+        revenueRub: 5000,
+        uniqueWorkers: 4,
+        workplacesWithOrders: 2,
+        workplacesWithWorkedShifts: 2,
+        cancelledShifts: 1,
+        selfBookingPercent: 25,
+        avgWorkerRateHour: 300
+      },
+      trendRows: [
+        null,
+        {
+          period: '2026-04-01',
+          orderedShifts: Infinity,
+          workedShifts: -Infinity,
+          slaPercent: 0,
+          revenueRub: 0,
+          cancelledShifts: 0
+        },
+        {
+          period: '2026-04-02',
+          orderedShifts: 'not-a-number',
+          workedShifts: 'bad',
+          slaPercent: 0,
+          revenueRub: 0,
+          cancelledShifts: 0
+        },
+        {
+          period: '2026-04-03',
+          orderedShifts: '8',
+          workedShifts: 5,
+          slaPercent: 62.5,
+          revenueRub: 5000,
+          cancelledShifts: 1
+        }
+      ],
+      brandRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(html, /class="mini-trend"/);
+  assert.match(html, /<polyline/);
+  assert.equal(countOccurrences(html, 'class="mini-trend"'), 2);
+  assert.doesNotMatch(html, /NaN/);
+  assert.doesNotMatch(html, /Infinity/);
+  assert.doesNotMatch(html, /-Infinity/);
+});
+
 test('renderSalesByProjectDashboard shows SQL inspector only with permission', () => {
   const dashboard = {
     filters: {

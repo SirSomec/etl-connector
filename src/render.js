@@ -2506,6 +2506,15 @@ function layout({
       background: #4b5563;
     }
 
+    .mini-trend {
+      display: block;
+      width: 100%;
+      max-width: 140px;
+      height: 36px;
+      margin-top: 8px;
+      color: var(--accent);
+    }
+
     .compact-value-list {
       display: grid;
       gap: 8px;
@@ -4196,10 +4205,10 @@ function renderKpiGrid(cards, currentUser) {
     .join('')}</div>`;
 }
 
-function renderKpiCards(summary, currentUser) {
+function renderKpiCards(summary, currentUser, trendRows = []) {
   const cards = [
-    ['Заказано смен', formatNumber(summary.orderedShifts)],
-    ['Отработано смен', formatNumber(summary.workedShifts)],
+    ['Заказано смен', formatNumber(summary.orderedShifts), renderMiniTrend(trendRows, 'orderedShifts', 'заказанных смен')],
+    ['Отработано смен', formatNumber(summary.workedShifts), renderMiniTrend(trendRows, 'workedShifts', 'выполненных смен')],
     ['SLA', formatPercent(summary.slaPercent)],
     ['Выручка, руб.', formatNumber(summary.revenueRub)],
     ['Уникальные исполнители', formatNumber(summary.uniqueWorkers)],
@@ -4224,9 +4233,10 @@ function renderKpiCards(summary, currentUser) {
   ];
 
   return renderKpiGrid(
-    cards.map(([label, value], index) => ({
+    cards.map(([label, value, detailHtml], index) => ({
       label,
       value,
+      detailHtml,
       metricId: metricIds[index]
     })),
     currentUser
@@ -4272,6 +4282,39 @@ function clampPercent(value) {
   const number = Number(value) || 0;
 
   return Math.max(0, Math.min(100, number));
+}
+
+function renderMiniTrend(rows, valueKey, label) {
+  const values = safeRows(rows).map((row) => Number(row[valueKey]) || 0);
+
+  if (values.length < 2) {
+    return '';
+  }
+
+  const width = 140;
+  const height = 36;
+  const paddingX = 2;
+  const paddingY = 3;
+  const chartWidth = width - paddingX * 2;
+  const chartHeight = height - paddingY * 2;
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue;
+  const formatPoint = (number) => number.toFixed(2).replace(/\.?0+$/, '');
+  const points = values
+    .map((value, index) => {
+      const x = paddingX + (chartWidth * index) / (values.length - 1);
+      const y = range === 0
+        ? height / 2
+        : paddingY + ((maxValue - value) / range) * chartHeight;
+
+      return `${formatPoint(x)},${formatPoint(y)}`;
+    })
+    .join(' ');
+
+  return `<svg class="mini-trend" viewBox="0 0 ${escapeHtml(width)} ${escapeHtml(height)}" role="img" aria-label="Динамика ${escapeHtml(label)}">
+  <polyline points="${escapeHtml(points)}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+</svg>`;
 }
 
 function renderTrendRows(rows, currentUser) {
@@ -4443,7 +4486,7 @@ function renderSalesByProjectDashboardSection({ dashboard, section, currentUser 
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
   ${renderDataSourceBadge(dashboard)}
-  ${renderKpiCards(dashboard.summary, currentUser)}
+  ${renderKpiCards(dashboard.summary, currentUser, dashboard.trendRows)}
 </section>`;
   }
 
@@ -4490,7 +4533,7 @@ function renderSalesByProjectDashboard({
     ? renderSalesByProjectProgressiveSections(filters)
     : `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'sales-by-project.summary', currentUser)}
-  ${renderKpiCards(dashboard.summary, currentUser)}
+  ${renderKpiCards(dashboard.summary, currentUser, dashboard.trendRows)}
 </section>
 <section class="section">
   ${renderMetricPanelHead('Динамика', 'sales-by-project.trend', currentUser)}

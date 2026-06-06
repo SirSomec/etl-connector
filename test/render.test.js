@@ -960,6 +960,73 @@ test('renderSalesByProjectDashboard escapes values and renders metrics', () => {
   assert.match(html, /class="nav-link active" href="\/dashboards\/sales-by-project"/);
 });
 
+test('renderSalesByProjectDashboard renders mini trends from existing trend rows in KPI cards', () => {
+  const dashboard = {
+    filters: {
+      period: 'day',
+      from: '2026-04-01',
+      to: '2026-04-03'
+    },
+    summary: {
+      orderedShifts: 33,
+      workedShifts: 24,
+      slaPercent: 72.7,
+      revenueRub: 25000,
+      uniqueWorkers: 12,
+      workplacesWithOrders: 4,
+      workplacesWithWorkedShifts: 3,
+      cancelledShifts: 2,
+      selfBookingPercent: 40,
+      avgWorkerRateHour: 350
+    },
+    trendRows: [
+      {
+        period: '2026-04-01',
+        orderedShifts: 10,
+        workedShifts: 7,
+        slaPercent: 70,
+        revenueRub: 7000,
+        cancelledShifts: 1
+      },
+      {
+        period: '2026-04-02',
+        orderedShifts: 8,
+        workedShifts: 6,
+        slaPercent: 75,
+        revenueRub: 6000,
+        cancelledShifts: 0
+      },
+      {
+        period: '2026-04-03',
+        orderedShifts: 15,
+        workedShifts: 11,
+        slaPercent: 73.3,
+        revenueRub: 12000,
+        cancelledShifts: 1
+      }
+    ],
+    brandRows: [],
+    statusRows: []
+  };
+  const html = renderSalesByProjectDashboard({ database: 'etl', dashboard });
+
+  assert.match(html, /class="mini-trend"/);
+  assert.match(html, /<polyline/);
+  assert.match(html, /aria-label="Динамика заказанных смен"/);
+  assert.match(html, /aria-label="Динамика выполненных смен"/);
+  assert.equal(countOccurrences(html, 'class="mini-trend"'), 2);
+
+  const onePointHtml = renderSalesByProjectDashboard({
+    database: 'etl',
+    dashboard: {
+      ...dashboard,
+      trendRows: dashboard.trendRows.slice(0, 1)
+    }
+  });
+
+  assert.doesNotMatch(onePointHtml, /class="mini-trend"/);
+});
+
 test('renderSalesByProjectDashboard shows SQL inspector only with permission', () => {
   const dashboard = {
     filters: {

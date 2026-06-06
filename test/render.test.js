@@ -1994,6 +1994,60 @@ test('renderWorkplaceAnalysisDashboard aligns heatmap columns from Monday to Sun
   assert.ok(firstEmptyIndex < firstDateIndex);
 });
 
+test('renderWorkplaceAnalysisDashboard keeps long point titles from stretching cards', () => {
+  const longTitle = 'Very long workplace title with branch number 123 and extra operational qualifiers repeated repeated repeated';
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-03',
+        rangeDays: 3,
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        contractor: [],
+        search: '',
+        limit: 12
+      },
+      filterOptions: {
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        contractor: []
+      },
+      context: {
+        sortLabel: 'orders first',
+        maxDailyAmount: 3
+      },
+      points: [
+        {
+          workplaceId: 'wp-long-title',
+          title: longTitle,
+          totalOrderedShifts: 6,
+          activeDays: 2,
+          rangeDays: 3,
+          stabilityPercent: 66.66666666666666,
+          slaPercent: 75,
+          activeGigers5km: 4,
+          avgDailyOrder: 3,
+          heatmapDays: [
+            { date: '2026-06-01', amount: 3, completedShifts: 2, level: 4 }
+          ]
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /\.point-card-title-block\s*\{[^}]*flex:\s*1 1 auto;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(html, /\.point-title\s*\{[^}]*-webkit-line-clamp:\s*2;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(html, new RegExp(`<div class="point-title" title="${escapeRegExp(escapeHtml(longTitle))}">${escapeRegExp(escapeHtml(longTitle))}</div>`));
+});
+
 test('renderWorkplaceAnalysisDashboard renders pin checkboxes and preserves pinned workplaces', () => {
   const html = renderWorkplaceAnalysisDashboard({
     database: 'etl',

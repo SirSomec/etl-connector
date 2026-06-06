@@ -2203,13 +2203,21 @@ function layout({
     }
 
     .point-card-title-block {
+      flex: 1 1 auto;
       min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
     }
 
     .point-title {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
       font-weight: 700;
       line-height: 1.25;
+      overflow: hidden;
       overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .point-pin-form {
@@ -4981,7 +4989,7 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
   return `<article class="${cardClass}">
   <div class="point-card-head">
     <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
-      <div class="point-title">${escapeHtml(point.title)}</div>
+      <div class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</div>
     </a>
     ${renderPointPinForm(point, filters)}
   </div>
@@ -5019,7 +5027,7 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
   return `<article class="${cardClass}">
   <div class="point-card-head">
     <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
-      <div class="point-title">${escapeHtml(point.title)}</div>
+      <div class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</div>
     </a>
     ${renderPointPinForm(point, filters)}
   </div>

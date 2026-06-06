@@ -1439,7 +1439,8 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
           activeWorkersPerFreeShift: 0.5,
           activeWorkers30dByStatus15km: { ready: 2, booked: 1, worked: 0, other: 0 },
           totalWorkersByStatus15km: { ready: 8, booked: 2, worked: 1, other: 9 },
-          priorityReason: 'пик в ближайшие дни'
+          riskSeverity: 'medium',
+          riskReasons: [{ kind: 'free-order', label: 'пик в ближайшие дни' }]
         }
       ]
     }
@@ -1466,6 +1467,73 @@ test('renderWorkplaceAnalysisDashboardSection renders attention table without pe
     /data-detail-url="\/dashboards\/workplace-analysis\/gigers\?[^"]*metric=attention-active-workers-30d-15km[^"]*status=ready[^"]*workplaceId=wp1/
   );
   assert.doesNotMatch(html, /phone|email|firstname|lastname/i);
+});
+
+test('renderWorkplaceAnalysisDashboardSection renders attention risk badges, reasons, and detail links', () => {
+  const html = renderWorkplaceAnalysisDashboardSection({
+    section: 'attention',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        search: '',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        attentionPage: 1,
+        attentionPageSize: 15,
+        attentionSort: 'free7d',
+        attentionDirection: 'desc'
+      },
+      attentionPoints: [
+        {
+          workplaceId: 'wp-risk',
+          title: 'Точка риска',
+          clientTitle: 'Brand A',
+          address: 'Москва, Ленина 1',
+          free7d: 9,
+          ordered7d: 12,
+          covered7d: 3,
+          coveragePercent: 25,
+          maxDailyFree: 6,
+          nearestFreeDate: '2026-06-04',
+          activeWorkers30d15km: 2,
+          activeWorkersPerFreeShift: 0.2,
+          riskSeverity: 'high',
+          riskScore: 90,
+          attentionDetailDate: '2026-06-04',
+          riskReasons: [
+            { kind: 'free-order', label: 'Свободный заказ 9 за 7 дней' },
+            { kind: 'coverage', label: 'Покрытие 25%' },
+            { kind: 'active-base', label: 'Актив 0,2 на свободную смену' }
+          ]
+        }
+      ],
+      attentionPagination: {
+        page: 1,
+        pageSize: 15,
+        totalWorkplaces: 1,
+        totalPages: 1,
+        hasPrevious: false,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /risk-badge risk-high/);
+  assert.match(html, /Высокий/);
+  assert.match(html, /Свободный заказ 9 за 7 дней/);
+  assert.match(html, /Покрытие 25%/);
+  assert.match(html, /Актив 0,2 на свободную смену/);
+  assert.match(html, /\/dashboards\/workplace-analysis\/point\?workplaceId=wp-risk/);
+  assert.match(html, /2026-06-04/);
+  assert.doesNotMatch(html, /<html/);
 });
 
 test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention table without horizontal scroll', () => {

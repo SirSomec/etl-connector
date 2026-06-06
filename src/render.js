@@ -1425,15 +1425,19 @@ function layout({
     }
 
     .attention-point-cell {
-      width: 20%;
+      width: 18%;
+    }
+
+    .attention-risk-cell {
+      width: 8%;
     }
 
     .attention-stack-cell {
-      width: 13%;
+      width: 12%;
     }
 
     .attention-reason-cell {
-      width: 12%;
+      width: 14%;
     }
 
     .attention-table .muted {
@@ -1476,6 +1480,56 @@ function layout({
     .attention-status-line,
     .attention-profession-line {
       display: block;
+    }
+
+    .risk-badge,
+    .attention-reason {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .risk-high {
+      border-color: #d49386;
+      background: #fff0ed;
+      color: #9f2a1d;
+    }
+
+    .risk-medium {
+      border-color: #ddbf75;
+      background: #fff8e6;
+      color: #7a5400;
+    }
+
+    .risk-low {
+      border-color: #a8cdb6;
+      background: #effaf3;
+      color: #24613a;
+    }
+
+    .attention-reasons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .attention-reason {
+      background: #f6f9fb;
+      color: var(--text);
+      font-weight: 600;
+      white-space: normal;
+    }
+
+    .attention-reason-muted {
+      color: var(--muted);
+      font-weight: 400;
     }
 
     .phone-cell,
@@ -5198,6 +5252,7 @@ function workplaceAttentionSectionUrl(filters, overrides = {}) {
 
 const WORKPLACE_ATTENTION_COLUMNS = [
   { key: 'title', label: 'Точка', className: 'attention-point-cell' },
+  { key: 'riskSeverity', label: 'Риск', className: 'attention-risk-cell', sortable: false },
   { key: 'free7d', label: 'Своб. 7д', className: 'number-cell' },
   { key: 'nearestFreeDate', label: 'Ближ.', className: 'nowrap-cell' },
   { key: 'maxDailyFree', label: 'Пик', className: 'number-cell' },
@@ -5205,10 +5260,52 @@ const WORKPLACE_ATTENTION_COLUMNS = [
   { key: 'totalWorkers15km', label: 'База 15км', className: 'number-cell attention-stack-cell' },
   { key: 'activeWorkers30d15km', label: 'Актив 30д', className: 'number-cell attention-stack-cell' },
   { key: 'activeWorkersPerFreeShift', label: 'Акт/своб.', className: 'number-cell' },
-  { key: 'priorityReason', label: 'Причина', className: 'attention-reason-cell' }
+  { key: 'riskReasons', label: 'Причины', className: 'attention-reason-cell', sortable: false }
 ];
 
+function riskSeverityLabel(severity) {
+  if (severity === 'high') {
+    return 'Высокий';
+  }
+
+  if (severity === 'medium') {
+    return 'Средний';
+  }
+
+  return 'Низкий';
+}
+
+function renderRiskBadge(severity) {
+  const normalized = ['high', 'medium', 'low'].includes(severity) ? severity : 'low';
+
+  return `<span class="risk-badge risk-${escapeHtml(normalized)}">${escapeHtml(riskSeverityLabel(normalized))}</span>`;
+}
+
+function renderAttentionReason(reason) {
+  const kind = String(reason && reason.kind ? reason.kind : 'default');
+  const label = String(reason && reason.label ? reason.label : '');
+
+  if (label === '') {
+    return '';
+  }
+
+  return `<span class="attention-reason attention-reason-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
+}
+
+function renderAttentionReasons(reasons) {
+  const items = safeRows(reasons)
+    .map(renderAttentionReason)
+    .filter((item) => item !== '')
+    .join('');
+
+  return items === '' ? '<span class="attention-reason attention-reason-muted">Причина не рассчитана</span>' : items;
+}
+
 function renderAttentionSortableHeader(filters, column) {
+  if (column.sortable === false) {
+    return `<th class="${escapeHtml(column.className)}"><span>${escapeHtml(column.label)}</span></th>`;
+  }
+
   const currentSort = String(filters.attentionSort || 'attentionScore');
   const currentDirection = String(filters.attentionDirection || 'desc');
   const isActive = currentSort === column.key;
@@ -5377,6 +5474,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
 
         return `<tr>
         <td class="attention-point-cell"><a href="${detailHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(point.title)}</a><div class="muted">${escapeHtml([point.clientTitle, point.city, point.address].filter(Boolean).join(' · '))}</div></td>
+        <td class="attention-risk-cell">${renderRiskBadge(point.riskSeverity)}</td>
         ${renderAttentionNumberCell(point.free7d, 'workplace-analysis.attention.free-7d', currentUser, 0, renderAttentionProfessionBreakdown(point.freeProfessions7d))}
         <td>${escapeHtml(point.nearestFreeDate || '')}</td>
         <td class="number-cell">${escapeHtml(formatNumber(point.maxDailyFree))}</td>
@@ -5400,7 +5498,7 @@ function renderWorkplaceAttentionRows(points, filters, currentUser) {
           activeWorkersDetailUrl
         )}
         ${renderAttentionNumberCell(point.activeWorkersPerFreeShift, 'workplace-analysis.attention.active-workers-per-free-shift', currentUser, 1)}
-        <td class="attention-reason-cell">${escapeHtml(point.priorityReason)}</td>
+        <td class="attention-reason-cell"><div class="attention-reasons">${renderAttentionReasons(point.riskReasons)}</div></td>
       </tr>`;
       }).join('')}
     </tbody>

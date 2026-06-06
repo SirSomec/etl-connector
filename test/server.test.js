@@ -823,6 +823,10 @@ test('GET /dashboards/workplace-analysis/point/section renders cached point summ
         ];
       }
 
+      if (operation === 'workplace point review summary') {
+        return [{ review_count: 5, avg_rating_all: 4.5, avg_rating_last_10: 4.7 }];
+      }
+
       throw new Error(`Unexpected operation: ${operation}`);
     }
   });
@@ -836,6 +840,7 @@ test('GET /dashboards/workplace-analysis/point/section renders cached point summ
     assert.equal(first.response.status, 200);
     assert.match(first.response.headers.get('content-type'), /^text\/html\b/);
     assert.match(first.text, /Уникальные завершали/);
+    assert.match(first.text, /Рейтинг точки/);
     assert.match(first.text, /10/);
     assert.doesNotMatch(first.text, /<html/);
     assert.equal(second.response.status, 200);
@@ -845,7 +850,10 @@ test('GET /dashboards/workplace-analysis/point/section renders cached point summ
     call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace point')
   );
 
-  assert.deepEqual(pointCalls.map((call) => call[1]), ['workplace point summary']);
+  assert.deepEqual(pointCalls.map((call) => call[1]), [
+    'workplace point summary',
+    'workplace point review summary'
+  ]);
 });
 
 test('GET /dashboards/workplace-analysis/point/details renders day details fragment', async () => {
@@ -945,6 +953,53 @@ test('GET /dashboards/workplace-analysis/point/details renders bad request as fr
     assert.match(text, /date/);
     assert.doesNotMatch(text, /<html/);
   });
+});
+
+test('GET /dashboards/workplace-analysis/point/reviews renders point reviews fragment', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'workplace point reviews') {
+        return [
+          {
+            review_id: 'review-1',
+            job_id: 'job-1',
+            rating: 5,
+            text: 'Хорошая точка',
+            author_full_name: 'Иван Иванов',
+            author_phone: '+79990000000',
+            created_at_local: '2026-06-05 12:00:00'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/workplace-analysis/point/reviews?workplaceId=wp1'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Отзывы точки/);
+    assert.match(text, /Иван Иванов/);
+    assert.match(text, /\+79990000000/);
+    assert.match(text, /05\.06\.2026 12:00/);
+    assert.doesNotMatch(text, /<html/);
+  });
+
+  const calls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace point reviews')
+  );
+
+  assert.deepEqual(calls.map((call) => call[1]), ['workplace point reviews']);
+  assert.equal(calls[0][2].param_workplace_id, 'wp1');
+  assert.equal(calls[0][3].includes('ORDER BY r.createdAt DESC, r._id DESC'), true);
 });
 
 test('GET /dashboards/workplace-analysis/gigers renders giger details fragment', async () => {

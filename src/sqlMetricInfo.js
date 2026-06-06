@@ -628,6 +628,27 @@ CROSS JOIN shift_summary AS ss
 CROSS JOIN booked_workers AS bw
 FORMAT JSONEachRow`;
 
+const WORKPLACE_POINT_REVIEW_SUMMARY_SQL = `SELECT
+  count() AS review_count,
+  avgOrNull(rating) AS avg_rating_all,
+  (
+    SELECT avgOrNull(rating)
+    FROM (
+      SELECT r2.rating AS rating
+      FROM mg_reviews AS r2
+      INNER JOIN mg_jobs AS j2 ON r2.job = j2._id
+      WHERE j2.workplace = {workplace_id:String}
+        AND ifNull(r2.rating, 0) > 0
+      ORDER BY r2.createdAt DESC, r2._id DESC
+      LIMIT 10
+    )
+  ) AS avg_rating_last_10
+FROM mg_reviews AS r
+INNER JOIN mg_jobs AS j ON r.job = j._id
+WHERE j.workplace = {workplace_id:String}
+  AND ifNull(r.rating, 0) > 0
+FORMAT JSONEachRow`;
+
 const WORKPLACE_POINT_DAILY_SQL = `WITH filtered_orders AS (
   SELECT
     o._id AS order_id,
@@ -1290,6 +1311,7 @@ defineMetricSet({
     { suffix: 'stability', title: 'Детализация точки: стабильность', description: 'Доля дней выбранного периода, в которые по точке был заказ.' },
     { suffix: 'unique-completed-workers', title: 'Детализация точки: уникальные завершали', description: 'Количество уникальных исполнителей, которые завершили смену на точке.' },
     { suffix: 'unique-booked-workers', title: 'Детализация точки: уникальные бронировали', description: 'Количество уникальных исполнителей, у которых была бронь смены на точке.' },
+    { suffix: 'rating', title: 'Детализация точки: рейтинг', description: 'Средняя оценка точки по всем ненулевым отзывам и средняя по последним 10 оценкам.', sql: WORKPLACE_POINT_REVIEW_SUMMARY_SQL },
     { suffix: 'dropoffs-24h', title: 'Детализация точки: слеты < 24ч', description: 'Количество смен, где исполнительский слет зафиксирован менее чем за 24 часа до планового старта.' }
   ]
 });

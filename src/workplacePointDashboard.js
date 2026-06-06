@@ -242,6 +242,7 @@ function compactAddress(row) {
 function mergeWorkplacePointRows(filters, datasets) {
   const metadataRow = (datasets.metadataRows || [])[0] || {};
   const summaryRow = (datasets.summaryRows || [])[0] || {};
+  const reviewSummaryRow = (datasets.reviewSummaryRows || [])[0] || {};
   const orderedShifts = numberValue(summaryRow.ordered_shifts);
   const completedShifts = numberValue(summaryRow.completed_shifts);
   const activeDays = numberValue(summaryRow.active_days);
@@ -313,6 +314,9 @@ function mergeWorkplacePointRows(filters, datasets) {
       uniqueCompletedWorkers: numberValue(summaryRow.unique_completed_workers),
       uniqueBookedWorkers: numberValue(summaryRow.unique_booked_workers),
       dropoffs24h: numberValue(summaryRow.dropoffs_24h),
+      ratingAll: nullableNumberValue(reviewSummaryRow.avg_rating_all),
+      ratingLast10: nullableNumberValue(reviewSummaryRow.avg_rating_last_10),
+      ratingReviewCount: numberValue(reviewSummaryRow.review_count),
       radiusWorkers,
       radiusActiveSessionWorkers
     },
@@ -363,6 +367,34 @@ function mergeWorkplacePointDayDetails(detailInput, detailRows = []) {
       paymentAmount: numberValue(row.payment_amount),
       cancelledShifts: numberValue(row.cancelled_shifts),
       lastCancelledAtLocal: textValue(row.last_cancelled_at_local)
+    }))
+  };
+}
+
+function normalizeWorkplacePointReviewsInput(input = {}, now = new Date()) {
+  const filters = normalizeWorkplacePointFilters(input, now);
+
+  if (filters.workplaceId === '') {
+    throw httpError(400, 'Missing workplaceId');
+  }
+
+  return {
+    filters,
+    workplaceId: filters.workplaceId
+  };
+}
+
+function mergeWorkplacePointReviews(reviewInput, reviewRows = []) {
+  return {
+    workplaceId: reviewInput.workplaceId,
+    reviews: reviewRows.map((row) => ({
+      reviewId: textValue(row.review_id),
+      jobId: textValue(row.job_id),
+      rating: numberValue(row.rating),
+      text: textValue(row.text),
+      authorFullName: textValue(row.author_full_name),
+      authorPhone: textValue(row.author_phone),
+      createdAtLocal: textValue(row.created_at_local)
     }))
   };
 }
@@ -780,6 +812,58 @@ function summaryQuery(whereSql) {
   FROM order_summary AS os
   CROSS JOIN shift_summary AS ss
   CROSS JOIN booked_workers AS bw
+  FORMAT JSONEachRow`;
+}
+
+function reviewsSummaryQuery() {
+  return `SELECT
+    count() AS review_count,
+    avgOrNull(rating) AS avg_rating_all,
+    (
+      SELECT avgOrNull(rating)
+      FROM (
+        SELECT r2.rating AS rating
+        FROM mg_reviews AS r2
+        INNER JOIN mg_jobs AS j2 ON r2.job = j2._id
+        WHERE j2.workplace = {workplace_id:String}
+          AND ifNull(r2.rating, 0) > 0
+        ORDER BY r2.createdAt DESC, r2._id DESC
+        LIMIT 10
+      )
+    ) AS avg_rating_last_10
+  FROM mg_reviews AS r
+  INNER JOIN mg_jobs AS j ON r.job = j._id
+  WHERE j.workplace = {workplace_id:String}
+    AND ifNull(r.rating, 0) > 0
+  FORMAT JSONEachRow`;
+}
+
+function reviewAuthorFullNameExpression() {
+  return `coalesce(
+      nullIf(trim(concat(ifNull(eu.lastname, ''), ' ', ifNull(eu.firstname, ''), ' ', ifNull(eu.middlename, ''))), ''),
+      nullIf(trim(concat(ifNull(wu.lastname, ''), ' ', ifNull(wu.firstname, ''), ' ', ifNull(wu.middlename, ''))), ''),
+      nullIf(trim(ifNull(w.full_name, '')), ''),
+      ''
+    )`;
+}
+
+function reviewsQuery() {
+  return `SELECT
+    r._id AS review_id,
+    r.job AS job_id,
+    r.rating AS rating,
+    ifNull(r.text, '') AS text,
+    ${reviewAuthorFullNameExpression()} AS author_full_name,
+    coalesce(nullIf(ifNull(eu.phone, ''), ''), nullIf(ifNull(wu.phone, ''), ''), '') AS author_phone,
+    ifNull(formatDateTime(toTimeZone(r.createdAt, 'Europe/Moscow'), '%F %T'), '') AS created_at_local
+  FROM mg_reviews AS r
+  INNER JOIN mg_jobs AS j ON r.job = j._id
+  LEFT JOIN mg_employers AS e ON r.employer = e._id
+  LEFT JOIN mg_users AS eu ON e.user = eu._id
+  LEFT JOIN mg_workers AS w ON r.worker = w._id
+  LEFT JOIN mg_users AS wu ON w.user = wu._id
+  WHERE j.workplace = {workplace_id:String}
+  ORDER BY r.createdAt DESC, r._id DESC
   FORMAT JSONEachRow`;
 }
 
@@ -1280,13 +1364,20 @@ async function loadWorkplacePointSectionRows(client, filters, section) {
   const { params, whereSql } = paramsAndWhere(filters);
 
   if (section === 'summary') {
-    const summaryRows = await client.queryJSONEachRow(
-      summaryQuery(whereSql),
-      params,
-      'workplace point summary'
-    );
+    const [summaryRows, reviewSummaryRows] = await Promise.all([
+      client.queryJSONEachRow(
+        summaryQuery(whereSql),
+        params,
+        'workplace point summary'
+      ),
+      client.queryJSONEachRow(
+        reviewsSummaryQuery(),
+        params,
+        'workplace point review summary'
+      )
+    ]);
 
-    return { summaryRows };
+    return { summaryRows, reviewSummaryRows };
   }
 
   if (section === 'charts') {
@@ -1305,6 +1396,17 @@ async function loadWorkplacePointSectionRows(client, filters, section) {
   );
 
   return { radiusRows };
+}
+
+async function loadWorkplacePointReviews(client, input = {}, now = new Date()) {
+  const reviewInput = normalizeWorkplacePointReviewsInput(input, now);
+  const reviewRows = await client.queryJSONEachRow(
+    reviewsQuery(),
+    { param_workplace_id: reviewInput.workplaceId },
+    'workplace point reviews'
+  );
+
+  return mergeWorkplacePointReviews(reviewInput, reviewRows);
 }
 
 async function loadWorkplacePointDayDetails(client, input = {}, now = new Date()) {
@@ -1479,9 +1581,12 @@ module.exports = {
   loadWorkplacePointDashboardShell,
   loadWorkplacePointDayDetails,
   loadWorkplacePointGigerDetails,
+  loadWorkplacePointReviews,
   mergeWorkplacePointDayDetails,
+  mergeWorkplacePointReviews,
   mergeWorkplacePointRows,
   normalizeWorkplacePointGigerDetailsInput,
   normalizeWorkplacePointDayDetailsInput,
+  normalizeWorkplacePointReviewsInput,
   normalizeWorkplacePointFilters
 };

@@ -1365,13 +1365,15 @@ function layout({
 
     .giger-list-modal[hidden],
     .worker-cancellation-modal[hidden],
-    .workplace-point-day-modal[hidden] {
+    .workplace-point-day-modal[hidden],
+    .workplace-point-review-modal[hidden] {
       display: none;
     }
 
     .giger-list-modal,
     .worker-cancellation-modal,
-    .workplace-point-day-modal {
+    .workplace-point-day-modal,
+    .workplace-point-review-modal {
       position: fixed;
       inset: 0;
       z-index: 60;
@@ -1382,7 +1384,8 @@ function layout({
 
     .giger-list-modal-backdrop,
     .worker-cancellation-modal-backdrop,
-    .workplace-point-day-modal-backdrop {
+    .workplace-point-day-modal-backdrop,
+    .workplace-point-review-modal-backdrop {
       position: absolute;
       inset: 0;
       background: rgba(16, 33, 43, 0.42);
@@ -1390,7 +1393,8 @@ function layout({
 
     .giger-list-modal-dialog,
     .worker-cancellation-modal-dialog,
-    .workplace-point-day-modal-dialog {
+    .workplace-point-day-modal-dialog,
+    .workplace-point-review-modal-dialog {
       position: relative;
       width: min(1120px, 100%);
       max-height: calc(100vh - 48px);
@@ -1405,9 +1409,14 @@ function layout({
       width: min(1320px, 100%);
     }
 
+    .workplace-point-review-modal-dialog {
+      width: min(1280px, 100%);
+    }
+
     .giger-list-modal-head,
     .worker-cancellation-modal-head,
-    .workplace-point-day-modal-head {
+    .workplace-point-day-modal-head,
+    .workplace-point-review-modal-head {
       position: sticky;
       top: 0;
       z-index: 1;
@@ -1422,14 +1431,16 @@ function layout({
 
     .giger-list-modal-head h2,
     .worker-cancellation-modal-head h2,
-    .workplace-point-day-modal-head h2 {
+    .workplace-point-day-modal-head h2,
+    .workplace-point-review-modal-head h2 {
       margin: 0;
       font-size: 18px;
     }
 
     .giger-list-modal-close,
     .worker-cancellation-modal-close,
-    .workplace-point-day-modal-close {
+    .workplace-point-day-modal-close,
+    .workplace-point-review-modal-close {
       width: 36px;
       min-width: 36px;
       padding: 0;
@@ -1445,7 +1456,9 @@ function layout({
     .worker-cancellation-modal-close:hover,
     .worker-cancellation-modal-close:focus,
     .workplace-point-day-modal-close:hover,
-    .workplace-point-day-modal-close:focus {
+    .workplace-point-day-modal-close:focus,
+    .workplace-point-review-modal-close:hover,
+    .workplace-point-review-modal-close:focus {
       border-color: var(--accent);
       background: var(--link-bg);
       color: var(--text);
@@ -1453,8 +1466,26 @@ function layout({
 
     .giger-list-modal-body,
     .worker-cancellation-modal-body,
-    .workplace-point-day-modal-body {
+    .workplace-point-day-modal-body,
+    .workplace-point-review-modal-body {
       padding: 16px;
+    }
+
+    .kpi-card[data-workplace-point-review-trigger] {
+      cursor: pointer;
+    }
+
+    .kpi-card[data-workplace-point-review-trigger]:hover,
+    .kpi-card[data-workplace-point-review-trigger]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--link-bg);
+      outline: none;
+    }
+
+    .review-text-cell {
+      min-width: 280px;
+      max-width: 560px;
+      white-space: normal;
     }
 
     .giger-details-head {
@@ -2582,19 +2613,22 @@ function layout({
       .metric-detail-trigger,
       .giger-list-modal-close,
       .worker-cancellation-modal-close,
-      .workplace-point-day-modal-close {
+      .workplace-point-day-modal-close,
+      .workplace-point-review-modal-close {
         width: auto;
       }
 
       .giger-list-modal,
       .worker-cancellation-modal,
-      .workplace-point-day-modal {
+      .workplace-point-day-modal,
+      .workplace-point-review-modal {
         padding: 10px;
       }
 
       .giger-list-modal-dialog,
       .worker-cancellation-modal-dialog,
-      .workplace-point-day-modal-dialog {
+      .workplace-point-day-modal-dialog,
+      .workplace-point-review-modal-dialog {
         max-height: calc(100vh - 20px);
       }
     }
@@ -2624,6 +2658,7 @@ function layout({
   ${content.includes('data-worker-cancellation-modal') ? renderWorkerCancellationDetailsScript() : ''}
   ${content.includes('data-giger-list-modal') ? renderGigerDetailsScript() : ''}
   ${content.includes('data-workplace-point-day-modal') ? renderWorkplacePointDayDetailsScript() : ''}
+  ${content.includes('data-workplace-point-review-modal') ? renderWorkplacePointReviewsScript() : ''}
   ${content.includes('data-sql-inspector-modal') || canViewSqlInspector(currentUser) ? renderSqlInspectorScript() : ''}
 </body>
 </html>`;
@@ -3240,6 +3275,127 @@ function renderWorkplacePointDayDetailsScript() {
 </script>`;
 }
 
+function renderWorkplacePointReviewsScript() {
+  return `<script>
+(function () {
+  var modal = document.querySelector('[data-workplace-point-review-modal]');
+
+  if (!modal) {
+    return;
+  }
+
+  var body = modal.querySelector('[data-workplace-point-review-modal-body]');
+  var closeButton = modal.querySelector('[data-workplace-point-review-modal-close]');
+  var lastFocused = null;
+
+  function escapeClientHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function openModal() {
+    lastFocused = document.activeElement;
+    modal.hidden = false;
+
+    if (closeButton) {
+      closeButton.focus();
+    }
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+
+    if (body) {
+      body.innerHTML = '<p class="loading">Загружается</p>';
+    }
+
+    if (lastFocused && typeof lastFocused.focus === 'function') {
+      lastFocused.focus();
+    }
+  }
+
+  function renderModalError(message) {
+    if (body) {
+      body.innerHTML = '<div class="error">' + escapeClientHtml(message) + '</div>';
+    }
+  }
+
+  function loadReviews(url) {
+    if (!url) {
+      renderModalError('Не удалось загрузить отзывы.');
+      return;
+    }
+
+    if (body) {
+      body.innerHTML = '<p class="loading">Загружается</p>';
+    }
+
+    fetch(url)
+      .then(function (response) {
+        return response.text().then(function (html) {
+          if (!response.ok) {
+            if (body) {
+              body.innerHTML = html || '<div class="error">Не удалось загрузить отзывы.</div>';
+            }
+            return;
+          }
+
+          if (body) {
+            body.innerHTML = html;
+          }
+        });
+      })
+      .catch(function (error) {
+        renderModalError(error && error.message ? error.message : 'Не удалось загрузить отзывы.');
+      });
+  }
+
+  function openFromTrigger(trigger) {
+    openModal();
+    loadReviews(trigger.getAttribute('data-detail-url'));
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!event.target || typeof event.target.closest !== 'function') {
+      return;
+    }
+
+    var trigger = event.target.closest('[data-workplace-point-review-trigger]');
+
+    if (trigger) {
+      event.preventDefault();
+      openFromTrigger(trigger);
+      return;
+    }
+
+    if (event.target.closest('[data-workplace-point-review-modal-close]')) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !modal.hidden) {
+      closeModal();
+      return;
+    }
+
+    if ((event.key === 'Enter' || event.key === ' ') && event.target && typeof event.target.closest === 'function') {
+      var trigger = event.target.closest('[data-workplace-point-review-trigger]');
+
+      if (trigger) {
+        event.preventDefault();
+        openFromTrigger(trigger);
+      }
+    }
+  });
+})();
+</script>`;
+}
+
 function formatNumber(value, digits = 0) {
   const number = Number(value) || 0;
 
@@ -3814,9 +3970,10 @@ function renderTable({ database, tableName, columns, rows, currentUser, csrfToke
 
 function renderKpiGrid(cards, currentUser) {
   return `<div class="kpi-grid">${cards
-    .map(({ label, value, detail, valueHtml, detailHtml, metricId, fragmentUrl = '' }) => {
+    .map(({ label, value, detail, valueHtml, detailHtml, metricId, fragmentUrl = '', attributes = '' }) => {
       const fragmentAttribute =
         fragmentUrl === '' ? '' : `data-dashboard-fragment-url="${escapeHtml(fragmentUrl)}"`;
+      const cardAttributes = [fragmentAttribute, attributes].filter(Boolean).join(' ');
       const content = `<div class="kpi-label">${escapeHtml(label)}</div>
   <div class="kpi-value">${valueHtml || escapeHtml(value)}</div>
   ${detailHtml ? `<div class="kpi-subvalue">${detailHtml}</div>` : detail ? `<div class="kpi-subvalue">${escapeHtml(detail)}</div>` : ''}`;
@@ -3826,7 +3983,7 @@ function renderKpiGrid(cards, currentUser) {
         metricId,
         currentUser,
         content,
-        attributes: fragmentAttribute
+        attributes: cardAttributes
       });
     })
     .join('')}</div>`;
@@ -4701,6 +4858,14 @@ function workplacePointGigerUrl(filters, metric, overrides = {}) {
   return `/dashboards/workplace-analysis/point/gigers?${params.toString()}`;
 }
 
+function workplacePointReviewsUrl(filters = {}) {
+  const params = new URLSearchParams();
+
+  addDashboardQueryParam(params, 'workplaceId', filters.workplaceId);
+
+  return `/dashboards/workplace-analysis/point/reviews?${params.toString()}`;
+}
+
 function renderHiddenInput(name, value) {
   return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
 }
@@ -5540,6 +5705,44 @@ function renderWorkplacePointDayDetails({ details }) {
 </div>`;
 }
 
+function renderWorkplacePointReviews({ details }) {
+  const reviews = (details && details.reviews) || [];
+
+  if (reviews.length === 0) {
+    return `<div class="workplace-point-reviews">
+  <h2>Отзывы точки</h2>
+  <p class="empty">Нет отзывов по выбранной точке.</p>
+</div>`;
+  }
+
+  const rows = reviews
+    .map((review) => `<tr>
+  <td class="number-cell">${escapeHtml(formatNumber(review.rating))}</td>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(review.authorFullName))}">${escapeHtml(detailText(review.authorFullName))}</td>
+  <td class="nowrap-cell">${escapeHtml(detailText(review.authorPhone))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(review.createdAtLocal))}</td>
+  <td class="review-text-cell">${escapeHtml(detailText(review.text))}</td>
+</tr>`)
+    .join('');
+
+  return `<div class="workplace-point-reviews">
+  <div class="giger-details-head">
+    <h2>Отзывы точки</h2>
+    <div class="giger-details-actions"><span class="muted">Всего: ${escapeHtml(formatNumber(reviews.length))}</span></div>
+  </div>
+  <div class="table-wrap compact-detail-table-wrap"><table class="compact-detail-table workplace-point-reviews-table">
+    <thead><tr>
+      <th>Оценка</th>
+      <th>ФИО</th>
+      <th>Телефон</th>
+      <th>Дата</th>
+      <th>Отзыв</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>
+</div>`;
+}
+
 function renderWorkerCancellationsPaginationPages({ filters, page, totalPages }) {
   const pageNumbers = paginationPageNumbers(page, totalPages);
   let previousPage = 0;
@@ -5657,6 +5860,21 @@ function renderWorkplacePointDayModal() {
 </div>`;
 }
 
+function renderWorkplacePointReviewModal() {
+  return `<div class="workplace-point-review-modal" data-workplace-point-review-modal hidden>
+  <div class="workplace-point-review-modal-backdrop" data-workplace-point-review-modal-close></div>
+  <div class="workplace-point-review-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="workplace-point-review-modal-title">
+    <div class="workplace-point-review-modal-head">
+      <h2 id="workplace-point-review-modal-title">Отзывы точки</h2>
+      <button type="button" class="workplace-point-review-modal-close" data-workplace-point-review-modal-close aria-label="Закрыть">&times;</button>
+    </div>
+    <div class="workplace-point-review-modal-body" data-workplace-point-review-modal-body>
+      <p class="loading">Загружается</p>
+    </div>
+  </div>
+</div>`;
+}
+
 function renderGigerListModal() {
   return `<div class="giger-list-modal" data-giger-list-modal hidden>
   <div class="giger-list-modal-backdrop" data-giger-list-modal-close></div>
@@ -5752,6 +5970,22 @@ function formatRadiusWorkerValue(summary, radius) {
   return `${formatNumber(workers)} / ${formatNumber(activeSessionWorkers)}`;
 }
 
+function formatPointRating(value) {
+  return value === null || typeof value === 'undefined' || value === ''
+    ? '-'
+    : formatNullableNumber(value, 1);
+}
+
+function workplacePointRatingCard(summary, filters) {
+  return {
+    label: 'Рейтинг точки',
+    value: `${formatPointRating(summary.ratingAll)} / ${formatPointRating(summary.ratingLast10)}`,
+    detail: `все / последние 10 · отзывов ${formatNumber(summary.ratingReviewCount)}`,
+    metricId: 'workplace-point.summary.rating',
+    attributes: `role="button" tabindex="0" data-workplace-point-review-trigger data-detail-url="${escapeHtml(workplacePointReviewsUrl(filters))}"`
+  };
+}
+
 function renderWorkplacePointKpis(summary, currentUser) {
   const filters = summary.filters || {};
 
@@ -5772,6 +6006,7 @@ function renderWorkplacePointKpis(summary, currentUser) {
       valueHtml: renderGigerDetailTrigger(formatNumber(summary.uniqueBookedWorkers), workplacePointGigerUrl(filters, 'unique-booked-workers')),
       metricId: 'workplace-point.summary.unique-booked-workers'
     },
+    workplacePointRatingCard(summary, filters),
     { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' },
     { label: '5 км', value: formatRadiusWorkerValue(summary, 5), valueHtml: renderRadiusWorkerValue(summary, filters, 5), metricId: 'workplace-point.summary.radius-5km' },
     { label: '10 км', value: formatRadiusWorkerValue(summary, 10), valueHtml: renderRadiusWorkerValue(summary, filters, 10), metricId: 'workplace-point.summary.radius-10km' },
@@ -5805,6 +6040,7 @@ function renderWorkplacePointSummaryKpis(summary, currentUser) {
       ),
       metricId: 'workplace-point.summary.unique-booked-workers'
     },
+    workplacePointRatingCard(summary, filters),
     { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' }
   ], currentUser);
 }
@@ -6361,6 +6597,7 @@ function renderWorkplacePointDashboard({
 </section>
 ${detailSections}
 ${renderWorkplacePointDayModal()}
+${renderWorkplacePointReviewModal()}
 ${renderGigerListModal()}`;
 
   return layout({
@@ -8028,5 +8265,6 @@ module.exports = {
   renderWorkplaceAnalysisDashboardSection,
   renderWorkplacePointDayDetails,
   renderWorkplacePointDashboard,
-  renderWorkplacePointDashboardSection
+  renderWorkplacePointDashboardSection,
+  renderWorkplacePointReviews
 };

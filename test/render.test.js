@@ -22,7 +22,8 @@ const {
   renderWorkplaceAnalysisDashboardSection,
   renderWorkplacePointDayDetails,
   renderWorkplacePointDashboard,
-  renderWorkplacePointDashboardSection
+  renderWorkplacePointDashboardSection,
+  renderWorkplacePointReviews
 } = require('../src/render');
 
 test('escapeHtml escapes HTML content and attributes', () => {
@@ -1677,6 +1678,9 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
         stabilityPercent: 50,
         uniqueCompletedWorkers: 5,
         uniqueBookedWorkers: 8,
+        ratingAll: 4.6,
+        ratingLast10: 4.8,
+        ratingReviewCount: 34,
         dropoffs24h: 2,
         radiusWorkers: {
           5: 11,
@@ -1750,6 +1754,11 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(html, /\.point-calendar-cell\.is-current-day/);
   assert.match(html, /data-workplace-point-day-modal/);
   assert.match(html, /data-workplace-point-day-modal-body/);
+  assert.match(html, /data-workplace-point-review-modal/);
+  assert.match(html, /data-workplace-point-review-modal-body/);
+  assert.match(html, /data-workplace-point-review-trigger/);
+  assert.match(html, /4\.6 \/ 4\.8/);
+  assert.match(html, /data-detail-url="\/dashboards\/workplace-analysis\/point\/reviews\?workplaceId=wp1"/);
   assert.match(html, /data-giger-list-modal/);
   assert.match(html, /data-giger-detail-trigger/);
   assert.match(
@@ -1851,6 +1860,37 @@ test('renderWorkplacePointDayDetails renders escaped compact table fragment', ()
   assert.match(html, /<col class="actual-time-col">/);
   assert.match(html, /4 500/);
   assert.match(html, /class="compact-detail-table"/);
+  assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkplacePointReviews renders escaped review fragment', () => {
+  const html = renderWorkplacePointReviews({
+    details: {
+      reviews: [
+        {
+          reviewId: 'review-1',
+          jobId: 'job-1',
+          rating: 5,
+          text: 'Отзыв <script>',
+          authorFullName: 'Иван <Иванов>',
+          authorPhone: '+79990000000',
+          createdAtLocal: '2026-06-05 12:00:00'
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /Отзывы точки/);
+  assert.match(html, /<th>Оценка<\/th>/);
+  assert.match(html, /<th>ФИО<\/th>/);
+  assert.match(html, /<th>Телефон<\/th>/);
+  assert.match(html, /<th>Дата<\/th>/);
+  assert.match(html, /<th>Отзыв<\/th>/);
+  assert.match(html, /Иван &lt;Иванов&gt;/);
+  assert.match(html, /\+79990000000/);
+  assert.match(html, /05\.06\.2026 12:00/);
+  assert.match(html, /Отзыв &lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
   assert.doesNotMatch(html, /<html/);
 });
 

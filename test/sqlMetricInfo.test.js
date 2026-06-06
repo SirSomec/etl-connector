@@ -67,6 +67,7 @@ const RENDERED_SQL_METRIC_IDS = [
   'workplace-point.summary.stability',
   'workplace-point.summary.unique-completed-workers',
   'workplace-point.summary.unique-booked-workers',
+  'workplace-point.summary.rating',
   'workplace-point.summary.dropoffs-24h',
   'workplace-point.radius',
   'workplace-point.summary.radius-5km',

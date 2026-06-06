@@ -51,7 +51,8 @@ const {
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
   loadWorkplacePointDayDetails,
-  loadWorkplacePointGigerDetails
+  loadWorkplacePointGigerDetails,
+  loadWorkplacePointReviews
 } = require('./workplacePointDashboard');
 const {
   WORKER_CANCELLATIONS_SECTIONS,
@@ -85,7 +86,8 @@ const {
   renderWorkplaceAnalysisDashboardSection,
   renderWorkplacePointDayDetails,
   renderWorkplacePointDashboard,
-  renderWorkplacePointDashboardSection
+  renderWorkplacePointDashboardSection,
+  renderWorkplacePointReviews
 } = require('./render');
 
 function sanitizeForResponse(message, config) {
@@ -400,6 +402,8 @@ function createApp({
     return !isExportPath(pathName) && (
       pathName === '/gigers' ||
       pathName.endsWith('/gigers') ||
+      pathName === '/reviews' ||
+      pathName.endsWith('/reviews') ||
       pathName === '/details' ||
       pathName.endsWith('/details')
     );
@@ -1439,6 +1443,29 @@ function createApp({
 
       recordCurrentUserActivity(req, activityEventType(req));
       sendGigerDetailsWorkbook(res, details, 'workplace-point-gigers.xls');
+    })
+  );
+
+  app.get(
+    '/dashboards/workplace-analysis/point/reviews',
+    requireAuth('workplace-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadWorkplacePointReviews(client, req.query, new Date());
+
+        recordCurrentUserActivity(req, activityEventType(req));
+        res
+          .status(200)
+          .type('html')
+          .send(renderWorkplacePointReviews({ details }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
     })
   );
 

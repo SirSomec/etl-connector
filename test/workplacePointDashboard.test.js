@@ -7,10 +7,13 @@ const {
   loadWorkplacePointDashboardShell,
   loadWorkplacePointDayDetails,
   loadWorkplacePointGigerDetails,
+  loadWorkplacePointReviews,
   mergeWorkplacePointDayDetails,
+  mergeWorkplacePointReviews,
   mergeWorkplacePointRows,
   normalizeWorkplacePointGigerDetailsInput,
   normalizeWorkplacePointDayDetailsInput,
+  normalizeWorkplacePointReviewsInput,
   normalizeWorkplacePointFilters
 } = require('../src/workplacePointDashboard');
 
@@ -61,6 +64,50 @@ test('normalizeWorkplacePointGigerDetailsInput validates point metrics and keeps
   assert.equal(details.pageSize, 20);
   assert.equal(details.offset, 40);
   assert.equal(details.export, false);
+});
+
+test('normalizeWorkplacePointReviewsInput requires workplace id', () => {
+  const input = normalizeWorkplacePointReviewsInput(
+    { workplaceId: ' wp1 ' },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(input.workplaceId, 'wp1');
+
+  assert.throws(
+    () => normalizeWorkplacePointReviewsInput({}),
+    (error) => error.status === 400 && /workplaceId/.test(error.message)
+  );
+});
+
+test('mergeWorkplacePointReviews maps review rows', () => {
+  const input = normalizeWorkplacePointReviewsInput({ workplaceId: 'wp1' });
+  const details = mergeWorkplacePointReviews(input, [
+    {
+      review_id: 'review-1',
+      job_id: 'job-1',
+      rating: 5,
+      text: 'Хорошая точка',
+      author_full_name: 'Иван Иванов',
+      author_phone: '+79990000000',
+      created_at_local: '2026-06-05 12:00:00'
+    }
+  ]);
+
+  assert.deepEqual(details, {
+    workplaceId: 'wp1',
+    reviews: [
+      {
+        reviewId: 'review-1',
+        jobId: 'job-1',
+        rating: 5,
+        text: 'Хорошая точка',
+        authorFullName: 'Иван Иванов',
+        authorPhone: '+79990000000',
+        createdAtLocal: '2026-06-05 12:00:00'
+      }
+    ]
+  });
 });
 
 test('loadWorkplacePointGigerDetails loads completed workers with safe filters', async () => {
@@ -166,6 +213,43 @@ test('loadWorkplacePointGigerDetails loads radius active-session workers by radi
   assert.equal(detailsCall.query.includes('greatCircleDistance'), true);
   assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), true);
   assert.equal(detailsCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
+});
+
+test('loadWorkplacePointReviews loads point reviews with author contacts', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point reviews') {
+        return [
+          {
+            review_id: 'review-1',
+            job_id: 'job-1',
+            rating: 4,
+            text: 'Все хорошо',
+            author_full_name: 'Анна Иванова',
+            author_phone: '+79990000001',
+            created_at_local: '2026-06-05 12:00:00'
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const details = await loadWorkplacePointReviews(client, { workplaceId: 'wp1' });
+
+  assert.equal(details.reviews.length, 1);
+  assert.equal(details.reviews[0].authorFullName, 'Анна Иванова');
+  assert.equal(details.reviews[0].authorPhone, '+79990000001');
+
+  assert.equal(calls[0].params.param_workplace_id, 'wp1');
+  assert.equal(calls[0].query.includes('FROM mg_reviews AS r'), true);
+  assert.equal(calls[0].query.includes('INNER JOIN mg_jobs AS j ON r.job = j._id'), true);
+  assert.equal(calls[0].query.includes('LEFT JOIN mg_employers AS e ON r.employer = e._id'), true);
+  assert.equal(calls[0].query.includes('ORDER BY r.createdAt DESC, r._id DESC'), true);
 });
 
 test('normalizeWorkplacePointDayDetailsInput requires workplace id and valid date', () => {
@@ -402,6 +486,10 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
           }
         ];
       }
+
+      if (operation === 'workplace point review summary') {
+        return [{ review_count: 12, avg_rating_all: 4.5, avg_rating_last_10: 4.7 }];
+      }
       if (operation === 'workplace point daily') {
         return [
           {
@@ -440,10 +528,13 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
 
   assert.equal(dashboard.filters.workplaceId, 'wp1; DROP TABLE mg_orders');
   assert.equal(dashboard.summary.slaPercent, 80);
+  assert.equal(dashboard.summary.ratingAll, 4.5);
+  assert.equal(dashboard.summary.ratingLast10, 4.7);
+  assert.equal(dashboard.summary.ratingReviewCount, 12);
   assert.equal(dashboard.summary.radiusActiveSessionWorkers[5], 5);
   assert.equal(dashboard.dailyRows[0].orderLeadAvgMinutes, 1440);
   assert.equal(dashboard.dailyRows[0].orderLeadMinMinutes, 60);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 7);
 
   for (const call of calls) {
     assert.equal(call.params.param_workplace_id, 'wp1; DROP TABLE mg_orders');
@@ -455,7 +546,9 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   }
 
   for (const call of calls.filter((item) =>
-    item.operation !== 'workplace point metadata' && item.operation !== 'workplace point filter options'
+    item.operation !== 'workplace point metadata'
+      && item.operation !== 'workplace point filter options'
+      && item.operation !== 'workplace point review summary'
   )) {
     assert.equal(call.params.param_professions, "['picker']");
     assert.equal(call.params.param_order_types, "['regular']");
@@ -493,6 +586,10 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   );
   assert.equal(
     calls.find((call) => call.operation === 'workplace point summary').query.includes('dropoffs_24h'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point review summary').query.includes('mg_reviews'),
     true
   );
 });
@@ -1054,6 +1151,10 @@ test('loadWorkplacePointDashboardSection loads and caches summary, charts, and r
         ];
       }
 
+      if (operation === 'workplace point review summary') {
+        return [{ review_count: 5, avg_rating_all: 4.2, avg_rating_last_10: 4.4 }];
+      }
+
       if (operation === 'workplace point daily') {
         return [{ period: '2026-06-01', ordered_shifts: 10, completed_shifts: 8 }];
       }
@@ -1109,11 +1210,13 @@ test('loadWorkplacePointDashboardSection loads and caches summary, charts, and r
   );
 
   assert.equal(summary.summary.orderedShifts, 10);
+  assert.equal(summary.summary.ratingAll, 4.2);
   assert.equal(charts.dailyRows.length, 1);
   assert.equal(charts.professionRows.length, 1);
   assert.equal(radius.summary.radiusWorkers[5], 12);
   assert.deepEqual(calls.map((call) => call.operation), [
     'workplace point summary',
+    'workplace point review summary',
     'workplace point daily',
     'workplace point professions',
     'workplace point radius workers'
@@ -1131,10 +1234,12 @@ test('loadWorkplacePointDashboardSection loads and caches summary, charts, and r
 
   assert.deepEqual(calls.map((call) => call.operation), [
     'workplace point summary',
+    'workplace point review summary',
     'workplace point daily',
     'workplace point professions',
     'workplace point radius workers',
-    'workplace point summary'
+    'workplace point summary',
+    'workplace point review summary'
   ]);
 });
 

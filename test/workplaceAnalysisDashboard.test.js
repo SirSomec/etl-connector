@@ -801,7 +801,7 @@ test('loadWorkplaceAnalysisDashboardSection loads and caches points independentl
     'workplace analysis daily orders'
   ]);
 
-  timestamp += 10 * 60 * 60 * 1000 + 1;
+  timestamp = Date.parse('2026-06-16T00:00:00.000Z');
 
   await loadWorkplaceAnalysisDashboardSection(
     client,

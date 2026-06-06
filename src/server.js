@@ -218,6 +218,86 @@ function formatDateUTC(date) {
   ].join('-');
 }
 
+function timeMs(value) {
+  const number = value instanceof Date ? value.getTime() : Number(value);
+
+  return Number.isFinite(number) ? number : Date.now();
+}
+
+function millisecondsUntilNextUtcDay(value) {
+  const current = timeMs(value);
+  const date = new Date(current);
+  const nextUtcDay = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+
+  return Math.max(0, nextUtcDay - current);
+}
+
+function scheduleDailyCacheCleanup({
+  caches,
+  logger = console,
+  now = () => new Date(),
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout
+} = {}) {
+  const cleanupCaches = (caches || []).filter((cache) => cache && typeof cache.pruneExpired === 'function');
+  let stopped = false;
+  let timer = null;
+
+  function warn(message) {
+    if (logger && typeof logger.warn === 'function') {
+      logger.warn(message);
+      return;
+    }
+
+    if (logger && typeof logger.log === 'function') {
+      logger.log(message);
+    }
+  }
+
+  async function pruneExpiredCaches() {
+    const current = now();
+
+    await Promise.all(cleanupCaches.map(async (cache) => {
+      try {
+        await cache.pruneExpired(current);
+      } catch (error) {
+        warn(`Cache cleanup failed: ${error && error.message ? error.message : 'Unexpected error'}`);
+      }
+    }));
+  }
+
+  function scheduleNext() {
+    if (stopped || cleanupCaches.length === 0) {
+      return;
+    }
+
+    const delay = Math.max(1, millisecondsUntilNextUtcDay(now()));
+
+    timer = setTimeoutFn(async () => {
+      await pruneExpiredCaches();
+      scheduleNext();
+    }, delay);
+
+    if (timer && typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  }
+
+  pruneExpiredCaches();
+  scheduleNext();
+
+  return {
+    stop() {
+      stopped = true;
+
+      if (timer !== null) {
+        clearTimeoutFn(timer);
+        timer = null;
+      }
+    }
+  };
+}
+
 function createManualRangeError() {
   const error = new Error('Неверный диапазон дат');
 
@@ -1718,9 +1798,14 @@ function start(options = {}) {
     logger.log(`ETL Analytics listening on port ${port}`);
   });
   const workplaceDirectoryRefresh = workplaceDirectoryCache.scheduleRefresh(client);
+  const cacheCleanup = scheduleDailyCacheCleanup({
+    caches: [cityAnalysisCache, dashboardSectionCache],
+    logger
+  });
 
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
+    cacheCleanup.stop();
 
     closeResource(activityStore, 'User activity store');
     closeResource(preloadService, 'Preload service');
@@ -1767,6 +1852,8 @@ if (require.main === module) {
 module.exports = {
   activeNavForPath,
   createApp,
+  millisecondsUntilNextUtcDay,
   sanitizeForResponse,
+  scheduleDailyCacheCleanup,
   start
 };

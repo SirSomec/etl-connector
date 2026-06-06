@@ -847,7 +847,7 @@ test('loadWorkerCancellationsDashboardSection caches workers through createDashb
     'worker cancellations workers'
   ]);
 
-  timestamp += 10 * 60 * 60 * 1000 + 1;
+  timestamp = Date.parse('2026-06-04T00:00:00.000Z');
 
   await loadWorkerCancellationsDashboardSection(
     client,

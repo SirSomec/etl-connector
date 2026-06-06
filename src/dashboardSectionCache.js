@@ -4,7 +4,6 @@ const path = require('node:path');
 const { writeFileAtomically } = require('./atomicFile');
 
 const DASHBOARD_SECTION_CACHE_VERSION = 1;
-const DASHBOARD_SECTION_CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 const DEFAULT_DASHBOARD_SECTION_CACHE_PATH = path.join(
   process.cwd(),
   'data',
@@ -56,8 +55,19 @@ async function writeCacheFile(filePath, entries) {
   await writeFileAtomically(filePath, `${JSON.stringify(data)}\n`, 'utf8');
 }
 
+function timeMs(value) {
+  const number = value instanceof Date ? value.getTime() : Number(value);
+
+  return Number.isFinite(number) ? number : Date.now();
+}
+
+function endOfUtcDayMs(timestamp) {
+  const date = new Date(timeMs(timestamp));
+
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+}
+
 function createDashboardSectionCache({
-  ttlMs = DASHBOARD_SECTION_CACHE_TTL_MS,
   now = () => Date.now(),
   filePath = null
 } = {}) {
@@ -95,6 +105,19 @@ function createDashboardSectionCache({
     await fileLoadPromise;
   }
 
+  function pruneExpiredEntries(current) {
+    let changed = false;
+
+    for (const [key, entry] of entries) {
+      if (entry && entry.value !== undefined && Number.isFinite(entry.expiresAt) && entry.expiresAt <= current) {
+        entries.delete(key);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
   async function persistEntries() {
     if (!filePath) {
       return;
@@ -104,18 +127,43 @@ function createDashboardSectionCache({
   }
 
   return {
+    async pruneExpired(currentValue = now()) {
+      await loadFileEntries();
+
+      const pruned = pruneExpiredEntries(timeMs(currentValue));
+
+      if (pruned) {
+        await persistEntries();
+      }
+
+      return pruned;
+    },
+
     async getOrLoad(key, loader) {
       await loadFileEntries();
 
-      const current = now();
+      const current = timeMs(now());
+      const pruned = pruneExpiredEntries(current);
       const cached = entries.get(key);
 
       if (cached && cached.value !== undefined && cached.expiresAt > current) {
+        if (pruned) {
+          await persistEntries();
+        }
+
         return cached.value;
       }
 
       if (cached && cached.promise) {
+        if (pruned) {
+          await persistEntries();
+        }
+
         return cached.promise;
+      }
+
+      if (pruned) {
+        await persistEntries();
       }
 
       const promise = Promise.resolve()
@@ -124,7 +172,7 @@ function createDashboardSectionCache({
           async (value) => {
             entries.set(key, {
               value,
-              expiresAt: now() + ttlMs
+              expiresAt: endOfUtcDayMs(now())
             });
 
             await persistEntries();
@@ -139,7 +187,7 @@ function createDashboardSectionCache({
 
       entries.set(key, {
         promise,
-        expiresAt: current + ttlMs
+        expiresAt: endOfUtcDayMs(current)
       });
 
       return promise;
@@ -154,7 +202,7 @@ function createDashboardSectionCache({
 }
 
 module.exports = {
-  DASHBOARD_SECTION_CACHE_TTL_MS,
+  endOfUtcDayMs,
   createDashboardSectionCache,
   dashboardSectionCachePathFromEnv
 };

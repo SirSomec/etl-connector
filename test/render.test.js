@@ -1775,6 +1775,60 @@ test('renderWorkplaceAnalysisDashboardSection renders attention risk badges, rea
   assert.doesNotMatch(html, /<html/);
 });
 
+test('renderWorkplaceAnalysisDashboardSection calculates attention reasons for legacy cached rows', () => {
+  const html = renderWorkplaceAnalysisDashboardSection({
+    section: 'attention',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-15',
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        search: '',
+        includeDeletedOrders: false,
+        includeHiddenOrders: false,
+        attentionPage: 1,
+        attentionPageSize: 15,
+        attentionSort: 'free7d',
+        attentionDirection: 'desc'
+      },
+      attentionPoints: [
+        {
+          workplaceId: 'wp-cached',
+          title: 'Cached point',
+          free7d: 9,
+          ordered7d: 12,
+          covered7d: 3,
+          coveragePercent: 25,
+          maxDailyFree: 6,
+          activeWorkers30d15km: 2,
+          activeWorkersPerFreeShift: 0.2,
+          riskSeverity: 'high'
+        }
+      ],
+      attentionPagination: {
+        page: 1,
+        pageSize: 15,
+        totalWorkplaces: 1,
+        totalPages: 1,
+        hasPrevious: false,
+        hasNext: false
+      }
+    }
+  });
+
+  assert.match(html, /attention-reason-free-order/);
+  assert.match(html, /attention-reason-coverage/);
+  assert.match(html, /attention-reason-active-base/);
+  assert.match(html, /attention-reason-peak-day/);
+  assert.doesNotMatch(html, /attention-reason-muted/);
+});
+
 test('renderWorkplaceAnalysisDashboardSection renders compact sortable attention table without horizontal scroll', () => {
   const html = renderWorkplaceAnalysisDashboardSection({
     section: 'attention',

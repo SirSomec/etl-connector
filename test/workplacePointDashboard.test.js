@@ -1288,7 +1288,7 @@ test('loadWorkplacePointDashboardSection loads and caches summary, charts, and r
     'workplace point radius workers'
   ]);
 
-  timestamp += 10 * 60 * 60 * 1000 + 1;
+  timestamp = Date.parse('2026-06-16T00:00:00.000Z');
 
   await loadWorkplacePointDashboardSection(
     client,

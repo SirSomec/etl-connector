@@ -126,6 +126,14 @@ function textValue(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function phoneValue(value) {
+  if (value === null || typeof value === 'undefined') {
+    return '';
+  }
+
+  return String(value).trim().replace(/^(\+?\d+)\.0$/, '$1');
+}
+
 function percent(numerator, denominator) {
   const bottom = numberValue(denominator);
 
@@ -393,7 +401,7 @@ function mergeWorkplacePointReviews(reviewInput, reviewRows = []) {
       rating: numberValue(row.rating),
       text: textValue(row.text),
       authorFullName: textValue(row.author_full_name),
-      authorPhone: textValue(row.author_phone),
+      authorPhone: phoneValue(row.author_phone),
       createdAtLocal: textValue(row.created_at_local)
     }))
   };
@@ -840,7 +848,6 @@ function reviewsSummaryQuery() {
 
 function reviewAuthorFullNameExpression() {
   return `coalesce(
-      nullIf(trim(concat(ifNull(eu.lastname, ''), ' ', ifNull(eu.firstname, ''), ' ', ifNull(eu.middlename, ''))), ''),
       nullIf(trim(concat(ifNull(wu.lastname, ''), ' ', ifNull(wu.firstname, ''), ' ', ifNull(wu.middlename, ''))), ''),
       nullIf(trim(ifNull(w.full_name, '')), ''),
       ''
@@ -854,12 +861,10 @@ function reviewsQuery() {
     r.rating AS rating,
     ifNull(r.text, '') AS text,
     ${reviewAuthorFullNameExpression()} AS author_full_name,
-    coalesce(nullIf(ifNull(eu.phone, ''), ''), nullIf(ifNull(wu.phone, ''), ''), '') AS author_phone,
+    ifNull(wu.phone, '') AS author_phone,
     ifNull(formatDateTime(toTimeZone(r.createdAt, 'Europe/Moscow'), '%F %T'), '') AS created_at_local
   FROM mg_reviews AS r
   INNER JOIN mg_jobs AS j ON r.job = j._id
-  LEFT JOIN mg_employers AS e ON r.employer = e._id
-  LEFT JOIN mg_users AS eu ON e.user = eu._id
   LEFT JOIN mg_workers AS w ON r.worker = w._id
   LEFT JOIN mg_users AS wu ON w.user = wu._id
   WHERE j.workplace = {workplace_id:String}

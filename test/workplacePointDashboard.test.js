@@ -89,7 +89,7 @@ test('mergeWorkplacePointReviews maps review rows', () => {
       rating: 5,
       text: 'Хорошая точка',
       author_full_name: 'Иван Иванов',
-      author_phone: '+79990000000',
+      author_phone: '+79990000000.0',
       created_at_local: '2026-06-05 12:00:00'
     }
   ]);
@@ -229,7 +229,7 @@ test('loadWorkplacePointReviews loads point reviews with author contacts', async
             rating: 4,
             text: 'Все хорошо',
             author_full_name: 'Анна Иванова',
-            author_phone: '+79990000001',
+            author_phone: '+79990000001.0',
             created_at_local: '2026-06-05 12:00:00'
           }
         ];
@@ -248,7 +248,9 @@ test('loadWorkplacePointReviews loads point reviews with author contacts', async
   assert.equal(calls[0].params.param_workplace_id, 'wp1');
   assert.equal(calls[0].query.includes('FROM mg_reviews AS r'), true);
   assert.equal(calls[0].query.includes('INNER JOIN mg_jobs AS j ON r.job = j._id'), true);
-  assert.equal(calls[0].query.includes('LEFT JOIN mg_employers AS e ON r.employer = e._id'), true);
+  assert.equal(calls[0].query.includes('LEFT JOIN mg_workers AS w ON r.worker = w._id'), true);
+  assert.equal(calls[0].query.includes('LEFT JOIN mg_employers'), false);
+  assert.equal(calls[0].query.includes('r.employer'), false);
   assert.equal(calls[0].query.includes('ORDER BY r.createdAt DESC, r._id DESC'), true);
 });
 

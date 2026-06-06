@@ -1785,6 +1785,74 @@ test('renderWorkplaceAnalysisDashboard renders pin checkboxes and preserves pinn
   assert.match(html, /href="\/dashboards\/workplace-analysis\?from=2026-06-01&amp;to=2026-06-03&amp;pinnedWorkplaceId=wp1&amp;client=Brand\+A&amp;profession=picker&amp;limit=10&amp;page=2">/);
 });
 
+test('renderWorkplacePointDashboard renders unified header and preserves point calendar actions', () => {
+  const html = renderWorkplacePointDashboard({
+    database: 'etl',
+    progressive: false,
+    dashboard: {
+      filters: {
+        workplaceId: 'wp-risk',
+        from: '2026-06-01',
+        to: '2026-06-15',
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        contractor: [],
+        salaryFrom: null,
+        salaryTo: null,
+        includeDeletedOrders: false,
+        includeHiddenOrders: false
+      },
+      currentDate: '2026-06-04',
+      point: {
+        workplaceId: 'wp-risk',
+        title: 'Точка риска',
+        clientTitle: 'Brand A',
+        address: 'Москва, Ленина 1'
+      },
+      summary: {
+        orderedShifts: 12,
+        completedShifts: 3,
+        slaPercent: 25,
+        stabilityPercent: 40,
+        uniqueCompletedWorkers: 3,
+        uniqueBookedWorkers: 4,
+        ratingAvg: 4.2,
+        ratingCount: 5,
+        dropoffs24h: 2,
+        radius5km: 2,
+        radius10km: 4,
+        radius15km: 8,
+        radius20km: 12
+      },
+      dailyRows: [
+        {
+          date: '2026-06-04',
+          period: '2026-06-04',
+          orderedShifts: 6,
+          completedShifts: 1,
+          slaPercent: 16.666,
+          dropoffs24h: 2,
+          orderLeadAvgMinutes: 60,
+          orderLeadMinMinutes: 20
+        }
+      ],
+      professionRows: []
+    }
+  });
+
+  assert.match(html, /dashboard-header/);
+  assert.match(html, /Карточка точки/);
+  assert.match(html, /Точка риска/);
+  assert.match(html, /Москва, Ленина 1/);
+  assert.match(html, /data-workplace-point-day-detail-trigger/);
+  assert.match(html, /data-risk-level="high"/);
+  assert.match(html, /2026-06-04/);
+});
+
 test('renderWorkplacePointDashboard renders filters, point metrics, and compact charts', () => {
   const html = renderWorkplacePointDashboard({
     database: 'etl',

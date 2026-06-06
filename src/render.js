@@ -2391,6 +2391,16 @@ function layout({
       background: transparent;
     }
 
+    .point-calendar-cell[data-risk-level="high"] {
+      border-color: #d49386;
+      background: #fff7f5;
+    }
+
+    .point-calendar-cell[data-risk-level="medium"] {
+      border-color: #ddbf75;
+      background: #fffaf0;
+    }
+
     .point-calendar-cell[data-sla-level="1"] {
       border-color: rgba(248, 113, 113, 0.28);
       background: rgba(248, 113, 113, 0.18);
@@ -6516,12 +6526,20 @@ function renderPointCalendarCell(row, currentDateKey, filters) {
   const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
   const slaLevel = calendarSlaLevel(row);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
+  const dailySla = Number(row.slaPercent) || 0;
+  const dropoffs24h = Number(row.dropoffs24h) || 0;
+  const orderedShifts = Number(row.orderedShifts) || 0;
+  const riskLevel = orderedShifts > 0 && (dailySla < 50 || dropoffs24h > 0)
+    ? 'high'
+    : orderedShifts > 0 && dailySla < 80
+      ? 'medium'
+      : 'low';
   const isCurrentDay = currentDateKey && row.period === currentDateKey;
   const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
   const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
   const detailUrl = workplacePointDayDetailsUrl(filters || {}, row.period);
 
-  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
+  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}" data-risk-level="${escapeHtml(riskLevel)}">
   <button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
@@ -6539,6 +6557,14 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
   const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
   const slaLevel = calendarSlaLevel(row);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
+  const dailySla = Number(row.slaPercent) || 0;
+  const dropoffs24h = Number(row.dropoffs24h) || 0;
+  const orderedShifts = Number(row.orderedShifts) || 0;
+  const riskLevel = orderedShifts > 0 && (dailySla < 50 || dropoffs24h > 0)
+    ? 'high'
+    : orderedShifts > 0 && dailySla < 80
+      ? 'medium'
+      : 'low';
   const isCurrentDay = currentDateKey && row.period === currentDateKey;
   const cellClass = isCurrentDay ? 'point-calendar-cell is-current-day' : 'point-calendar-cell';
   const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
@@ -6549,7 +6575,7 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
     : `<button type="button" class="point-calendar-cell-button" data-workplace-point-day-detail-trigger data-detail-url="${escapeHtml(detailUrl)}" aria-label="Открыть детализацию за ${escapeHtml(row.period)}">`;
   const controlClose = hasSqlInspector ? '</div>' : '</button>';
 
-  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}">
+  return `<div class="${cellClass}" data-date="${escapeHtml(row.period)}"${slaLevelAttribute}${currentDayAttribute} title="${escapeHtml(title)}" data-risk-level="${escapeHtml(riskLevel)}">
   ${controlOpen}
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
@@ -6791,11 +6817,13 @@ function renderWorkplacePointDashboard({
 </section>`;
   const content = `<section class="section">
   <a class="back-link" href="/dashboards/workplace-analysis">Анализ точек</a>
-  <div class="detail-header">
-    <h1>Детализация точки</h1>
-    <h2>${escapeHtml(point.title)}</h2>
-    <p class="context-line">${escapeHtml([point.clientTitle, point.city, point.region, point.address].filter(Boolean).join(' · '))}</p>
-  </div>
+  ${renderDashboardHeader({
+    title: point && point.title ? point.title : 'Карточка точки',
+    eyebrow: 'Карточка точки',
+    period: `Период: ${filters.from} - ${filters.to}`,
+    details: [point && point.clientTitle ? point.clientTitle : '', point && point.address ? point.address : '']
+  })}
+  ${renderActiveFilterChips(filters)}
 </section>
 <section class="section">
   <form class="filter-bar" action="/dashboards/workplace-analysis/point" method="get">

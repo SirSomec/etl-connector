@@ -1849,8 +1849,17 @@ test('renderWorkplacePointDashboard renders unified header and preserves point c
   assert.match(html, /Точка риска/);
   assert.match(html, /Москва, Ленина 1/);
   assert.match(html, /data-workplace-point-day-detail-trigger/);
+  assert.match(html, /data-sla-level="1"[^>]*data-risk-level="high"/);
   assert.match(html, /data-risk-level="high"/);
   assert.match(html, /2026-06-04/);
+
+  const lastSlaRuleIndex = html.indexOf('.point-calendar-cell[data-sla-level="5"]');
+  const highRiskRuleIndex = html.indexOf('.point-calendar-cell[data-risk-level="high"]');
+  const mediumRiskRuleIndex = html.indexOf('.point-calendar-cell[data-risk-level="medium"]');
+
+  assert.ok(lastSlaRuleIndex > -1);
+  assert.ok(highRiskRuleIndex > lastSlaRuleIndex);
+  assert.ok(mediumRiskRuleIndex > lastSlaRuleIndex);
 });
 
 test('renderWorkplacePointDashboard renders filters, point metrics, and compact charts', () => {

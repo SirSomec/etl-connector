@@ -2391,16 +2391,6 @@ function layout({
       background: transparent;
     }
 
-    .point-calendar-cell[data-risk-level="high"] {
-      border-color: #d49386;
-      background: #fff7f5;
-    }
-
-    .point-calendar-cell[data-risk-level="medium"] {
-      border-color: #ddbf75;
-      background: #fffaf0;
-    }
-
     .point-calendar-cell[data-sla-level="1"] {
       border-color: rgba(248, 113, 113, 0.28);
       background: rgba(248, 113, 113, 0.18);
@@ -2424,6 +2414,16 @@ function layout({
     .point-calendar-cell[data-sla-level="5"] {
       border-color: rgba(34, 197, 94, 0.30);
       background: rgba(34, 197, 94, 0.18);
+    }
+
+    .point-calendar-cell[data-risk-level="high"] {
+      border-color: #d49386;
+      background: #fff7f5;
+    }
+
+    .point-calendar-cell[data-risk-level="medium"] {
+      border-color: #ddbf75;
+      background: #fffaf0;
     }
 
     .point-calendar-cell.is-current-day {

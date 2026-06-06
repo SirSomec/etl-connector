@@ -151,6 +151,55 @@ test('mergeWorkplaceAttentionRows calculates free order, status bases, score and
   });
 });
 
+test('mergeWorkplaceAttentionRows assigns high risk severity and reasons for urgent free order', () => {
+  const filters = normalizeWorkplaceAttentionFilters({}, new Date('2026-06-04T12:00:00.000Z'));
+  const dashboard = mergeWorkplaceAttentionRows(filters, [
+    {
+      workplace_id: 'wp-risk',
+      workplace_title: 'Точка риска',
+      ordered_7d: 12,
+      covered_7d: 3,
+      free_7d: 9,
+      max_daily_free: 6,
+      days_with_free: 2,
+      nearest_free_date: '2026-06-04',
+      total_workers_15km: 20,
+      active_workers_30d_15km: 2
+    }
+  ]);
+
+  assert.equal(dashboard.attentionPoints[0].riskSeverity, 'high');
+  assert.equal(dashboard.attentionPoints[0].attentionDetailDate, '2026-06-04');
+  assert.equal(dashboard.attentionPoints[0].riskScore >= 80, true);
+  assert.deepEqual(dashboard.attentionPoints[0].riskReasons.slice(0, 3), [
+    { kind: 'free-order', label: 'Свободный заказ 9 за 7 дней' },
+    { kind: 'coverage', label: 'Покрытие 25%' },
+    { kind: 'active-base', label: 'Актив 0,2 на свободную смену' }
+  ]);
+});
+
+test('mergeWorkplaceAttentionRows assigns medium risk when order is later and base is acceptable', () => {
+  const filters = normalizeWorkplaceAttentionFilters({}, new Date('2026-06-04T12:00:00.000Z'));
+  const dashboard = mergeWorkplaceAttentionRows(filters, [
+    {
+      workplace_id: 'wp-medium',
+      workplace_title: 'Средний риск',
+      ordered_7d: 10,
+      covered_7d: 8,
+      free_7d: 2,
+      max_daily_free: 2,
+      days_with_free: 1,
+      nearest_free_date: '2026-06-10',
+      total_workers_15km: 60,
+      active_workers_30d_15km: 18
+    }
+  ]);
+
+  assert.equal(dashboard.attentionPoints[0].riskSeverity, 'medium');
+  assert.equal(dashboard.attentionPoints[0].riskReasons[0].kind, 'free-order');
+  assert.equal(dashboard.attentionPoints[0].riskReasons.some((reason) => reason.kind === 'active-base'), false);
+});
+
 test('normalizeWorkplaceGigerDetailsInput keeps page size at 20 and validates workplace metrics', () => {
   const details = normalizeWorkplaceGigerDetailsInput(
     {

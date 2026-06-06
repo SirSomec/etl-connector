@@ -385,6 +385,79 @@ function attentionPriorityReason(point) {
   return 'много свободного заказа';
 }
 
+function formatRiskNumber(value, digits = 0) {
+  const number = Number(value) || 0;
+
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  }).format(number).replace(/\u00a0/g, ' ');
+}
+
+function attentionRiskReasons(row) {
+  const free7d = Number(row.free_7d) || 0;
+  const ordered7d = Number(row.ordered_7d) || 0;
+  const covered7d = Number(row.covered_7d) || 0;
+  const maxDailyFree = Number(row.max_daily_free) || 0;
+  const activeWorkers30d15km = Number(row.active_workers_30d_15km) || 0;
+  const activePerFree = free7d > 0 ? activeWorkers30d15km / free7d : 0;
+  const coveragePercent = ordered7d > 0 ? covered7d / ordered7d * 100 : 0;
+  const reasons = [];
+
+  if (free7d > 0) {
+    reasons.push({ kind: 'free-order', label: `Свободный заказ ${formatRiskNumber(free7d)} за 7 дней` });
+  }
+
+  if (ordered7d > 0 && coveragePercent < 70) {
+    reasons.push({ kind: 'coverage', label: `Покрытие ${formatRiskNumber(coveragePercent)}%` });
+  }
+
+  if (free7d > 0 && activePerFree < 1) {
+    reasons.push({ kind: 'active-base', label: `Актив ${formatRiskNumber(activePerFree, 1)} на свободную смену` });
+  }
+
+  if (maxDailyFree >= 3) {
+    reasons.push({ kind: 'peak-day', label: `Пик ${formatRiskNumber(maxDailyFree)} свободных смен в день` });
+  }
+
+  return reasons;
+}
+
+function attentionRiskScore(row, reasons) {
+  const free7d = Number(row.free_7d) || 0;
+  const maxDailyFree = Number(row.max_daily_free) || 0;
+  const activeWorkers30d15km = Number(row.active_workers_30d_15km) || 0;
+  const activePerFree = free7d > 0 ? activeWorkers30d15km / free7d : 0;
+  let score = 0;
+
+  score += Math.min(45, free7d * 10);
+  score += Math.min(25, maxDailyFree * 4);
+
+  if (free7d > 0 && activePerFree < 0.5) {
+    score += 25;
+  } else if (free7d > 0 && activePerFree < 1) {
+    score += 15;
+  }
+
+  if (reasons.some((reason) => reason.kind === 'coverage')) {
+    score += 15;
+  }
+
+  return Math.min(100, score);
+}
+
+function attentionRiskSeverity(score) {
+  if (score >= 70) {
+    return 'high';
+  }
+
+  if (score >= 25) {
+    return 'medium';
+  }
+
+  return 'low';
+}
+
 function compareAttentionValues(leftValue, rightValue) {
   const leftNumber = Number(leftValue);
   const rightNumber = Number(rightValue);
@@ -436,6 +509,8 @@ function mergeWorkplaceAttentionRows(filters, rows = []) {
       const free7d = numberValue(row.free_7d);
       const activeWorkers30d15km = numberValue(row.active_workers_30d_15km);
       const activeWorkersPerFreeShift = free7d > 0 ? activeWorkers30d15km / free7d : 0;
+      const riskReasons = attentionRiskReasons(row);
+      const riskScore = attentionRiskScore(row, riskReasons);
       const point = {
         filters,
         workplaceId: String(row.workplace_id || ''),
@@ -456,7 +531,11 @@ function mergeWorkplaceAttentionRows(filters, rows = []) {
         activeWorkers30d15km,
         totalWorkersByStatus15km: statusBreakdown(row, 'total'),
         activeWorkers30dByStatus15km: statusBreakdown(row, 'active'),
-        activeWorkersPerFreeShift
+        activeWorkersPerFreeShift,
+        riskReasons,
+        riskScore,
+        riskSeverity: attentionRiskSeverity(riskScore),
+        attentionDetailDate: String(row.nearest_free_date || '')
       };
 
       point.attentionScore =

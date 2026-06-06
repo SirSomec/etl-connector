@@ -2043,14 +2043,66 @@ test('renderWorkplaceAnalysisDashboard keeps long point titles from stretching c
     }
   });
 
-  assert.match(html, /\.point-card-head\s*\{[^}]*display:\s*block;/);
+  assert.match(html, /\.point-card-head\s*\{[^}]*display:\s*block;[\s\S]*?font-size:\s*11px;[\s\S]*?min-height:\s*calc\(3 \* 1\.25em\);[\s\S]*?max-height:\s*calc\(3 \* 1\.25em\);[\s\S]*?overflow:\s*hidden;/);
   assert.match(html, /\.point-pin-form\s*\{[^}]*float:\s*right;/);
-  assert.match(html, /\.point-title\s*\{[^}]*font-size:\s*11px;[\s\S]*?-webkit-line-clamp:\s*3;[\s\S]*?min-height:\s*calc\(3 \* 1\.25em\);[\s\S]*?overflow:\s*hidden;/);
+  assert.match(html, /\.point-card-title-block\s*\{[^}]*display:\s*inline;/);
+  assert.match(html, /\.point-title\s*\{[^}]*font-size:\s*11px;[\s\S]*?overflow-wrap:\s*anywhere;/);
   assert.match(
     html,
     new RegExp(`<div class="point-card-head">\\s*<form[\\s\\S]*?<a class="point-card-link point-card-title-block"`)
   );
-  assert.match(html, new RegExp(`<div class="point-title" title="${escapeRegExp(escapeHtml(longTitle))}">${escapeRegExp(escapeHtml(longTitle))}</div>`));
+  assert.match(html, new RegExp(`<span class="point-title" title="${escapeRegExp(escapeHtml(longTitle))}">${escapeRegExp(escapeHtml(longTitle))}</span>`));
+});
+
+test('renderWorkplaceAnalysisDashboard keeps point metric values on one line', () => {
+  const html = renderWorkplaceAnalysisDashboard({
+    database: 'etl',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-03',
+        rangeDays: 3,
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        contractor: [],
+        search: '',
+        limit: 12
+      },
+      filterOptions: {
+        client: [],
+        city: [],
+        region: [],
+        profession: [],
+        orderType: [],
+        contractor: []
+      },
+      context: {
+        sortLabel: 'orders first',
+        maxDailyAmount: 3
+      },
+      points: [
+        {
+          workplaceId: 'wp-metric-value',
+          title: 'Point',
+          totalOrderedShifts: 6,
+          activeDays: 3,
+          rangeDays: 3,
+          stabilityPercent: 100,
+          slaPercent: 100,
+          activeGigers5km: 1234567890,
+          avgDailyOrder: 3,
+          heatmapDays: []
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /\.point-metric-value\s*\{[^}]*white-space:\s*nowrap;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;/);
+  assert.doesNotMatch(html, /\.point-metric-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
+  assert.match(html, />100\.0%<\/div>/);
 });
 
 test('renderWorkplaceAnalysisDashboard renders pin checkboxes and preserves pinned workplaces', () => {
@@ -2132,8 +2184,12 @@ test('renderWorkplaceAnalysisDashboard renders pin checkboxes and preserves pinn
 
   assert.match(html, /<article class="point-card pinned">/);
   assert.match(html, /<input type="hidden" name="pinnedWorkplaceId" value="wp1">/);
-  assert.match(html, /<input name="pinnedWorkplaceId" type="checkbox" value="wp1" checked onchange="this\.form\.submit\(\)">/);
-  assert.match(html, /<input name="pinnedWorkplaceId" type="checkbox" value="wp2" onchange="this\.form\.submit\(\)">/);
+  assert.match(html, /<form class="point-pin-form" action="\/dashboards\/workplace-analysis" method="get" data-workplace-pin-form="1">/);
+  assert.match(html, /<input name="pinnedWorkplaceId" type="checkbox" value="wp1" checked>/);
+  assert.match(html, /<input name="pinnedWorkplaceId" type="checkbox" value="wp2">/);
+  assert.doesNotMatch(html, /onchange="this\.form\.submit\(\)"/);
+  assert.match(html, /function updatePinnedWorkplaceState\(form\)/);
+  assert.match(html, /window\.history\.replaceState\(\{\}, '', href\);/);
   assert.match(html, /href="\/dashboards\/workplace-analysis\?from=2026-06-01&amp;to=2026-06-03&amp;pinnedWorkplaceId=wp1&amp;client=Brand\+A&amp;profession=picker&amp;limit=10&amp;page=2">/);
 });
 

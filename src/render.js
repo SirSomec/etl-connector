@@ -2196,31 +2196,25 @@ function layout({
 
     .point-card-head {
       display: block;
+      font-size: 11px;
+      line-height: 1.25;
       min-width: 0;
+      min-height: calc(3 * 1.25em);
+      max-height: calc(3 * 1.25em);
       margin-bottom: 8px;
-    }
-
-    .point-card-head::after {
-      content: "";
-      display: block;
-      clear: both;
+      overflow: hidden;
     }
 
     .point-card-title-block {
+      display: inline;
       min-width: 0;
       max-width: 100%;
     }
 
     .point-title {
-      display: -webkit-box;
       font-size: 11px;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
-      min-height: calc(3 * 1.25em);
-      max-height: calc(3 * 1.25em);
       font-weight: 700;
       line-height: 1.25;
-      overflow: hidden;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
@@ -2270,10 +2264,22 @@ function layout({
     }
 
     .point-metric-value {
+      min-width: 0;
       margin-top: 2px;
       font-size: 15px;
       font-weight: 700;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .point-metric-value .metric-detail-trigger {
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: bottom;
+      white-space: nowrap;
     }
 
     .heatmap {
@@ -2880,6 +2886,11 @@ function layout({
   ${content.includes('data-multi-filter') ? renderMultiFilterScript() : ''}
   ${content.includes('data-workplace-suggest-url') ? renderWorkplaceSuggestScript() : ''}
   ${
+    content.includes('data-workplace-pin-form') || content.includes('data-workplace-suggest-url')
+      ? renderWorkplacePinScript()
+      : ''
+  }
+  ${
     content.includes('data-dashboard-fragment-url') || content.includes('data-city-analysis-fragment-url')
       ? renderDashboardProgressiveScript()
       : ''
@@ -3067,6 +3078,157 @@ function renderWorkplaceSuggestScript() {
           });
       }, 220);
     });
+  });
+})();
+</script>`;
+}
+
+function renderWorkplacePinScript() {
+  return `<script>
+(function () {
+  function uniqueValues(values) {
+    var seen = {};
+    var result = [];
+
+    values.forEach(function (value) {
+      var text = String(value || '').trim();
+
+      if (text === '' || seen[text]) {
+        return;
+      }
+
+      seen[text] = true;
+      result.push(text);
+    });
+
+    return result;
+  }
+
+  function createPinnedInput(value) {
+    var input = document.createElement('input');
+
+    input.type = 'hidden';
+    input.name = 'pinnedWorkplaceId';
+    input.value = value;
+    input.setAttribute('data-workplace-pin-hidden', '1');
+
+    return input;
+  }
+
+  function replacePinnedInputs(form, values) {
+    var anchor = form.querySelector('.point-pin-label') || form.firstChild;
+
+    form.querySelectorAll('input[type="hidden"][name="pinnedWorkplaceId"]').forEach(function (input) {
+      input.remove();
+    });
+
+    values.forEach(function (value) {
+      form.insertBefore(createPinnedInput(value), anchor);
+    });
+  }
+
+  function pinnedIdsFromHref(href) {
+    var url = new URL(href, window.location.origin);
+
+    return uniqueValues(url.searchParams.getAll('pinnedWorkplaceId'));
+  }
+
+  function hrefFromPinForm(form) {
+    var params = new URLSearchParams(new FormData(form));
+    var currentParams = new URLSearchParams(window.location.search);
+    var page = currentParams.get('page');
+
+    if (page && !params.has('page')) {
+      params.set('page', page);
+    }
+
+    return form.getAttribute('action') + '?' + params.toString();
+  }
+
+  function updatePinnedParams(params, pinnedIds) {
+    params.delete('pinnedWorkplaceId');
+    pinnedIds.forEach(function (id) {
+      params.append('pinnedWorkplaceId', id);
+    });
+  }
+
+  function updateWorkplaceAnalysisHref(link, pinnedIds) {
+    var href = link.getAttribute('href');
+    var url;
+
+    if (!href) {
+      return;
+    }
+
+    url = new URL(href, window.location.origin);
+
+    if (url.pathname !== '/dashboards/workplace-analysis' && url.pathname !== '/dashboards/workplace-analysis/section') {
+      return;
+    }
+
+    updatePinnedParams(url.searchParams, pinnedIds);
+    link.setAttribute('href', url.pathname + '?' + url.searchParams.toString());
+  }
+
+  function updatePinnedWorkplaceState(form) {
+    var href = hrefFromPinForm(form);
+    var pinnedIds = pinnedIdsFromHref(href);
+
+    document.querySelectorAll('[data-workplace-pin-form]').forEach(function (pinForm) {
+      var checkbox = pinForm.querySelector('input[name="pinnedWorkplaceId"][type="checkbox"]');
+      var card = pinForm.closest('.point-card');
+      var workplaceId;
+      var checked;
+      var hiddenValues;
+
+      if (!checkbox) {
+        return;
+      }
+
+      workplaceId = String(checkbox.value || '').trim();
+      checked = pinnedIds.indexOf(workplaceId) !== -1;
+      checkbox.checked = checked;
+
+      if (card) {
+        card.classList.toggle('pinned', checked);
+      }
+
+      hiddenValues = checked
+        ? pinnedIds.filter(function (id) { return id !== workplaceId; })
+        : pinnedIds;
+      replacePinnedInputs(pinForm, hiddenValues);
+    });
+
+    document.querySelectorAll('form[action="/dashboards/workplace-analysis"]:not([data-workplace-pin-form])').forEach(function (plainForm) {
+      replacePinnedInputs(plainForm, pinnedIds);
+    });
+
+    document.querySelectorAll('a[href]').forEach(function (link) {
+      updateWorkplaceAnalysisHref(link, pinnedIds);
+    });
+
+    window.history.replaceState({}, '', href);
+  }
+
+  document.addEventListener('change', function (event) {
+    var form = event.target && event.target.closest ? event.target.closest('[data-workplace-pin-form]') : null;
+
+    if (!form || event.target.name !== 'pinnedWorkplaceId') {
+      return;
+    }
+
+    updatePinnedWorkplaceState(form);
+  });
+
+  document.addEventListener('submit', function (event) {
+    var form = event.target && event.target.closest ? event.target.closest('[data-workplace-pin-form]') : null;
+
+    if (!form) {
+      return;
+    }
+
+    event.preventDefault();
+    updatePinnedWorkplaceState(form);
   });
 })();
 </script>`;
@@ -4978,10 +5140,10 @@ function renderPointPinForm(point, filters) {
     : pinnedWorkplaceIds;
   const checked = pinned ? ' checked' : '';
 
-  return `<form class="point-pin-form" action="/dashboards/workplace-analysis" method="get">
+  return `<form class="point-pin-form" action="/dashboards/workplace-analysis" method="get" data-workplace-pin-form="1">
   ${renderWorkplaceAnalysisHiddenParams(filters, { pinnedWorkplaceIds: nextPinnedWorkplaceIds })}
   <label class="point-pin-label">
-    <input name="pinnedWorkplaceId" type="checkbox" value="${escapeHtml(workplaceId)}"${checked} onchange="this.form.submit()">
+    <input name="pinnedWorkplaceId" type="checkbox" value="${escapeHtml(workplaceId)}"${checked}>
     <span>Закрепить</span>
   </label>
 </form>`;
@@ -4995,7 +5157,7 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
   <div class="point-card-head">
     ${renderPointPinForm(point, filters)}
     <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
-      <div class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</div>
+      <span class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</span>
     </a>
   </div>
   <a class="point-card-link" href="${detailHref}" target="_blank" rel="noopener noreferrer">
@@ -5033,7 +5195,7 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
   <div class="point-card-head">
     ${renderPointPinForm(point, filters)}
     <a class="point-card-link point-card-title-block" href="${detailHref}" target="_blank" rel="noopener noreferrer">
-      <div class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</div>
+      <span class="point-title" title="${escapeHtml(point.title)}">${escapeHtml(point.title)}</span>
     </a>
   </div>
   ${bodyHtml}

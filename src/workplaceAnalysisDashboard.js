@@ -74,8 +74,12 @@ function addDaysUTC(date, days) {
   return next;
 }
 
-function firstDayOfMonthUTC(date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+function firstDayOfPreviousMonthUTC(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - 1, 1));
+}
+
+function lastDayOfMonthUTC(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
 }
 
 function toDateTimeParam(dateOnly) {
@@ -194,15 +198,16 @@ function normalizePositiveRangeValue(value) {
 
 function normalizeWorkplaceAnalysisFilters(input = {}, now = new Date()) {
   const today = parseDateOnly(formatDateUTC(now));
-  const defaultFromDate = firstDayOfMonthUTC(today);
+  const defaultFromDate = firstDayOfPreviousMonthUTC(today);
+  const defaultToDate = lastDayOfMonthUTC(today);
   const requestedFrom = parseDateOnly(input.from);
   const requestedTo = parseDateOnly(input.to);
   let fromDate = requestedFrom || defaultFromDate;
-  let toDate = requestedTo || today;
+  let toDate = requestedTo || defaultToDate;
 
   if (fromDate.getTime() > toDate.getTime()) {
     fromDate = defaultFromDate;
-    toDate = today;
+    toDate = defaultToDate;
   }
 
   const from = formatDateUTC(fromDate);

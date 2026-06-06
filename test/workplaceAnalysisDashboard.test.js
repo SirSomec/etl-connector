@@ -16,7 +16,7 @@ const {
 
 const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
 
-test('normalizeWorkplaceAnalysisFilters defaults to the current month and whitelists limit and order type', () => {
+test('normalizeWorkplaceAnalysisFilters defaults from previous month start to current month end and whitelists limit and order type', () => {
   const filters = normalizeWorkplaceAnalysisFilters(
     {
       limit: '999',
@@ -29,11 +29,11 @@ test('normalizeWorkplaceAnalysisFilters defaults to the current month and whitel
   );
 
   assert.deepEqual(filters, {
-    from: '2026-06-01',
-    to: '2026-06-15',
-    fromDateTime: '2026-06-01 00:00:00',
-    toExclusiveDateTime: '2026-06-16 00:00:00',
-    rangeDays: 15,
+    from: '2026-05-01',
+    to: '2026-06-30',
+    fromDateTime: '2026-05-01 00:00:00',
+    toExclusiveDateTime: '2026-07-01 00:00:00',
+    rangeDays: 61,
     pinnedWorkplaceIds: [],
     client: ['Бренд'],
     city: [],

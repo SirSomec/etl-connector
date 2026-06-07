@@ -3891,6 +3891,10 @@ function formatPercent(value) {
   return `${formatNumber(value, 1).replace(',', '.')}%`;
 }
 
+function formatWholePercent(value) {
+  return `${formatNumber(Math.round(Number(value) || 0))}%`;
+}
+
 function safeReturnPath(returnTo) {
   const text = String(returnTo || '/');
 
@@ -5062,6 +5066,13 @@ function renderPointMetric(label, value, metricId, currentUser, detailUrl = '') 
   });
 }
 
+function renderPointSlaValue(point) {
+  const past = typeof point.slaPastPercent === 'undefined' ? point.slaPercent : point.slaPastPercent;
+  const forecast = typeof point.slaForecastPercent === 'undefined' ? 0 : point.slaForecastPercent;
+
+  return `${formatWholePercent(past)} / ${formatWholePercent(forecast)}`;
+}
+
 function renderPointMetricLegacy(label, value) {
   return `<div class="point-metric">
   <div class="point-metric-label">${escapeHtml(label)}</div>
@@ -5163,7 +5174,7 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
   <a class="point-card-link" href="${detailHref}" target="_blank" rel="noopener noreferrer">
     <div class="point-metrics">
       ${renderPointMetric('Заказано', formatNumber(point.totalOrderedShifts))}
-      ${renderPointMetric('SLA', formatPercent(point.slaPercent))}
+      ${renderPointMetric('SLA', renderPointSlaValue(point))}
       ${renderPointMetric('Стабильность', formatPercent(point.stabilityPercent))}
       ${renderPointMetric('Гигеры 5 км', formatNumber(point.activeGigers5km))}
       ${renderPointMetric('Активные дни', `${formatNumber(point.activeDays)} / ${formatNumber(point.rangeDays)}`)}
@@ -5182,7 +5193,7 @@ function renderPointCard(point, filters, currentDateValue, currentUser) {
   });
   const metricsHtml = `<div class="point-metrics">
       ${renderPointMetric('Заказано', formatNumber(point.totalOrderedShifts), 'workplace-analysis.points.ordered-shifts', currentUser)}
-      ${renderPointMetric('SLA', formatPercent(point.slaPercent), 'workplace-analysis.points.sla', currentUser)}
+      ${renderPointMetric('SLA', renderPointSlaValue(point), 'workplace-analysis.points.sla', currentUser)}
       ${renderPointMetric('Стабильность', formatPercent(point.stabilityPercent), 'workplace-analysis.points.stability', currentUser)}
       ${renderPointMetric('Гигеры 5 км', formatNumber(point.activeGigers5km), 'workplace-analysis.points.active-gigers-5km', currentUser, activeGigersDetailUrl)}
       ${renderPointMetric('Активные дни', `${formatNumber(point.activeDays)} / ${formatNumber(point.rangeDays)}`, 'workplace-analysis.points.active-days', currentUser)}

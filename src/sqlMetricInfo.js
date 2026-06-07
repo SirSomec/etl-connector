@@ -201,6 +201,9 @@ const WORKPLACE_ANALYSIS_POINTS_SQL = `SELECT
   metrics.active_days AS active_days,
   metrics.sla_ordered_shifts AS sla_ordered_shifts,
   metrics.sla_completed_shifts AS sla_completed_shifts,
+  metrics.forecast_sla_ordered_shifts AS forecast_sla_ordered_shifts,
+  metrics.forecast_sla_active_shifts AS forecast_sla_active_shifts,
+  metrics.forecast_sla_percent AS forecast_sla_percent,
   metrics.sla_percent AS sla_percent,
   metrics.stability_percent AS stability_percent
 FROM (
@@ -211,6 +214,9 @@ FROM (
     os.active_days AS active_days,
     os.sla_ordered_shifts AS sla_ordered_shifts,
     ifNull(sc.sla_completed_shifts, 0) AS sla_completed_shifts,
+    os.forecast_sla_ordered_shifts AS forecast_sla_ordered_shifts,
+    ifNull(fa.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts,
+    if(os.forecast_sla_ordered_shifts > 0, ifNull(fa.forecast_sla_active_shifts, 0) / os.forecast_sla_ordered_shifts * 100, 0) AS forecast_sla_percent,
     if(os.sla_ordered_shifts > 0, ifNull(sc.sla_completed_shifts, 0) / os.sla_ordered_shifts * 100, 0) AS sla_percent,
     if({range_days:Float64} > 0, os.active_days / {range_days:Float64} * 100, 0) AS stability_percent
   FROM (
@@ -218,7 +224,8 @@ FROM (
       o.workplace AS workplace_id,
       ifNull(any(w.title), '') AS workplace_title,
       sum(ifNull(o.amount, 0)) AS total_ordered_shifts,
-      sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_ordered_shifts,
+      sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0 AND toDate(o.start) < {current_date:Date}) AS sla_ordered_shifts,
+      sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0 AND toDate(o.start) >= {current_date:Date}) AS forecast_sla_ordered_shifts,
       countDistinct(toDate(o.start)) AS active_days
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -245,9 +252,30 @@ FROM (
       WHERE ifNull(j.deleted, 0) = 0
     ) AS completed_job ON completed_job.source = o._id
     WHERE <whereSql>
+      AND toDate(o.start) < {current_date:Date}
       AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id
   ) AS sc ON os.workplace_id = sc.workplace_id
+  LEFT JOIN (
+    SELECT
+      o.workplace AS workplace_id,
+      countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    INNER JOIN (
+      SELECT
+        j.source AS source
+      FROM mg_jobs AS j
+      WHERE ifNull(j.deleted, 0) = 0
+        AND ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')
+    ) AS forecast_job ON forecast_job.source = o._id
+    WHERE <whereSql>
+      AND toDate(o.start) >= {current_date:Date}
+    GROUP BY workplace_id
+  ) AS fa ON os.workplace_id = fa.workplace_id
 ) AS metrics
 WHERE <metricWhereSql>
 ORDER BY <sort_whitelist>
@@ -294,6 +322,29 @@ daily_completed AS (
   WHERE <whereSql>
     AND completed_job.is_successful_confirmed_shift = 1
   GROUP BY workplace_id, order_date
+),
+daily_forecast_active AS (
+  SELECT
+    o.workplace AS workplace_id,
+    toString(toDate(o.start)) AS order_date,
+    count() AS forecast_active_shifts,
+    countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
+  FROM mg_orders AS o
+  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  LEFT JOIN mg_clients AS c ON o.client = c._id
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
+  INNER JOIN (
+    SELECT
+      j.source AS source
+    FROM mg_jobs AS j
+    WHERE ifNull(j.deleted, 0) = 0
+      AND ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')
+  ) AS forecast_job ON forecast_job.source = o._id
+  WHERE <whereSql>
+    AND toDate(o.start) >= {current_date:Date}
+  GROUP BY workplace_id, order_date
 )
 SELECT
   d.workplace_id AS workplace_id,
@@ -301,11 +352,16 @@ SELECT
   d.ordered_shifts AS ordered_shifts,
   ifNull(c.completed_shifts, 0) AS completed_shifts,
   d.sla_ordered_shifts AS sla_ordered_shifts,
-  ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts
+  ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts,
+  ifNull(f.forecast_active_shifts, 0) AS forecast_active_shifts,
+  ifNull(f.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts
 FROM daily_orders AS d
 LEFT JOIN daily_completed AS c
   ON d.workplace_id = c.workplace_id
   AND d.order_date = c.order_date
+LEFT JOIN daily_forecast_active AS f
+  ON d.workplace_id = f.workplace_id
+  AND d.order_date = f.order_date
 ORDER BY workplace_id, order_date
 FORMAT JSONEachRow`;
 

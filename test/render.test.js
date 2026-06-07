@@ -1510,6 +1510,8 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
           rangeDays: 3,
           stabilityPercent: 66.66666666666666,
           slaPercent: 55.55555555555556,
+          slaPastPercent: 66.66666666666666,
+          slaForecastPercent: 75,
           activeGigers5km: 17,
           avgDailyOrder: 4.5,
           heatmapDays: [
@@ -1600,7 +1602,8 @@ test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and esca
   assert.match(html, /9/);
   assert.match(html, /Стабильность/);
   assert.match(html, /SLA/);
-  assert.match(html, /55\.6%/);
+  assert.match(html, /67% \/ 75%/);
+  assert.doesNotMatch(html, /55\.6%/);
   assert.match(html, /66\.7%/);
   assert.match(html, /Гигеры 5 км/);
   assert.match(html, /17/);

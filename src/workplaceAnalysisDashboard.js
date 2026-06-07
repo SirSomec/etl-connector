@@ -220,6 +220,7 @@ function normalizeWorkplaceAnalysisFilters(input = {}, now = new Date()) {
   return {
     from,
     to,
+    currentDate: formatDateUTC(today),
     fromDateTime: toDateTimeParam(from),
     toExclusiveDateTime: toDateTimeParam(toExclusive),
     rangeDays: buildDateKeys(from, to).length,
@@ -687,7 +688,9 @@ function mergeWorkplaceAnalysisRowsWithActiveGigers(
     if (!totalsByWorkplace.has(workplaceId)) {
       totalsByWorkplace.set(workplaceId, {
         slaOrderedShifts: 0,
-        slaCompletedShifts: 0
+        slaCompletedShifts: 0,
+        slaForecastOrderedShifts: 0,
+        slaForecastActiveShifts: 0
       });
     }
 
@@ -697,8 +700,13 @@ function mergeWorkplaceAnalysisRowsWithActiveGigers(
     });
     const totals = totalsByWorkplace.get(workplaceId);
 
-    totals.slaOrderedShifts += slaOrderedShifts;
-    totals.slaCompletedShifts += slaCompletedShifts;
+    if (date >= filters.currentDate) {
+      totals.slaForecastOrderedShifts += slaOrderedShifts;
+      totals.slaForecastActiveShifts += numberValue(row.forecast_sla_active_shifts);
+    } else {
+      totals.slaOrderedShifts += slaOrderedShifts;
+      totals.slaCompletedShifts += slaCompletedShifts;
+    }
     maxDailyAmount = Math.max(maxDailyAmount, amount);
   }
 
@@ -709,7 +717,9 @@ function mergeWorkplaceAnalysisRowsWithActiveGigers(
     const dailyValues = dailyByWorkplace.get(workplaceId) || new Map();
     const totals = totalsByWorkplace.get(workplaceId) || {
       slaOrderedShifts: 0,
-      slaCompletedShifts: 0
+      slaCompletedShifts: 0,
+      slaForecastOrderedShifts: 0,
+      slaForecastActiveShifts: 0
     };
     const heatmapDays = dateKeys.map((date) => {
       const dailyValue = dailyValues.get(date) || {};
@@ -737,8 +747,12 @@ function mergeWorkplaceAnalysisRowsWithActiveGigers(
       pinned: pinnedWorkplaceIds.includes(workplaceId),
       stabilityPercent: percent(activeDays, filters.rangeDays),
       slaPercent: percent(totals.slaCompletedShifts, totals.slaOrderedShifts),
+      slaPastPercent: percent(totals.slaCompletedShifts, totals.slaOrderedShifts),
+      slaForecastPercent: percent(totals.slaForecastActiveShifts, totals.slaForecastOrderedShifts),
       slaOrderedShifts: totals.slaOrderedShifts,
       slaCompletedShifts: totals.slaCompletedShifts,
+      slaForecastOrderedShifts: totals.slaForecastOrderedShifts,
+      slaForecastActiveShifts: totals.slaForecastActiveShifts,
       activeGigers5km: numberValue(activeGigersByWorkplace.get(workplaceId)),
       avgDailyOrder: activeDays > 0 ? totalOrderedShifts / activeDays : 0,
       heatmapDays
@@ -980,7 +994,8 @@ function serializeStringArray(values) {
 function baseParamsForFilters(filters) {
   const params = {
     param_from: filters.fromDateTime,
-    param_to: filters.toExclusiveDateTime
+    param_to: filters.toExclusiveDateTime,
+    param_current_date: filters.currentDate
   };
   const where = [
     'o.start >= {from:DateTime}',
@@ -1009,6 +1024,15 @@ function successfulConfirmedJobsSubquery(alias) {
       ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
     WHERE ifNull(j.deleted, 0) = 0
+  ) AS ${alias}`;
+}
+
+function forecastSlaActiveJobsSubquery(alias) {
+  return `(SELECT
+      j.source AS source
+    FROM mg_jobs AS j
+    WHERE ifNull(j.deleted, 0) = 0
+      AND ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')
   ) AS ${alias}`;
 }
 
@@ -1151,6 +1175,9 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
     metrics.active_days AS active_days,
     metrics.sla_ordered_shifts AS sla_ordered_shifts,
     metrics.sla_completed_shifts AS sla_completed_shifts,
+    metrics.forecast_sla_ordered_shifts AS forecast_sla_ordered_shifts,
+    metrics.forecast_sla_active_shifts AS forecast_sla_active_shifts,
+    metrics.forecast_sla_percent AS forecast_sla_percent,
     metrics.sla_sort AS sla_sort,
     metrics.sla_percent AS sla_percent,
     metrics.stability_sort AS stability_sort,
@@ -1168,6 +1195,9 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
       os.active_days AS active_days,
       os.sla_ordered_shifts AS sla_ordered_shifts,
       ifNull(sc.sla_completed_shifts, 0) AS sla_completed_shifts,
+      os.forecast_sla_ordered_shifts AS forecast_sla_ordered_shifts,
+      ifNull(fa.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts,
+      if(os.forecast_sla_ordered_shifts > 0, ifNull(fa.forecast_sla_active_shifts, 0) / os.forecast_sla_ordered_shifts * 100, 0) AS forecast_sla_percent,
       if(os.sla_ordered_shifts > 0, ifNull(sc.sla_completed_shifts, 0) / os.sla_ordered_shifts, 0) AS sla_sort,
       if(os.sla_ordered_shifts > 0, ifNull(sc.sla_completed_shifts, 0) / os.sla_ordered_shifts * 100, 0) AS sla_percent,
       if({range_days:Float64} > 0, os.active_days / {range_days:Float64}, 0) AS stability_sort,
@@ -1182,7 +1212,8 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         ifNull(any(w.address__region), '') AS region,
         ifNull(any(w.address__street), '') AS street,
         sum(ifNull(o.amount, 0)) AS total_ordered_shifts,
-        sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_ordered_shifts,
+        sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0 AND toDate(o.start) < {current_date:Date}) AS sla_ordered_shifts,
+        sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0 AND toDate(o.start) >= {current_date:Date}) AS forecast_sla_ordered_shifts,
         countDistinct(toDate(o.start)) AS active_days
       FROM mg_orders AS o
       LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -1203,9 +1234,24 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
       LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
     INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
     WHERE ${whereSql}
+        AND toDate(o.start) < {current_date:Date}
         AND completed_job.is_successful_confirmed_shift = 1
       GROUP BY workplace_id
     ) AS sc ON os.workplace_id = sc.workplace_id
+    LEFT JOIN (
+      SELECT
+        o.workplace AS workplace_id,
+        countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
+      FROM mg_orders AS o
+      LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+      LEFT JOIN mg_clients AS c ON o.client = c._id
+      LEFT JOIN mg_professions AS p ON o.spec = p.spec
+      LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
+    WHERE ${whereSql}
+        AND toDate(o.start) >= {current_date:Date}
+      GROUP BY workplace_id
+    ) AS fa ON os.workplace_id = fa.workplace_id
   ) AS metrics
   WHERE ${metricWhereSql}`;
 }
@@ -1282,6 +1328,23 @@ function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
     WHERE ${whereSql}
       AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id, order_date
+  ),
+  daily_forecast_active AS (
+    SELECT
+      o.workplace AS workplace_id,
+      toString(toDate(o.start)) AS order_date,
+      count() AS forecast_active_shifts,
+      countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
+    INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
+    WHERE ${whereSql}
+      AND toDate(o.start) >= {current_date:Date}
+    GROUP BY workplace_id, order_date
   )
   SELECT
     d.workplace_id AS workplace_id,
@@ -1289,11 +1352,16 @@ function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
     d.ordered_shifts AS ordered_shifts,
     ifNull(c.completed_shifts, 0) AS completed_shifts,
     d.sla_ordered_shifts AS sla_ordered_shifts,
-    ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts
+    ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts,
+    ifNull(f.forecast_active_shifts, 0) AS forecast_active_shifts,
+    ifNull(f.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts
   FROM daily_orders AS d
   LEFT JOIN daily_completed AS c
     ON d.workplace_id = c.workplace_id
     AND d.order_date = c.order_date
+  LEFT JOIN daily_forecast_active AS f
+    ON d.workplace_id = f.workplace_id
+    AND d.order_date = f.order_date
   ORDER BY workplace_id, order_date
   FORMAT JSONEachRow`;
 }
@@ -1330,6 +1398,23 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       AND o.workplace IN {workplace_ids:Array(String)}
       AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id, order_date
+  ),
+  daily_forecast_active AS (
+    SELECT
+      o.workplace AS workplace_id,
+      toString(toDate(o.start)) AS order_date,
+      count() AS forecast_active_shifts,
+      countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
+    FROM mg_orders AS o
+    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+    LEFT JOIN mg_clients AS c ON o.client = c._id
+    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
+    WHERE ${whereSql}
+      AND o.workplace IN {workplace_ids:Array(String)}
+      AND toDate(o.start) >= {current_date:Date}
+    GROUP BY workplace_id, order_date
   )
   SELECT
     d.workplace_id AS workplace_id,
@@ -1337,11 +1422,16 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
     d.ordered_shifts AS ordered_shifts,
     ifNull(c.completed_shifts, 0) AS completed_shifts,
     d.sla_ordered_shifts AS sla_ordered_shifts,
-    ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts
+    ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts,
+    ifNull(f.forecast_active_shifts, 0) AS forecast_active_shifts,
+    ifNull(f.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts
   FROM daily_orders AS d
   LEFT JOIN daily_completed AS c
     ON d.workplace_id = c.workplace_id
     AND d.order_date = c.order_date
+  LEFT JOIN daily_forecast_active AS f
+    ON d.workplace_id = f.workplace_id
+    AND d.order_date = f.order_date
   ORDER BY workplace_id, order_date
   FORMAT JSONEachRow`;
 }
@@ -1902,6 +1992,7 @@ function cacheKeyForWorkplaceAnalysisSection(section, filters) {
     filters: {
       from: filters.from,
       to: filters.to,
+      currentDate: filters.currentDate,
       pinnedWorkplaceIds: filters.pinnedWorkplaceIds,
       client: filters.client,
       city: filters.city,

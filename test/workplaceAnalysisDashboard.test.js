@@ -31,6 +31,7 @@ test('normalizeWorkplaceAnalysisFilters defaults from previous month start to cu
   assert.deepEqual(filters, {
     from: '2026-05-01',
     to: '2026-06-30',
+    currentDate: '2026-06-15',
     fromDateTime: '2026-05-01 00:00:00',
     toExclusiveDateTime: '2026-07-01 00:00:00',
     rangeDays: 61,
@@ -523,6 +524,65 @@ test('mergeWorkplaceAnalysisRows calculates stability and fills missing heatmap 
   ]);
 });
 
+test('mergeWorkplaceAnalysisRows splits SLA into past and forecast from current date', () => {
+  const filters = normalizeWorkplaceAnalysisFilters(
+    {
+      from: '2026-06-14',
+      to: '2026-06-16'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  const dashboard = mergeWorkplaceAnalysisRows(
+    filters,
+    [
+      {
+        workplace_id: 'wp1',
+        workplace_title: 'Point',
+        total_ordered_shifts: 18,
+        active_days: 3
+      }
+    ],
+    [
+      {
+        workplace_id: 'wp1',
+        order_date: '2026-06-14',
+        ordered_shifts: 6,
+        completed_shifts: 4,
+        sla_ordered_shifts: 6,
+        sla_completed_shifts: 4,
+        forecast_sla_active_shifts: 6
+      },
+      {
+        workplace_id: 'wp1',
+        order_date: '2026-06-15',
+        ordered_shifts: 7,
+        completed_shifts: 0,
+        sla_ordered_shifts: 7,
+        sla_completed_shifts: 0,
+        forecast_sla_active_shifts: 5
+      },
+      {
+        workplace_id: 'wp1',
+        order_date: '2026-06-16',
+        ordered_shifts: 5,
+        completed_shifts: 0,
+        sla_ordered_shifts: 5,
+        sla_completed_shifts: 0,
+        forecast_sla_active_shifts: 4
+      }
+    ]
+  );
+
+  assert.equal(dashboard.points[0].slaPercent, 66.66666666666666);
+  assert.equal(dashboard.points[0].slaPastPercent, 66.66666666666666);
+  assert.equal(dashboard.points[0].slaOrderedShifts, 6);
+  assert.equal(dashboard.points[0].slaCompletedShifts, 4);
+  assert.equal(dashboard.points[0].slaForecastPercent, 75);
+  assert.equal(dashboard.points[0].slaForecastOrderedShifts, 12);
+  assert.equal(dashboard.points[0].slaForecastActiveShifts, 9);
+});
+
 const { loadWorkplaceAnalysisDashboard } = require('../src/workplaceAnalysisDashboard');
 
 test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders with safe parameters', async () => {
@@ -637,6 +697,10 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls[3].query.includes('completed_job.is_successful_confirmed_shift = 1'), true);
   assert.equal(calls[3].query.includes('sla_ordered_shifts'), true);
   assert.equal(calls[3].query.includes('sla_completed_shifts'), true);
+  assert.equal(calls[3].params.param_current_date, '2026-06-15');
+  assert.equal(calls[3].query.includes('toDate(o.start) >= {current_date:Date}'), true);
+  assert.equal(calls[3].query.includes("ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')"), true);
+  assert.equal(calls[3].query.includes('forecast_sla_active_shifts'), true);
   assert.deepEqual(dashboard.filterOptions.client, ['Бренд', 'Бренд 2']);
   assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
   assert.deepEqual(dashboard.filterOptions.jobStatus, ['confirmed', 'failed']);

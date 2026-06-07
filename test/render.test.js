@@ -2095,6 +2095,8 @@ test('renderWorkplaceAnalysisDashboard keeps point metric values on one line', (
           rangeDays: 3,
           stabilityPercent: 100,
           slaPercent: 100,
+          slaPastPercent: 100,
+          slaForecastPercent: 100,
           activeGigers5km: 1234567890,
           avgDailyOrder: 3,
           heatmapDays: []
@@ -2104,8 +2106,9 @@ test('renderWorkplaceAnalysisDashboard keeps point metric values on one line', (
   });
 
   assert.match(html, /\.point-metric-value\s*\{[^}]*font-size:\s*12px;[\s\S]*?white-space:\s*nowrap;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;/);
+  assert.match(html, /\.point-metric-value\.compact\s*\{[^}]*font-size:\s*10px;/);
   assert.doesNotMatch(html, /\.point-metric-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
-  assert.match(html, />100\.0%<\/div>/);
+  assert.match(html, /<div class="point-metric-value compact">100% \/ 100%<\/div>/);
 });
 
 test('renderWorkplaceAnalysisDashboard renders pin checkboxes and preserves pinned workplaces', () => {

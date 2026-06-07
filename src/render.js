@@ -6632,7 +6632,7 @@ function renderWorkplacePointKpis(summary, currentUser) {
   return renderKpiGrid([
     { label: 'Заказано', value: formatNumber(summary.orderedShifts), metricId: 'workplace-point.summary.ordered-shifts' },
     { label: 'Выполнено', value: formatNumber(summary.completedShifts), metricId: 'workplace-point.summary.completed-shifts' },
-    { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'workplace-point.summary.sla' },
+    { label: 'SLA', value: renderPointSlaValue(summary), metricId: 'workplace-point.summary.sla' },
     { label: 'Стабильность', value: formatPercent(summary.stabilityPercent), metricId: 'workplace-point.summary.stability' },
     {
       label: 'Уникальные завершали',
@@ -6660,7 +6660,7 @@ function renderWorkplacePointSummaryKpis(summary, currentUser) {
   return renderKpiGrid([
     { label: 'Заказано', value: formatNumber(summary.orderedShifts), metricId: 'workplace-point.summary.ordered-shifts' },
     { label: 'Выполнено', value: formatNumber(summary.completedShifts), metricId: 'workplace-point.summary.completed-shifts' },
-    { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'workplace-point.summary.sla' },
+    { label: 'SLA', value: renderPointSlaValue(summary), metricId: 'workplace-point.summary.sla' },
     { label: 'Стабильность', value: formatPercent(summary.stabilityPercent), metricId: 'workplace-point.summary.stability' },
     {
       label: 'Уникальные завершали',
@@ -6881,12 +6881,30 @@ function dayLabelFromDateKey(value) {
   return String(date.getUTCDate());
 }
 
-function calendarSlaLevel(row) {
+function hasForecastSlaPercent(row) {
+  return row.forecastSlaPercent !== null
+    && typeof row.forecastSlaPercent !== 'undefined'
+    && row.forecastSlaPercent !== '';
+}
+
+function isPointForecastCalendarDay(row, currentDateKey) {
+  return Boolean(currentDateKey && row.period >= currentDateKey);
+}
+
+function pointCalendarSlaPercent(row, currentDateKey) {
+  if (isPointForecastCalendarDay(row, currentDateKey) && hasForecastSlaPercent(row)) {
+    return Number(row.forecastSlaPercent) || 0;
+  }
+
+  return Number(row.slaPercent) || 0;
+}
+
+function calendarSlaLevel(row, currentDateKey) {
   if ((Number(row.orderedShifts) || 0) <= 0) {
     return null;
   }
 
-  const sla = Number(row.slaPercent) || 0;
+  const sla = pointCalendarSlaPercent(row, currentDateKey);
 
   if (sla >= 90) {
     return 5;
@@ -6908,13 +6926,14 @@ function calendarSlaLevel(row) {
 }
 
 function renderPointCalendarCell(row, currentDateKey, filters) {
-  const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
-  const slaLevel = calendarSlaLevel(row);
+  const dailySla = pointCalendarSlaPercent(row, currentDateKey);
+  const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(dailySla)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
+  const slaLevel = calendarSlaLevel(row, currentDateKey);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
-  const dailySla = Number(row.slaPercent) || 0;
   const dropoffs24h = Number(row.dropoffs24h) || 0;
   const orderedShifts = Number(row.orderedShifts) || 0;
-  const riskLevel = orderedShifts > 0 && (dailySla < 50 || dropoffs24h > 0)
+  const isForecastDay = isPointForecastCalendarDay(row, currentDateKey);
+  const riskLevel = orderedShifts > 0 && (dailySla < 50 || (!isForecastDay && dropoffs24h > 0))
     ? 'high'
     : orderedShifts > 0 && dailySla < 80
       ? 'medium'
@@ -6929,7 +6948,7 @@ function renderPointCalendarCell(row, currentDateKey, filters) {
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
       ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ')}
-      ${renderPointCalendarValue('SLA', formatPercent(row.slaPercent))}
+      ${renderPointCalendarValue('SLA', formatPercent(dailySla))}
       ${renderPointCalendarValue('Сл', formatNumber(row.dropoffs24h), 'Слеты')}
       ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее')}
       ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум')}
@@ -6939,13 +6958,14 @@ function renderPointCalendarCell(row, currentDateKey, filters) {
 }
 
 function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
-  const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(row.slaPercent)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
-  const slaLevel = calendarSlaLevel(row);
+  const dailySla = pointCalendarSlaPercent(row, currentDateKey);
+  const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; SLA ${formatPercent(dailySla)}; слеты ${formatNumber(row.dropoffs24h)}; размещение среднее ${formatLeadTimeMinutes(row.orderLeadAvgMinutes)}; размещение минимум ${formatLeadTimeMinutes(row.orderLeadMinMinutes)}`;
+  const slaLevel = calendarSlaLevel(row, currentDateKey);
   const slaLevelAttribute = slaLevel === null ? '' : ` data-sla-level="${escapeHtml(slaLevel)}"`;
-  const dailySla = Number(row.slaPercent) || 0;
   const dropoffs24h = Number(row.dropoffs24h) || 0;
   const orderedShifts = Number(row.orderedShifts) || 0;
-  const riskLevel = orderedShifts > 0 && (dailySla < 50 || dropoffs24h > 0)
+  const isForecastDay = isPointForecastCalendarDay(row, currentDateKey);
+  const riskLevel = orderedShifts > 0 && (dailySla < 50 || (!isForecastDay && dropoffs24h > 0))
     ? 'high'
     : orderedShifts > 0 && dailySla < 80
       ? 'medium'
@@ -6965,7 +6985,7 @@ function renderPointCalendarCell(row, currentDateKey, filters, currentUser) {
     <div class="point-calendar-date">${escapeHtml(dayLabelFromDateKey(row.period))}</div>
     <div class="point-calendar-values">
       ${renderPointCalendarValue('З', formatNumber(row.orderedShifts), 'Заказ', 'workplace-point.charts.calendar-ordered-shifts', currentUser)}
-      ${renderPointCalendarValue('SLA', formatPercent(row.slaPercent), 'SLA', 'workplace-point.charts.calendar-sla', currentUser)}
+      ${renderPointCalendarValue('SLA', formatPercent(dailySla), 'SLA', 'workplace-point.charts.calendar-sla', currentUser)}
       ${renderPointCalendarValue('Сл', formatNumber(row.dropoffs24h), 'Слеты', 'workplace-point.charts.calendar-dropoffs-24h', currentUser)}
       ${renderPointCalendarValue('Ср', formatLeadTimeCompactMinutes(row.orderLeadAvgMinutes), 'Размещение среднее', 'workplace-point.charts.calendar-order-lead-avg', currentUser)}
       ${renderPointCalendarValue('М', formatLeadTimeCompactMinutes(row.orderLeadMinMinutes), 'Размещение минимум', 'workplace-point.charts.calendar-order-lead-min', currentUser)}

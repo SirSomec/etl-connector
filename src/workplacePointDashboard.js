@@ -19,6 +19,8 @@ const WORKPLACE_POINT_SECTIONS = new Set(WORKPLACE_POINT_SECTION_NAMES);
 const DAY_DETAIL_COMPLETED_JOB_STATUSES = new Set(['confirmed', 'completed']);
 const DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL = "('confirmed', 'completed')";
 const DAY_DETAIL_FACTUAL_TIME_FORMAT_SQL = "'%d.%m.%Y %H:%i'";
+const FORECAST_SLA_ACTIVE_STATUSES_SQL =
+  "('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')";
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -112,6 +114,14 @@ function numberValue(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function numberValueOrDefault(value, fallback) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return numberValue(fallback);
+  }
+
+  return numberValue(value);
+}
+
 function nullableNumberValue(value) {
   if (value === null || typeof value === 'undefined' || value === '') {
     return null;
@@ -169,6 +179,7 @@ function normalizeWorkplacePointFilters(input = {}, now = new Date()) {
     workplaceId: cleanText(input.workplaceId),
     from,
     to,
+    currentDate: formatDateUTC(today),
     fromDateTime: toDateTimeParam(from),
     toExclusiveDateTime: toDateTimeParam(toExclusive),
     activeSessionFromDateTime: formatDateTimeUTC(activeSessionFromDate),
@@ -253,6 +264,10 @@ function mergeWorkplacePointRows(filters, datasets) {
   const reviewSummaryRow = (datasets.reviewSummaryRows || [])[0] || {};
   const orderedShifts = numberValue(summaryRow.ordered_shifts);
   const completedShifts = numberValue(summaryRow.completed_shifts);
+  const slaOrderedShifts = numberValueOrDefault(summaryRow.sla_ordered_shifts, orderedShifts);
+  const slaCompletedShifts = numberValueOrDefault(summaryRow.sla_completed_shifts, completedShifts);
+  const slaForecastOrderedShifts = numberValue(summaryRow.forecast_sla_ordered_shifts);
+  const slaForecastActiveShifts = numberValue(summaryRow.forecast_sla_active_shifts);
   const activeDays = numberValue(summaryRow.active_days);
   const filterOptions = filterOptionsFromRows(datasets.filterOptionRows || []);
   const radiusWorkers = RADIUS_KM.reduce((values, radius) => {
@@ -276,12 +291,15 @@ function mergeWorkplacePointRows(filters, datasets) {
   const dailyRows = (datasets.dailyRows || []).map((row) => {
     const dailyOrderedShifts = numberValue(row.ordered_shifts);
     const dailyCompletedShifts = numberValue(row.completed_shifts);
+    const dailyForecastSlaActiveShifts = numberValue(row.forecast_sla_active_shifts);
 
     return {
       period: String(row.period || ''),
       orderedShifts: dailyOrderedShifts,
       completedShifts: dailyCompletedShifts,
       slaPercent: percent(dailyCompletedShifts, dailyOrderedShifts),
+      forecastSlaActiveShifts: dailyForecastSlaActiveShifts,
+      forecastSlaPercent: percent(dailyForecastSlaActiveShifts, dailyOrderedShifts),
       dropoffs24h: numberValue(row.dropoffs_24h),
       orderLeadAvgMinutes: nullableNumberValue(row.avg_order_lead_minutes),
       orderLeadMinMinutes: nullableNumberValue(row.min_order_lead_minutes)
@@ -303,6 +321,7 @@ function mergeWorkplacePointRows(filters, datasets) {
 
   return {
     filters,
+    currentDate: filters.currentDate,
     point: {
       workplaceId: String(metadataRow.workplace_id || filters.workplaceId),
       title: titleForPoint(metadataRow),
@@ -315,7 +334,13 @@ function mergeWorkplacePointRows(filters, datasets) {
     summary: {
       orderedShifts,
       completedShifts,
-      slaPercent: percent(completedShifts, orderedShifts),
+      slaPercent: percent(slaCompletedShifts, slaOrderedShifts),
+      slaPastPercent: percent(slaCompletedShifts, slaOrderedShifts),
+      slaForecastPercent: percent(slaForecastActiveShifts, slaForecastOrderedShifts),
+      slaOrderedShifts,
+      slaCompletedShifts,
+      slaForecastOrderedShifts,
+      slaForecastActiveShifts,
       stabilityPercent: percent(activeDays, filters.rangeDays),
       activeDays,
       rangeDays: filters.rangeDays,
@@ -596,6 +621,7 @@ function baseParams(filters) {
     param_workplace_id: filters.workplaceId,
     param_from: filters.fromDateTime,
     param_to: filters.toExclusiveDateTime,
+    param_current_date: filters.currentDate,
     param_active_session_from: filters.activeSessionFromDateTime,
     param_active_session_to: filters.activeSessionToDateTime
   };
@@ -862,12 +888,16 @@ function summaryQuery(whereSql) {
   order_summary AS (
     SELECT
       sum(amount) AS ordered_shifts,
+      sumIf(amount, toDate(order_start) < {current_date:Date}) AS sla_ordered_shifts,
+      sumIf(amount, toDate(order_start) >= {current_date:Date}) AS forecast_sla_ordered_shifts,
       countDistinct(period) AS active_days
     FROM filtered_orders
   ),
   shift_summary AS (
     SELECT
       countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
+      countIf(is_successful_confirmed_shift = 1 AND toDate(start) < {current_date:Date}) AS sla_completed_shifts,
+      countIf(ifNull(status, '') IN ${FORECAST_SLA_ACTIVE_STATUSES_SQL} AND toDate(start) >= {current_date:Date}) AS forecast_sla_active_shifts,
       uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_completed_workers,
       uniqExactIf(
         sf.job_id,
@@ -882,6 +912,10 @@ function summaryQuery(whereSql) {
   SELECT
     os.ordered_shifts AS ordered_shifts,
     ifNull(ss.completed_shifts, 0) AS completed_shifts,
+    os.sla_ordered_shifts AS sla_ordered_shifts,
+    ifNull(ss.sla_completed_shifts, 0) AS sla_completed_shifts,
+    os.forecast_sla_ordered_shifts AS forecast_sla_ordered_shifts,
+    ifNull(ss.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts,
     os.active_days AS active_days,
     ifNull(ss.unique_completed_workers, 0) AS unique_completed_workers,
     ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
@@ -958,6 +992,7 @@ function dailyQuery(whereSql) {
     SELECT
       toString(toDate(sf.start)) AS period,
       countIf(sf.is_successful_confirmed_shift = 1) AS completed_shifts,
+      countIf(ifNull(sf.status, '') IN ${FORECAST_SLA_ACTIVE_STATUSES_SQL} AND toDate(sf.start) >= {current_date:Date}) AS forecast_sla_active_shifts,
       uniqExactIf(
         sf.job_id,
         de.drop_at IS NOT NULL
@@ -975,6 +1010,7 @@ function dailyQuery(whereSql) {
     od.avg_order_lead_minutes AS avg_order_lead_minutes,
     od.min_order_lead_minutes AS min_order_lead_minutes,
     ifNull(sd.completed_shifts, 0) AS completed_shifts,
+    ifNull(sd.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts,
     ifNull(sd.dropoffs_24h, 0) AS dropoffs_24h
   FROM order_daily AS od
   LEFT JOIN shift_daily AS sd ON od.period = sd.period
@@ -1417,6 +1453,7 @@ function cacheKeyForWorkplacePointSection(section, filters) {
       workplaceId: filters.workplaceId,
       from: filters.from,
       to: filters.to,
+      currentDate: filters.currentDate,
       activeSessionFromDateTime: filters.activeSessionFromDateTime,
       activeSessionToDateTime: filters.activeSessionToDateTime,
       profession: filters.profession,

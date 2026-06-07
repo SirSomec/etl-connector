@@ -2308,6 +2308,8 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
         orderedShifts: 12,
         completedShifts: 9,
         slaPercent: 75,
+        slaPastPercent: 71.42857142857143,
+        slaForecastPercent: 80,
         stabilityPercent: 50,
         uniqueCompletedWorkers: 5,
         uniqueBookedWorkers: 8,
@@ -2352,6 +2354,7 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
           orderedShifts: 4,
           completedShifts: 1,
           slaPercent: 25,
+          forecastSlaPercent: 100,
           dropoffs24h: 2,
           orderLeadAvgMinutes: 90,
           orderLeadMinMinutes: 30
@@ -2411,6 +2414,7 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(html, /2026-06-02/);
   assert.match(html, /Календарь заказа и SLA/);
   assert.match(html, /Профессии точки/);
+  assert.match(html, /71% \/ 80%/);
   assert.match(html, /75\.0%/);
   assert.doesNotMatch(html, /<script>Point<\/script>/);
   assert.doesNotMatch(html, /Заказ и SLA по дням/);
@@ -2443,7 +2447,8 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.doesNotMatch(calendarPanelHtml, /data-date="2026-06-03" data-sla-level=/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-06-30"/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-date">30<\/div>/);
-  assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-07-01" data-sla-level="1"/);
+  assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-07-01" data-sla-level="5" title="[^"]*SLA 100\.0%[^"]*" data-risk-level="low"/);
+  assert.match(calendarPanelHtml, /data-date="2026-07-01"[\s\S]*?<span title="SLA">SLA<\/span>\s*<strong>100\.0%<\/strong>/);
   assert.match(calendarPanelHtml, /<span title="Размещение среднее">Ср<\/span>\s*<strong>1ч30м<\/strong>/);
   assert.match(calendarPanelHtml, /<span title="Размещение минимум">М<\/span>\s*<strong>30м<\/strong>/);
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-07-02" title=/);

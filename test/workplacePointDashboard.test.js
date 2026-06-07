@@ -392,6 +392,10 @@ test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius 
       {
         ordered_shifts: 12,
         completed_shifts: 9,
+        sla_ordered_shifts: 7,
+        sla_completed_shifts: 5,
+        forecast_sla_ordered_shifts: 5,
+        forecast_sla_active_shifts: 4,
         active_days: 2,
         unique_completed_workers: 5,
         unique_booked_workers: 8,
@@ -411,6 +415,7 @@ test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius 
         period: '2026-06-02',
         ordered_shifts: 5,
         completed_shifts: 4,
+        forecast_sla_active_shifts: 4,
         dropoffs_24h: 1,
         avg_order_lead_minutes: null,
         min_order_lead_minutes: null
@@ -438,7 +443,13 @@ test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius 
   assert.equal(dashboard.point.address, 'Moscow, Lenina 10');
   assert.equal(dashboard.summary.orderedShifts, 12);
   assert.equal(dashboard.summary.completedShifts, 9);
-  assert.equal(dashboard.summary.slaPercent, 75);
+  assert.equal(dashboard.summary.slaPercent, 71.42857142857143);
+  assert.equal(dashboard.summary.slaPastPercent, 71.42857142857143);
+  assert.equal(dashboard.summary.slaForecastPercent, 80);
+  assert.equal(dashboard.summary.slaOrderedShifts, 7);
+  assert.equal(dashboard.summary.slaCompletedShifts, 5);
+  assert.equal(dashboard.summary.slaForecastOrderedShifts, 5);
+  assert.equal(dashboard.summary.slaForecastActiveShifts, 4);
   assert.equal(dashboard.summary.stabilityPercent, 100);
   assert.equal(dashboard.summary.uniqueCompletedWorkers, 5);
   assert.equal(dashboard.summary.uniqueBookedWorkers, 8);
@@ -456,6 +467,7 @@ test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius 
     20: 18
   });
   assert.equal(dashboard.dailyRows[0].slaPercent, 71.42857142857143);
+  assert.equal(dashboard.dailyRows[1].forecastSlaPercent, 80);
   assert.equal(dashboard.dailyRows[0].orderLeadAvgMinutes, 2160);
   assert.equal(dashboard.dailyRows[0].orderLeadMinMinutes, 240);
   assert.equal(dashboard.dailyRows[1].orderLeadAvgMinutes, null);

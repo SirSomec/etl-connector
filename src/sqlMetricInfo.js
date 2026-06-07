@@ -661,12 +661,16 @@ booked_workers AS (
 order_summary AS (
   SELECT
     sum(amount) AS ordered_shifts,
+    sumIf(amount, toDate(order_start) < {current_date:Date}) AS sla_ordered_shifts,
+    sumIf(amount, toDate(order_start) >= {current_date:Date}) AS forecast_sla_ordered_shifts,
     countDistinct(period) AS active_days
   FROM filtered_orders
 ),
 shift_summary AS (
   SELECT
     countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
+    countIf(is_successful_confirmed_shift = 1 AND toDate(start) < {current_date:Date}) AS sla_completed_shifts,
+    countIf(ifNull(status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed') AND toDate(start) >= {current_date:Date}) AS forecast_sla_active_shifts,
     uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_completed_workers,
     uniqExactIf(sf.job_id, de.drop_at IS NOT NULL AND sf.start IS NOT NULL AND de.drop_at >= sf.start - INTERVAL 24 HOUR AND de.drop_at <= sf.start) AS dropoffs_24h
   FROM shift_facts AS sf
@@ -675,6 +679,10 @@ shift_summary AS (
 SELECT
   os.ordered_shifts AS ordered_shifts,
   ifNull(ss.completed_shifts, 0) AS completed_shifts,
+  os.sla_ordered_shifts AS sla_ordered_shifts,
+  ifNull(ss.sla_completed_shifts, 0) AS sla_completed_shifts,
+  os.forecast_sla_ordered_shifts AS forecast_sla_ordered_shifts,
+  ifNull(ss.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts,
   os.active_days AS active_days,
   ifNull(ss.unique_completed_workers, 0) AS unique_completed_workers,
   ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
@@ -759,6 +767,7 @@ shift_daily AS (
   SELECT
     toString(toDate(sf.start)) AS period,
     countIf(sf.is_successful_confirmed_shift = 1) AS completed_shifts,
+    countIf(ifNull(sf.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed') AND toDate(sf.start) >= {current_date:Date}) AS forecast_sla_active_shifts,
     uniqExactIf(sf.job_id, de.drop_at IS NOT NULL AND sf.start IS NOT NULL AND de.drop_at >= sf.start - INTERVAL 24 HOUR AND de.drop_at <= sf.start) AS dropoffs_24h
   FROM shift_facts AS sf
   LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
@@ -770,6 +779,7 @@ SELECT
   od.avg_order_lead_minutes AS avg_order_lead_minutes,
   od.min_order_lead_minutes AS min_order_lead_minutes,
   ifNull(sd.completed_shifts, 0) AS completed_shifts,
+  ifNull(sd.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts,
   ifNull(sd.dropoffs_24h, 0) AS dropoffs_24h
 FROM order_daily AS od
 LEFT JOIN shift_daily AS sd ON od.period = sd.period
@@ -1363,7 +1373,7 @@ defineMetricSet({
     { id: 'workplace-point.summary', title: 'Детализация точки: основные показатели', description: 'Показывает заказ, выполнение, SLA, стабильность, уникальных исполнителей и слеты по выбранной рабочей точке.' },
     { suffix: 'ordered-shifts', title: 'Детализация точки: заказано', description: 'Сумма планового количества смен по выбранной рабочей точке.' },
     { suffix: 'completed-shifts', title: 'Детализация точки: выполнено', description: 'Количество успешных подтвержденных смен по выбранной рабочей точке; нулевые прогулы исключаются.' },
-    { suffix: 'sla', title: 'Детализация точки: SLA', description: 'Доля успешных подтвержденных смен от планового заказа по точке.' },
+    { suffix: 'sla', title: 'Детализация точки: SLA', description: 'Две доли: прошлое считается по успешным подтвержденным сменам до текущего дня, прогноз - по активным статусам с текущего дня до конца фильтра.' },
     { suffix: 'stability', title: 'Детализация точки: стабильность', description: 'Доля дней выбранного периода, в которые по точке был заказ.' },
     { suffix: 'unique-completed-workers', title: 'Детализация точки: уникальные завершали', description: 'Количество уникальных исполнителей, которые завершили смену на точке.' },
     { suffix: 'unique-booked-workers', title: 'Детализация точки: уникальные бронировали', description: 'Количество уникальных исполнителей, у которых была бронь смены на точке.' },
@@ -1389,7 +1399,7 @@ defineMetricSet({
   sql: WORKPLACE_POINT_DAILY_SQL,
   metrics: [
     { id: 'workplace-point.charts.calendar-ordered-shifts', title: 'Календарь точки: заказ', description: 'Дневной плановый заказ по выбранной точке.' },
-    { id: 'workplace-point.charts.calendar-sla', title: 'Календарь точки: SLA', description: 'Дневная доля успешных подтвержденных смен от заказа по выбранной точке.' },
+    { id: 'workplace-point.charts.calendar-sla', title: 'Календарь точки: SLA', description: 'Для прошлых дней показывает фактический SLA, для текущего и будущих дней - прогнозный SLA по активным статусам.' },
     { id: 'workplace-point.charts.calendar-dropoffs-24h', title: 'Календарь точки: слеты < 24ч', description: 'Дневное количество исполнительских слетов менее чем за 24 часа до старта.' },
     { id: 'workplace-point.charts.calendar-order-lead-avg', title: 'Календарь точки: среднее размещение', description: 'Среднее время между созданием заказа и плановым стартом смены за день.' },
     { id: 'workplace-point.charts.calendar-order-lead-min', title: 'Календарь точки: минимальное размещение', description: 'Минимальное время между созданием заказа и плановым стартом смены за день.' },

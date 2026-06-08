@@ -74,6 +74,7 @@ const {
   renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
+  renderPasswordChange,
   renderPreloadManagement,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
@@ -431,6 +432,10 @@ function createApp({
       return 'auth';
     }
 
+    if (pathName === '/account/password') {
+      return 'auth';
+    }
+
     if (pathName === '/admin/users' || pathName.startsWith('/admin/users/')) {
       return 'users';
     }
@@ -503,6 +508,10 @@ function createApp({
 
     if (method === 'POST' && pathName === '/logout') {
       return 'logout';
+    }
+
+    if (method === 'POST' && pathName === '/account/password') {
+      return 'password_change';
     }
 
     if (method === 'POST' && pathName.startsWith('/admin/')) {
@@ -601,6 +610,41 @@ function createApp({
     return text;
   }
 
+  function passwordChangeRequired(user) {
+    return user && user.source !== 'env' && user.mustChangePassword === true;
+  }
+
+  function passwordChangeAllowedPath(pathName) {
+    return pathName === '/account/password' ||
+      pathName === '/logout' ||
+      pathName === '/login' ||
+      pathName === '/healthz';
+  }
+
+  function enforcePasswordChange(req, res, auth) {
+    if (!passwordChangeRequired(auth && auth.user) || passwordChangeAllowedPath(req.path)) {
+      return true;
+    }
+
+    if (req.method === 'GET') {
+      res.redirect(
+        302,
+        `/account/password?required=1&returnTo=${encodeURIComponent(req.originalUrl || '/')}`
+      );
+      return false;
+    }
+
+    sendError(
+      res,
+      403,
+      'Forbidden',
+      'Сначала смените временный пароль.',
+      activeNavForPath(req.path),
+      viewContext(req)
+    );
+    return false;
+  }
+
   async function loadRequestAuth(req) {
     if (!authEnabled) {
       req.auth = null;
@@ -650,6 +694,10 @@ function createApp({
         return;
       }
 
+      if (!enforcePasswordChange(req, res, auth)) {
+        return;
+      }
+
       if (permission && !hasPermission(auth.user, permission)) {
         sendError(
           res,
@@ -682,6 +730,10 @@ function createApp({
         }
 
         sendError(res, 401, 'Unauthorized', 'Требуется вход в систему');
+        return;
+      }
+
+      if (!enforcePasswordChange(req, res, auth)) {
         return;
       }
 
@@ -913,6 +965,60 @@ function createApp({
       recordCurrentUserActivity(req, 'logout');
       res.setHeader('Set-Cookie', sessions.destroySession(req));
       res.redirect(303, '/login');
+    })
+  );
+
+  app.get(
+    '/account/password',
+    requireAuth(),
+    asyncRoute(async (req, res) => {
+      res
+        .status(200)
+        .type('html')
+        .send(
+          renderPasswordChange({
+            database,
+            required: req.query.required === '1',
+            returnTo: req.query.returnTo || '/',
+            ...viewContext(req)
+          })
+        );
+    })
+  );
+
+  app.post(
+    '/account/password',
+    requireAuth(),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'account-password')) {
+        return;
+      }
+
+      const returnTo = safeReturnTo(req.body && req.body.returnTo);
+
+      try {
+        await accounts.changeOwnPassword(req.auth.user.id, {
+          currentPassword: req.body.currentPassword,
+          newPassword: req.body.newPassword,
+          confirmPassword: req.body.confirmPassword
+        });
+
+        recordCurrentUserActivity(req, 'password_change');
+        res.redirect(303, returnTo);
+      } catch (error) {
+        res
+          .status(400)
+          .type('html')
+          .send(
+            renderPasswordChange({
+              database,
+              error: error && error.message,
+              required: passwordChangeRequired(req.auth.user),
+              returnTo,
+              ...viewContext(req)
+            })
+          );
+      }
     })
   );
 

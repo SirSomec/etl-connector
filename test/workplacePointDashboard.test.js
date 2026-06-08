@@ -1209,6 +1209,56 @@ test('loadWorkplacePointDashboardShell uses directory cache metadata before live
   assert.deepEqual(dashboard.filters.profession, ['picker']);
 });
 
+test('loadWorkplacePointDashboard constrains point metrics to actual orders and removes aggregate cross joins', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point metadata') {
+        return [{ workplace_id: 'wp1', workplace_title: 'Point', client_id: '' }];
+      }
+
+      return [];
+    }
+  };
+
+  await loadWorkplacePointDashboard(
+    client,
+    {
+      workplaceId: 'wp1',
+      from: '2026-06-01',
+      to: '2026-06-30'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  const orderMetricCalls = calls.filter((call) =>
+    [
+      'workplace point filter options',
+      'workplace point summary',
+      'workplace point daily',
+      'workplace point professions'
+    ].includes(call.operation)
+  );
+
+  for (const call of orderMetricCalls) {
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+    assert.equal(call.query.includes('c.title IS NULL OR c.title NOT IN'), true);
+    assert.equal(call.query.includes("ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
+  }
+
+  const summaryCall = calls.find((call) => call.operation === 'workplace point summary');
+
+  assert.equal(summaryCall.query.includes('toString(j.piecework)'), true);
+  assert.equal(summaryCall.query.includes('CROSS JOIN shift_summary AS ss'), false);
+  assert.equal(summaryCall.query.includes('CROSS JOIN booked_workers AS bw'), false);
+  assert.equal(summaryCall.query.includes('LEFT JOIN shift_summary AS ss ON 1 = 1'), true);
+  assert.equal(summaryCall.query.includes('LEFT JOIN booked_workers AS bw ON 1 = 1'), true);
+});
+
 test('loadWorkplacePointDashboardSection loads and caches summary, charts, and radius independently', async () => {
   let timestamp = Date.parse('2026-06-15T12:00:00.000Z');
   const calls = [];

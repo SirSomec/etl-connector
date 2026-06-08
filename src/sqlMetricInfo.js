@@ -2,6 +2,10 @@ const {
   successfulConfirmedShiftCondition,
   successfulConfirmedShiftFlagExpression
 } = require('./successfulConfirmedShift');
+const {
+  actualOrderDomainCondition,
+  actualOrderJoinsSql
+} = require('./analyticsDomainSql');
 
 const SQL_METRIC_INFO = {};
 
@@ -53,7 +57,7 @@ const SALES_SHIFT_FACTS_SQL = `WITH shift_facts AS (
 self_bookings AS (
   SELECT
     h.job AS job,
-    max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0)) AS is_self_booked
+    argMax(if(h.initiator = 'worker', 1, 0), coalesce(h.createdAt, h.updatedAt)) AS is_self_booked
   FROM mg_job_history AS h
   INNER JOIN shift_facts AS sf ON h.job = sf.job
   WHERE h.job != ''
@@ -65,7 +69,7 @@ surcharges AS (
     sum(coalesce(nullIf(t.payment_amount, 0), t.amount, 0)) AS surcharge_amount
   FROM mg_transactions AS t
   INNER JOIN shift_facts AS sf ON t.entityId = sf.job
-  WHERE t.transaction_type = 'surcharge'
+  WHERE ifNull(t.deleted, 0) = 0
     AND t.entityId != ''
   GROUP BY t.entityId
 ),
@@ -186,6 +190,214 @@ const SALES_STATUSES_SQL = `WITH shift_facts AS (
     AND j.start >= {from:DateTime}
     AND j.start < {to:DateTime}
 )
+SELECT
+  if(status = '', 'empty', status) AS status,
+  count() AS shifts
+FROM shift_facts
+GROUP BY status
+ORDER BY shifts DESC
+FORMAT JSONEachRow`;
+
+function sqlInspectorNullableNumberExpression(alias, field) {
+  return `toFloat64OrNull(nullIf(trimBoth(ifNull(toString(${alias}.${field}), '')), ''))`;
+}
+
+function sqlInspectorNullablePositiveNumberExpression(alias, field) {
+  return `nullIf(${sqlInspectorNullableNumberExpression(alias, field)}, 0)`;
+}
+
+function sqlInspectorPositiveOrZeroNumberExpression(alias, field) {
+  return `ifNull(${sqlInspectorNullablePositiveNumberExpression(alias, field)}, 0)`;
+}
+
+function sqlInspectorTransactionAmountExpression(alias = 't') {
+  return `coalesce(${sqlInspectorNullableNumberExpression(alias, 'payment_amount')}, ${sqlInspectorNullableNumberExpression(alias, 'amount')}, 0)`;
+}
+
+const SALES_DOMAIN_ACTUAL_ORDERS_SQL = `actual_orders AS (
+  SELECT
+    o._id AS order_id,
+    o.start AS start,
+    o.client AS client,
+    o.workplace AS workplace,
+    ifNull(o.amount, 0) AS amount,
+    ifNull(nullIf(c.title, ''), 'Р‘РµР· Р±СЂРµРЅРґР°') AS brand,
+    ifNull(o.contract_type, '') AS order_contract_type,
+    ifNull(ct.contract_type, '') AS contractor_contract_type,
+    ifNull(ct.comission, 0) AS commission_percent
+  FROM mg_orders AS o
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
+  WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
+    AND o.start >= {from:DateTime}
+    AND o.start < {to:DateTime}
+)`;
+
+const SALES_DOMAIN_SHIFT_FACTS_SQL = `WITH ${SALES_DOMAIN_ACTUAL_ORDERS_SQL},
+shift_facts AS (
+  SELECT
+    j._id AS job,
+    j.start AS shift_start,
+    ifNull(j.status, '') AS status,
+    coalesce(nullIf(j.client, ''), ao.client) AS client,
+    coalesce(nullIf(j.workplace, ''), ao.workplace) AS workplace,
+    j.worker AS worker,
+    j.source AS source,
+    j.cancellation_reason AS cancellation_reason,
+    j.salary_per_hour AS salary_per_hour,
+    j.salary_per_job AS salary_per_job,
+    j.payment_per_hour AS payment_per_hour,
+    j.payment_per_job AS payment_per_job,
+    j.hours AS hours,
+    j.payment AS payment,
+    j.piecework AS piecework,
+    j.start_fact AS start_fact,
+    j.finish_fact AS finish_fact,
+    ao.order_contract_type AS order_contract_type,
+    ao.contractor_contract_type AS contractor_contract_type,
+    ao.commission_percent AS commission_percent,
+    ao.brand AS brand
+  FROM mg_jobs AS j
+  INNER JOIN actual_orders AS ao ON j.source = ao.order_id
+  WHERE ifNull(j._id, '') != ''
+    AND ifNull(j.deleted, 0) = 0
+    AND j.start >= {from:DateTime}
+    AND j.start < {to:DateTime}
+),
+history_ranked AS (
+  SELECT
+    h.job AS job,
+    ifNull(h.status, '') AS first_status,
+    ifNull(h.initiator, '') AS first_initiator,
+    row_number() OVER (
+      PARTITION BY h.job
+      ORDER BY coalesce(h.createdAt, h.updatedAt), h._id
+    ) AS rn
+  FROM mg_job_history AS h
+  INNER JOIN shift_facts AS sf ON h.job = sf.job
+  WHERE ifNull(h.job, '') != ''
+    AND ifNull(h.status, '') != ''
+),
+first_history AS (
+  SELECT
+    job,
+    first_status,
+    first_initiator
+  FROM history_ranked
+  WHERE rn = 1
+),
+job_transactions AS (
+  SELECT
+    t.entityId AS job,
+    sum(${sqlInspectorTransactionAmountExpression('t')}) AS transaction_amount
+  FROM mg_transactions AS t
+  INNER JOIN shift_facts AS sf ON t.entityId = sf.job
+  WHERE ifNull(t.deleted, 0) = 0
+    AND t.entityId != ''
+  GROUP BY t.entityId
+),
+shift_enriched AS (
+  SELECT
+    sf.job AS job,
+    sf.shift_start AS shift_start,
+    sf.status AS status,
+    sf.worker AS worker,
+    sf.cancellation_reason AS cancellation_reason,
+    sf.salary_per_hour AS salary_per_hour,
+    sf.hours AS hours,
+    sf.payment AS payment,
+    sf.start_fact AS start_fact,
+    sf.finish_fact AS finish_fact,
+    sf.piecework AS piecework,
+    sf.client AS client,
+    sf.workplace AS workplace,
+    sf.brand AS brand,
+    if(ifNull(fh.first_initiator, '') = 'worker', 1, 0) AS is_self_booked,
+    ifNull(nullIf(sf.order_contract_type, ''), ifNull(nullIf(sf.contractor_contract_type, ''), 'services')) AS contract_type,
+    sf.commission_percent AS commission_percent,
+    if(${sqlInspectorPositiveOrZeroNumberExpression('sf', 'salary_per_job')} > 0, ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'salary_per_job')}, ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'salary_per_hour')} * ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'hours')}) AS worker_shift_amount,
+    if(${sqlInspectorPositiveOrZeroNumberExpression('sf', 'payment_per_job')} > 0, ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'payment_per_job')}, ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'payment_per_hour')} * ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'hours')}) AS customer_shift_amount,
+    ifNull(jt.transaction_amount, 0) AS transaction_amount,
+    ${sqlInspectorNullablePositiveNumberExpression('sf', 'salary_per_hour')} AS worker_rate_hour,
+    ${successfulConfirmedShiftFlagExpression('sf')} AS is_successful_confirmed_shift
+  FROM shift_facts AS sf
+  LEFT JOIN first_history AS fh ON sf.job = fh.job
+  LEFT JOIN job_transactions AS jt ON sf.job = jt.job
+)`;
+
+const SALES_DOMAIN_REVENUE_SQL = `if(is_successful_confirmed_shift = 1, if(contract_type = 'saas', worker_shift_amount * (1 + commission_percent / 100) + transaction_amount, customer_shift_amount + transaction_amount), 0)`;
+const SALES_DOMAIN_AVG_WORKER_RATE_SQL = `avgIf(worker_rate_hour, is_successful_confirmed_shift = 1 AND worker_rate_hour IS NOT NULL)`;
+
+const SALES_DOMAIN_SUMMARY_SQL = `-- orders summary
+WITH ${SALES_DOMAIN_ACTUAL_ORDERS_SQL}
+SELECT
+  sum(o.amount) AS ordered_shifts,
+  countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders
+FROM actual_orders AS o
+FORMAT JSONEachRow;
+
+-- shifts summary
+${SALES_DOMAIN_SHIFT_FACTS_SQL}
+SELECT
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  sum(${SALES_DOMAIN_REVENUE_SQL}) AS revenue_rub,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
+  countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  ${SALES_DOMAIN_AVG_WORKER_RATE_SQL} AS avg_worker_rate_hour
+FROM shift_enriched
+FORMAT JSONEachRow`;
+
+const SALES_DOMAIN_TREND_SQL = `-- orders trend
+WITH ${SALES_DOMAIN_ACTUAL_ORDERS_SQL}
+SELECT
+  <period_expression(o.start)> AS period,
+  sum(o.amount) AS ordered_shifts
+FROM actual_orders AS o
+GROUP BY period
+ORDER BY period
+FORMAT JSONEachRow;
+
+-- shifts trend
+${SALES_DOMAIN_SHIFT_FACTS_SQL}
+SELECT
+  <period_expression(shift_start)> AS period,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  sum(${SALES_DOMAIN_REVENUE_SQL}) AS revenue_rub,
+  countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts
+FROM shift_enriched
+GROUP BY period
+ORDER BY period
+FORMAT JSONEachRow`;
+
+const SALES_DOMAIN_BRANDS_SQL = `-- brand orders
+WITH ${SALES_DOMAIN_ACTUAL_ORDERS_SQL}
+SELECT
+  o.brand AS brand,
+  sum(o.amount) AS ordered_shifts,
+  countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders
+FROM actual_orders AS o
+GROUP BY brand
+ORDER BY ordered_shifts DESC
+FORMAT JSONEachRow;
+
+-- brand shifts
+${SALES_DOMAIN_SHIFT_FACTS_SQL}
+SELECT
+  ifNull(nullIf(brand, ''), 'Р‘РµР· Р±СЂРµРЅРґР°') AS brand,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  sum(${SALES_DOMAIN_REVENUE_SQL}) AS revenue_rub,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
+  countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  ${SALES_DOMAIN_AVG_WORKER_RATE_SQL} AS avg_worker_rate_hour
+FROM shift_enriched
+GROUP BY brand
+ORDER BY worked_shifts DESC
+FORMAT JSONEachRow`;
+
+const SALES_DOMAIN_STATUSES_SQL = `${SALES_DOMAIN_SHIFT_FACTS_SQL}
 SELECT
   if(status = '', 'empty', status) AS status,
   count() AS shifts
@@ -688,8 +900,8 @@ SELECT
   ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
   ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
 FROM order_summary AS os
-CROSS JOIN shift_summary AS ss
-CROSS JOIN booked_workers AS bw
+LEFT JOIN shift_summary AS ss ON 1 = 1
+LEFT JOIN booked_workers AS bw ON 1 = 1
 FORMAT JSONEachRow`;
 
 const WORKPLACE_POINT_REVIEW_SUMMARY_SQL = `SELECT
@@ -935,7 +1147,8 @@ app_30d_active_users AS (
 booked_users AS (
   SELECT DISTINCT worker.user AS user_id
   FROM mg_job_history AS history
-  INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+  INNER JOIN mg_jobs AS job ON history.job = job._id
+  INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON history.worker = worker._id
   WHERE ifNull(history.status, '') = 'booked'
     AND ifNull(worker.user, '') != ''
@@ -1093,7 +1306,8 @@ daily_booked AS (
     fo.period AS period,
     uniqExact(worker.user) AS booked_users
   FROM mg_job_history AS history
-  INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+  INNER JOIN mg_jobs AS job ON history.job = job._id
+  INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON history.worker = worker._id
   WHERE ifNull(history.status, '') = 'booked'
     AND ifNull(worker.user, '') != ''
@@ -1216,7 +1430,7 @@ active_workers AS (
     user_id AS user_id,
     worker_coordinates AS worker_coordinates
   FROM latest_workers
-  CROSS JOIN demand_bounds AS bounds
+  INNER JOIN demand_bounds AS bounds ON bounds.points > 0
   WHERE <activeWorkersWhere(filters)>
 ),
 influence_pairs AS (
@@ -1231,10 +1445,10 @@ influence_pairs AS (
       aw.user_id AS user_id,
       greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) AS distance_m
     FROM demand_points AS dp
-    CROSS JOIN active_workers AS aw
-    WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
+    INNER JOIN active_workers AS aw
+      ON aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
       AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
-      AND greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) <= 15000
+    WHERE greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) <= 15000
   )
 ),
 worker_influence AS (
@@ -1268,7 +1482,7 @@ FORMAT JSONEachRow`;
 
 defineMetricSet({
   baseId: 'sales-by-project.summary',
-  sql: SALES_SUMMARY_SQL,
+  sql: SALES_DOMAIN_SUMMARY_SQL,
   metrics: [
     { id: 'sales-by-project.summary', title: 'Продажи по проектам', description: 'Показывает общий заказ, выполненные смены, SLA, выручку и связанные показатели за выбранный период. Часть значений собирается из двух запросов: по заказам и по сменам.' },
     { suffix: 'ordered-shifts', title: 'Заказано смен', description: 'Сумма планового количества смен из заказов за выбранный период.' },
@@ -1286,7 +1500,7 @@ defineMetricSet({
 
 defineMetricSet({
   baseId: 'sales-by-project.trend',
-  sql: SALES_TREND_SQL,
+  sql: SALES_DOMAIN_TREND_SQL,
   metrics: [
     { id: 'sales-by-project.trend', title: 'Динамика продаж', description: 'Показывает динамику заказа, выполнения, SLA, выручки и отмен по выбранной периодизации.' },
     { suffix: 'ordered-shifts', title: 'Динамика: заказано', description: 'Плановый заказ по периодам.' },
@@ -1300,7 +1514,7 @@ defineMetricSet({
 
 defineMetricSet({
   baseId: 'sales-by-project.brands',
-  sql: SALES_BRANDS_SQL,
+  sql: SALES_DOMAIN_BRANDS_SQL,
   metrics: [
     { id: 'sales-by-project.brands', title: 'Бренды', description: 'Показывает заказ, выполнение, SLA, выручку и связанные показатели в разрезе брендов клиентов.' },
     { suffix: 'ordered-shifts', title: 'Бренд: заказано', description: 'Плановый заказ по бренду.' },
@@ -1318,7 +1532,7 @@ defineMetricSet({
 
 defineMetricSet({
   baseId: 'sales-by-project.statuses',
-  sql: SALES_STATUSES_SQL,
+  sql: SALES_DOMAIN_STATUSES_SQL,
   metrics: [
     { id: 'sales-by-project.statuses', title: 'Статусы работ', description: 'Показывает распределение смен по статусам в выбранном периоде.' },
     { suffix: 'shifts', title: 'Статусы работ: смены', description: 'Количество смен в конкретном статусе.' }

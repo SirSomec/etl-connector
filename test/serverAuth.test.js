@@ -222,6 +222,18 @@ async function login(baseUrl, email, password) {
   return response;
 }
 
+async function createReadyUser(userStore, input, readyPassword) {
+  const created = await userStore.createUser(input);
+
+  await userStore.changeOwnPassword(created.id, {
+    currentPassword: input.password,
+    newPassword: readyPassword,
+    confirmPassword: readyPassword
+  });
+
+  return created;
+}
+
 function cookieFrom(response) {
   return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
@@ -275,6 +287,87 @@ test('auth redirects anonymous users to login and allows env admin login', async
   });
 });
 
+test('managed user with temporary password must change it before using the app', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    const created = await userStore.createUser({
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables'],
+      password: 'TempPass123!'
+    });
+    const analystLogin = await login(baseUrl, 'analyst@example.test', 'TempPass123!');
+    const cookie = cookieFrom(analystLogin);
+    const blockedHome = await fetchText(baseUrl, '/', {
+      redirect: 'manual',
+      headers: { cookie }
+    });
+
+    assert.equal(analystLogin.status, 303);
+    assert.equal(blockedHome.response.status, 302);
+    assert.equal(blockedHome.response.headers.get('location'), '/account/password?required=1&returnTo=%2F');
+
+    const passwordPage = await fetchText(baseUrl, '/account/password?required=1&returnTo=%2F', {
+      headers: { cookie }
+    });
+    const csrfToken = csrfFrom(passwordPage.text);
+
+    assert.equal(passwordPage.response.status, 200);
+    assert.match(passwordPage.text, /Смена пароля/);
+    assert.match(passwordPage.text, /Требуется сменить временный пароль/);
+
+    const badCsrf = await fetchText(baseUrl, '/account/password', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken: 'bad-token',
+        currentPassword: 'TempPass123!',
+        newPassword: 'FreshPass456!',
+        confirmPassword: 'FreshPass456!',
+        returnTo: '/'
+      })
+    });
+
+    assert.equal(badCsrf.response.status, 403);
+    assert.equal((await userStore.verifyCredentials('analyst@example.test', 'TempPass123!')).id, created.id);
+
+    const changed = await fetchText(baseUrl, '/account/password', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken,
+        currentPassword: 'TempPass123!',
+        newPassword: 'FreshPass456!',
+        confirmPassword: 'FreshPass456!',
+        returnTo: '/'
+      })
+    });
+
+    assert.equal(changed.response.status, 303);
+    assert.equal(changed.response.headers.get('location'), '/');
+    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'TempPass123!'), null);
+    assert.equal(
+      (await userStore.verifyCredentials('analyst@example.test', 'FreshPass456!')).mustChangePassword,
+      false
+    );
+
+    const allowedHome = await fetchText(baseUrl, '/', {
+      headers: { cookie }
+    });
+
+    assert.equal(allowedHome.response.status, 200);
+    assert.match(allowedHome.text, /mg_orders/);
+  });
+});
+
 test('admin can create, edit, and delete managed accounts with csrf protection', async () => {
   await withAuthServer(async ({ baseUrl, userStore }) => {
     const adminLogin = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
@@ -299,12 +392,12 @@ test('admin can create, edit, and delete managed accounts with csrf protection',
         name: 'Analyst',
         role: 'analyst',
         permissions: ['tables'],
-        password: 'AnalystPass123'
+        password: 'WorkerPass123!'
       })
     });
 
     assert.equal(rejected.response.status, 403);
-    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'AnalystPass123'), null);
+    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'WorkerPass123!'), null);
 
     const created = await fetchText(baseUrl, '/admin/users/create', {
       method: 'POST',
@@ -319,7 +412,7 @@ test('admin can create, edit, and delete managed accounts with csrf protection',
         name: 'Analyst',
         role: 'analyst',
         permissions: ['tables'],
-        password: 'AnalystPass123'
+        password: 'WorkerPass123!'
       })
     });
 
@@ -346,12 +439,12 @@ test('admin can create, edit, and delete managed accounts with csrf protection',
         name: 'Updated Analyst',
         role: 'admin',
         permissions: ['tables'],
-        password: 'NewAdminPass123'
+        password: 'SeniorPass123!'
       })
     });
 
     assert.equal(updated.response.status, 303);
-    assert.equal((await userStore.verifyCredentials('analyst@example.test', 'NewAdminPass123')).role, 'admin');
+    assert.equal((await userStore.verifyCredentials('analyst@example.test', 'SeniorPass123!')).role, 'admin');
 
     const deleted = await fetchText(baseUrl, `/admin/users/${analyst.id}/delete`, {
       method: 'POST',
@@ -364,28 +457,28 @@ test('admin can create, edit, and delete managed accounts with csrf protection',
     });
 
     assert.equal(deleted.response.status, 303);
-    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'NewAdminPass123'), null);
+    assert.equal(await userStore.verifyCredentials('analyst@example.test', 'SeniorPass123!'), null);
   });
 });
 
 test('managed users only access granted sections', async () => {
   await withAuthServer(async ({ baseUrl, userStore }) => {
-    await userStore.createUser({
+    await createReadyUser(userStore, {
       email: 'analyst@example.test',
       name: 'Analyst',
       role: 'analyst',
       permissions: ['tables'],
-      password: 'AnalystPass123'
-    });
-    await userStore.createUser({
+      password: 'WorkerPass123!'
+    }, 'WorkerReady123!');
+    await createReadyUser(userStore, {
       email: 'preload@example.test',
       name: 'Preload Analyst',
       role: 'analyst',
       permissions: ['preload-admin'],
-      password: 'PreloadPass123'
-    });
+      password: 'PreloadWork123!'
+    }, 'PreloadReady123!');
 
-    const analystLogin = await login(baseUrl, 'analyst@example.test', 'AnalystPass123');
+    const analystLogin = await login(baseUrl, 'analyst@example.test', 'WorkerReady123!');
     const analystCookie = cookieFrom(analystLogin);
     const home = await fetchText(baseUrl, '/', {
       headers: {
@@ -402,7 +495,7 @@ test('managed users only access granted sections', async () => {
         cookie: analystCookie
       }
     });
-    const preloadLogin = await login(baseUrl, 'preload@example.test', 'PreloadPass123');
+    const preloadLogin = await login(baseUrl, 'preload@example.test', 'PreloadReady123!');
     const preloadAllowed = await fetchText(baseUrl, '/admin/preload', {
       headers: {
         cookie: cookieFrom(preloadLogin)
@@ -505,12 +598,12 @@ test('/admin/activity is admin-only by role', async () => {
       return email === wideAnalyst.email ? wideAnalyst : null;
     },
     async verifyCredentials(email, password) {
-      return email === wideAnalyst.email && password === 'AnalystPass123' ? wideAnalyst : null;
+      return email === wideAnalyst.email && password === 'WorkerPass123!' ? wideAnalyst : null;
     }
   };
 
   await withAuthServer(async ({ baseUrl }) => {
-    const analystLogin = await login(baseUrl, 'wide-analyst@example.test', 'AnalystPass123');
+    const analystLogin = await login(baseUrl, 'wide-analyst@example.test', 'WorkerPass123!');
     const activityPage = await fetchText(baseUrl, '/admin/activity', {
       headers: {
         cookie: cookieFrom(analystLogin)
@@ -547,23 +640,23 @@ test('/admin/activity renders sanitized store errors', async () => {
 
 test('dashboard section fragments respect sql-inspector permission', async () => {
   await withAuthServer(async ({ baseUrl, userStore }) => {
-    await userStore.createUser({
+    await createReadyUser(userStore, {
       email: 'plain@example.test',
       name: 'Plain Analyst',
       role: 'analyst',
       permissions: ['sales-by-project'],
-      password: 'AnalystPass123'
-    });
-    await userStore.createUser({
+      password: 'PlainUser123!'
+    }, 'PlainReady123!');
+    await createReadyUser(userStore, {
       email: 'sql@example.test',
       name: 'SQL Analyst',
       role: 'analyst',
       permissions: ['sales-by-project', 'sql-inspector'],
-      password: 'AnalystPass123'
-    });
+      password: 'SqlViewer123!'
+    }, 'SqlViewerReady123!');
 
-    const plainLogin = await login(baseUrl, 'plain@example.test', 'AnalystPass123');
-    const sqlLogin = await login(baseUrl, 'sql@example.test', 'AnalystPass123');
+    const plainLogin = await login(baseUrl, 'plain@example.test', 'PlainReady123!');
+    const sqlLogin = await login(baseUrl, 'sql@example.test', 'SqlViewerReady123!');
     const sectionPath = '/dashboards/sales-by-project/section?section=summary&period=month&from=2026-04-01&to=2026-04-30';
     const plain = await fetchText(baseUrl, sectionPath, {
       headers: {

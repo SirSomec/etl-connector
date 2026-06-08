@@ -196,6 +196,17 @@ test('city composition metrics show the exact grouped SQL for visible row values
   assert.doesNotMatch(rateBuckets.sql, /brand AS label/);
 });
 
+test('sql inspector sales metrics document actual order and finance domain filters', () => {
+  const summary = getSqlMetricInfo('sales-by-project.summary');
+
+  assert.match(summary.sql, /INNER JOIN mg_clients AS c ON c\._id = o\.client/);
+  assert.match(summary.sql, /MyGig Demo/);
+  assert.match(summary.sql, /contract_type[\s\S]*processing/);
+  assert.match(summary.sql, /ifNull\(t\.deleted, 0\) = 0/);
+  assert.match(summary.sql, /row_number\(\) OVER/);
+  assert.doesNotMatch(summary.sql, /h\.status = 'booked' AND h\.initiator = 'worker'/);
+});
+
 test('geo and cancellation metrics show the specialized SQL used for those values', () => {
   const activeGigers = getSqlMetricInfo('workplace-analysis.points.active-gigers-5km');
   const heatmap = getSqlMetricInfo('heatmap.map.weighted-active-users');

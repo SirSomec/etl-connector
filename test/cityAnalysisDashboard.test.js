@@ -946,6 +946,8 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
     summaryCall.query,
     /worker\.location__coordinates\[2\]\s+BETWEEN\s+bounds\.min_lat\s*-\s*bounds\.lat_margin\s+AND\s+bounds\.max_lat\s*\+\s*bounds\.lat_margin/s
   );
+  assert.equal(summaryCall.query.includes('worker.location__coordinates[1] BETWEEN cw.workplace_coordinates[1] -'), true);
+  assert.equal(summaryCall.query.includes('worker.location__coordinates[2] BETWEEN cw.workplace_coordinates[2] -'), true);
   assert.equal(summaryCall.query.includes('greatCircleDistance'), true);
   assert.equal(summaryCall.query.includes('<= 15000'), true);
   assert.equal(summaryCall.query.includes('appmetrica_sessions'), true);
@@ -1006,4 +1008,92 @@ test('loadCityAnalysisDashboard keeps request denominator non-deleted even when 
   assert.equal(summaryCall.query.includes('ifNull(o.deleted, 0) = 0 AS is_active_request'), true);
   assert.equal(summaryCall.query.includes('countDistinctIf(order_id, is_active_request)'), true);
   assert.equal(dynamicsCall.query.includes('countDistinctIf(order_id, is_active_request)'), true);
+});
+
+test('city analysis SQL uses actual order domain and ties history metrics to jobs', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+      return [];
+    }
+  };
+
+  await loadCityAnalysisDashboard(
+    client,
+    {
+      city: 'РњРѕСЃРєРІР°',
+      from: '2026-06-01',
+      to: '2026-06-03',
+      client: 'Brand A'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  for (const call of calls) {
+    assert.equal(call.query.includes('FROM mygig_'), false);
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+    assert.equal(call.query.includes('c.title NOT IN'), true);
+    assert.equal(call.query.includes("!= 'processing'"), true);
+  }
+
+  const summaryCall = calls.find((call) => call.operation === 'city analysis summary');
+  const dynamicsCall = calls.find((call) => call.operation === 'city analysis dynamics');
+
+  for (const call of [summaryCall, dynamicsCall]) {
+    assert.equal(call.query.includes('INNER JOIN mg_jobs AS job ON history.job = job._id'), true);
+    assert.equal(call.query.includes('INNER JOIN filtered_orders AS fo ON job.source = fo.order_id'), true);
+    assert.equal(call.query.includes('INNER JOIN filtered_orders AS fo ON history.source = fo.order_id'), false);
+    assert.match(call.query, /FROM mg_jobs AS job\s+INNER JOIN filtered_orders AS fo ON job\.source = fo\.order_id/);
+  }
+});
+
+test('city giger details uses job-bound history and successful confirmed helper', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'city analysis giger details total') {
+        return [{ total_gigers: 0 }];
+      }
+
+      if (operation === 'city analysis giger details') {
+        return [];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  await loadCityAnalysisGigerDetails(
+    client,
+    {
+      city: 'РњРѕСЃРєРІР°',
+      metric: 'booked-users'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  await loadCityAnalysisGigerDetails(
+    client,
+    {
+      city: 'РњРѕСЃРєРІР°',
+      metric: 'completed-users'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  const detailCalls = calls.filter((call) => call.operation === 'city analysis giger details');
+  const bookedCall = detailCalls[0];
+  const completedCall = detailCalls[1];
+
+  assert.equal(bookedCall.query.includes('INNER JOIN mg_jobs AS job ON history.job = job._id'), true);
+  assert.equal(bookedCall.query.includes('INNER JOIN filtered_orders AS fo ON job.source = fo.order_id'), true);
+  assert.equal(bookedCall.query.includes('INNER JOIN filtered_orders AS fo ON history.source = fo.order_id'), false);
+  assert.match(completedCall.query, /FROM mg_jobs AS job\s+INNER JOIN filtered_orders AS fo ON job\.source = fo\.order_id/);
+  assert.equal(completedCall.query.includes('piecework'), true);
+  assert.equal(completedCall.query.includes('is_successful_confirmed_shift = 1'), true);
 });

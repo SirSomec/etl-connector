@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   renderAccountManagement,
-  renderLogin
+  renderLogin,
+  renderPasswordChange
 } = require('../src/render');
 
 test('renderLogin escapes values and keeps return path local', () => {
@@ -71,4 +72,83 @@ test('renderAccountManagement shows env admin as read-only and escapes managed u
   assert.match(html, /name="permissions" value="preload-admin"/);
   assert.match(html, /class="nav-link active" href="\/admin\/users"/);
   assert.doesNotMatch(html, /<Analyst>/);
+});
+
+test('renderPasswordChange renders managed form and escapes messages', () => {
+  const html = renderPasswordChange({
+    database: 'etl',
+    currentUser: {
+      id: 'user-1',
+      email: 'analyst@example.test',
+      role: 'analyst',
+      permissions: ['tables'],
+      source: 'managed'
+    },
+    csrfToken: 'csrf-token',
+    error: '<bad password>',
+    message: '<saved>',
+    required: true,
+    returnTo: '/dashboards/sales-by-project?period=month'
+  });
+
+  assert.match(html, /Смена пароля/);
+  assert.match(html, /Требуется сменить временный пароль/);
+  assert.match(html, /&lt;bad password&gt;/);
+  assert.match(html, /&lt;saved&gt;/);
+  assert.match(html, /name="csrfToken" value="csrf-token"/);
+  assert.match(html, /name="returnTo" value="\/dashboards\/sales-by-project\?period=month"/);
+  assert.match(html, /name="currentPassword"/);
+  assert.match(html, /name="newPassword"/);
+  assert.match(html, /name="confirmPassword"/);
+  assert.doesNotMatch(html, /<bad password>/);
+});
+
+test('renderPasswordChange shows env admin password as environment-managed', () => {
+  const html = renderPasswordChange({
+    database: 'etl',
+    currentUser: {
+      id: 'env-admin',
+      email: 'admin@example.test',
+      role: 'admin',
+      permissions: ['tables', 'users'],
+      source: 'env'
+    },
+    csrfToken: 'csrf-token'
+  });
+
+  assert.match(html, /Пароль администратора задается через окружение/);
+  assert.doesNotMatch(html, /name="currentPassword"/);
+  assert.doesNotMatch(html, /href="\/account\/password"/);
+});
+
+test('layout shows password change link only for managed users', () => {
+  const managedHtml = renderAccountManagement({
+    database: 'etl',
+    currentUser: {
+      email: 'managed-admin@example.test',
+      role: 'admin',
+      permissions: ['tables', 'users'],
+      source: 'managed'
+    },
+    csrfToken: 'csrf-token',
+    users: [],
+    message: '',
+    error: ''
+  });
+  const envHtml = renderAccountManagement({
+    database: 'etl',
+    currentUser: {
+      email: 'admin@example.test',
+      role: 'admin',
+      permissions: ['tables', 'users'],
+      source: 'env'
+    },
+    csrfToken: 'csrf-token',
+    users: [],
+    message: '',
+    error: ''
+  });
+
+  assert.match(managedHtml, /href="\/account\/password"/);
+  assert.doesNotMatch(envHtml, /href="\/account\/password"/);
 });

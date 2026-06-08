@@ -1,4 +1,8 @@
 const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+const {
+  actualOrderDomainCondition,
+  actualOrderJoinsSql
+} = require('./analyticsDomainSql');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_PAGE = 1;
@@ -502,6 +506,11 @@ function workerFullNameExpression() {
     )`;
 }
 
+function workerShiftActualOrderJoinsSql({ clientAlias = 'c', contractorAlias = 'ct' } = {}) {
+  return `INNER JOIN mg_orders AS o ON o._id = j.source
+    ${actualOrderJoinsSql('o', { clientAlias, contractorAlias })}`;
+}
+
 function workerCancellationMetricsCtes() {
   return `WITH shift_facts AS (
     SELECT
@@ -511,10 +520,12 @@ function workerCancellationMetricsCtes() {
       ifNull(j.status, '') AS status,
       ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
+    ${workerShiftActualOrderJoinsSql()}
     WHERE j.start >= {from:DateTime}
       AND j.start < {to:DateTime}
       AND ifNull(j.worker, '') != ''
       AND ifNull(j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}
   ),
   cancellation_events AS (
     SELECT
@@ -627,10 +638,12 @@ function totalWorkersQuery(filters = {}) {
     SELECT
       j.worker AS worker_id
     FROM mg_jobs AS j
+    ${workerShiftActualOrderJoinsSql()}
     WHERE j.start >= {from:DateTime}
       AND j.start < {to:DateTime}
       AND ifNull(j.worker, '') != ''
       AND ifNull(j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}
     GROUP BY worker_id
   )
   SELECT
@@ -663,13 +676,18 @@ function workerCancellationDetailsQuery(metric) {
       j.start AS start,
       ifNull(j.status, '') AS status,
       ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
-      ifNull(j.client, '') AS client_id,
-      ifNull(j.workplace, '') AS workplace_id
+      ifNull(o.client, '') AS client_id,
+      ifNull(o.workplace, '') AS workplace_id
     FROM mg_jobs AS j
+    ${workerShiftActualOrderJoinsSql({
+      clientAlias: 'actual_client',
+      contractorAlias: 'actual_contractor'
+    })}
     WHERE j.start >= {from:DateTime}
       AND j.start < {to:DateTime}
       AND j.worker = {worker_id:String}
       AND ifNull(j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('o', 'actual_client', 'actual_contractor')}
   ),
   cancellation_events AS (
     SELECT

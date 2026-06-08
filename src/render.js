@@ -270,9 +270,13 @@ function layout({
       </nav>
     </aside>`
     : '';
+  const passwordLink = currentUser && currentUser.source !== 'env'
+    ? '<a class="account-link" href="/account/password">Сменить пароль</a>'
+    : '';
   const topbarActions = currentUser
     ? `<div class="topbar-actions">
             <span class="user-email">${escapeHtml(currentUser.email)}</span>
+            ${passwordLink}
             <form class="logout-form" action="/logout" method="post">
               ${renderHiddenCsrf(csrfToken)}
               <button class="logout-button" type="submit">Выйти</button>
@@ -425,6 +429,7 @@ function layout({
       margin: 0;
     }
 
+    .account-link,
     .logout-button,
     .secondary-button {
       border-color: var(--line);
@@ -432,6 +437,20 @@ function layout({
       color: var(--text);
     }
 
+    .account-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 6px 11px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .account-link:hover,
+    .account-link:focus,
     .logout-button:hover,
     .logout-button:focus,
     .secondary-button:hover,
@@ -3939,6 +3958,67 @@ function renderLogin({ database, email = '', error = '', returnTo = '/' }) {
     activeNav: 'login',
     currentUser: null,
     showNav: false
+  });
+}
+
+function renderPasswordChange({
+  database,
+  currentUser,
+  csrfToken = '',
+  error = '',
+  message = '',
+  required = false,
+  returnTo = '/'
+}) {
+  const isEnvAdmin = currentUser && currentUser.source === 'env';
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+  const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
+  const requiredHtml = required
+    ? '<div class="inline-error">Требуется сменить временный пароль перед продолжением работы.</div>'
+    : '';
+  const content = isEnvAdmin
+    ? `<section class="auth-page">
+  <div class="auth-card">
+    <h1>Смена пароля</h1>
+    <p class="technical-note">Пароль администратора задается через окружение. Обновите <code>AUTH_ADMIN_PASSWORD</code> в настройках деплоя.</p>
+  </div>
+</section>`
+    : `<section class="auth-page">
+  <form class="auth-card" action="/account/password" method="post">
+    <h1>Смена пароля</h1>
+    ${requiredHtml}
+    ${messageHtml}
+    ${errorHtml}
+    ${renderHiddenCsrf(csrfToken)}
+    <input type="hidden" name="returnTo" value="${escapeHtml(safeReturnPath(returnTo))}">
+    <div class="form-grid">
+      <div class="field">
+        <label for="currentPassword">Текущий пароль</label>
+        <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="field">
+        <label for="newPassword">Новый пароль</label>
+        <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="12" required>
+      </div>
+      <div class="field">
+        <label for="confirmPassword">Повторите новый пароль</label>
+        <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required>
+      </div>
+    </div>
+    <p class="technical-note">Минимум 12 символов: строчная и заглавная буквы, цифра и спецсимвол. Пароль не должен совпадать с текущим паролем или почтой.</p>
+    <div class="form-actions">
+      <button type="submit">Сохранить пароль</button>
+    </div>
+  </form>
+</section>`;
+
+  return layout({
+    title: 'Смена пароля',
+    database,
+    content,
+    activeNav: 'account-password',
+    currentUser,
+    csrfToken
   });
 }
 
@@ -8936,6 +9016,7 @@ module.exports = {
   renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
+  renderPasswordChange,
   renderPreloadManagement,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,

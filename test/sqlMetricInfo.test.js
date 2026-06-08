@@ -239,7 +239,10 @@ test('heatmap worker concentration metric documents the 30 day current-date laye
   assert.match(info.sql, /round\(worker_coordinates\[2\], 2\) AS lat/);
   assert.match(info.sql, /uniqExact\(user_id\) AS active_users/);
   assert.match(info.sql, /status IN \('ready', 'booked', 'worked'\)/);
-  assert.match(info.sql, /CROSS JOIN max_cell/);
+  assert.match(info.sql, /density_per_km2/);
+  assert.match(info.sql, /quantileExact\(0\.95\)\(density_per_km2\)/);
+  assert.match(info.sql, /least\(1\.0, density_per_km2 \/ p95_density_per_km2\) AS intensity/);
+  assert.doesNotMatch(info.sql, /active_users \/ max_active_users/);
 });
 
 test('workplace attention metrics show 15km base and closing statuses SQL', () => {

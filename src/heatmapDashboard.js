@@ -616,7 +616,7 @@ function workerConcentrationQuery(filters) {
     FROM worker_rows
     GROUP BY user_id
   ),
-  concentration_cells AS (
+  concentration_raw AS (
     SELECT
       round(worker_coordinates[1], 2) AS lon,
       round(worker_coordinates[2], 2) AS lat,
@@ -626,18 +626,27 @@ function workerConcentrationQuery(filters) {
     GROUP BY lon, lat
     HAVING active_users > 0
   ),
-  max_cell AS (
-    SELECT max(active_users) AS max_active_users
+  concentration_cells AS (
+    SELECT
+      lon,
+      lat,
+      active_users,
+      active_users / ((111.0 * 0.01) * (111.32 * greatest(abs(cos(lat * pi() / 180)), 0.2) * 0.01)) AS density_per_km2
+    FROM concentration_raw
+  ),
+  density_scale AS (
+    SELECT greatest(ifNull(quantileExact(0.95)(density_per_km2), 0), 0.000001) AS p95_density_per_km2
     FROM concentration_cells
   )
   SELECT
     lon,
     lat,
     active_users,
-    if(ifNull(max_active_users, 0) > 0, active_users / max_active_users, 0) AS intensity
+    density_per_km2,
+    least(1.0, density_per_km2 / p95_density_per_km2) AS intensity
   FROM concentration_cells
-  CROSS JOIN max_cell
-  ORDER BY active_users DESC, lat DESC, lon ASC
+  CROSS JOIN density_scale
+  ORDER BY density_per_km2 DESC, active_users DESC, lat DESC, lon ASC
   LIMIT 3000
   FORMAT JSONEachRow`;
 }

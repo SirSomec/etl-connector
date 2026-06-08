@@ -1,6 +1,5 @@
 const {
-  successfulConfirmedShiftCondition,
-  successfulConfirmedShiftFlagExpression
+  successfulConfirmedShiftCondition
 } = require('./successfulConfirmedShift');
 const {
   actualOrderDomainCondition,
@@ -803,7 +802,11 @@ function activeGigers5kmQuery() {
     uniqExact(aw.worker_id) AS active_gigers_5km
   FROM selected_workplaces AS sw
   CROSS JOIN active_workers AS aw
-  WHERE greatCircleDistance(
+  WHERE aw.worker_coordinates[1] BETWEEN sw.workplace_coordinates[1] - (5000 / (111320 * greatest(abs(cos(sw.workplace_coordinates[2] * pi() / 180)), 0.2)))
+      AND sw.workplace_coordinates[1] + (5000 / (111320 * greatest(abs(cos(sw.workplace_coordinates[2] * pi() / 180)), 0.2)))
+    AND aw.worker_coordinates[2] BETWEEN sw.workplace_coordinates[2] - (5000 / 111000)
+      AND sw.workplace_coordinates[2] + (5000 / 111000)
+    AND greatCircleDistance(
     sw.workplace_coordinates[1],
     sw.workplace_coordinates[2],
     aw.worker_coordinates[1],
@@ -1024,41 +1027,20 @@ function baseParamsForFilters(filters) {
 }
 
 function orderDimensionJoinsSql() {
-  return `LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  ${actualOrderJoinsSql('o')}
+  return `${actualOrderJoinsSql('o', { workplaceAlias: 'w' })}
   LEFT JOIN mg_professions AS p ON o.spec = p.spec`;
 }
 
-function actualShiftOrderJoinsSql(orderAlias = 'actual_order') {
-  return `INNER JOIN mg_orders AS ${orderAlias} ON ${orderAlias}._id = j.source
-    ${actualOrderJoinsSql(orderAlias, {
-      clientAlias: 'actual_client',
-      contractorAlias: 'actual_contractor'
-    })}`;
+function successfulConfirmedJobJoinSql(jobAlias, orderAlias = 'o') {
+  return `INNER JOIN mg_jobs AS ${jobAlias} ON ${jobAlias}.source = ${orderAlias}._id
+      AND ifNull(${jobAlias}.deleted, 0) = 0
+      AND (${successfulConfirmedShiftCondition(jobAlias, { pieceworkExpression: `${orderAlias}.pieceworks` })})`;
 }
 
-function successfulConfirmedJobsSubquery(alias) {
-  return `(SELECT
-      j.source AS source,
-      ${successfulConfirmedShiftFlagExpression('j', {
-        pieceworkExpression: 'actual_order.pieceworks'
-      })} AS is_successful_confirmed_shift
-    FROM mg_jobs AS j
-    ${actualShiftOrderJoinsSql()}
-    WHERE ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('actual_order', 'actual_client', 'actual_contractor')}
-  ) AS ${alias}`;
-}
-
-function forecastSlaActiveJobsSubquery(alias) {
-  return `(SELECT
-      j.source AS source
-    FROM mg_jobs AS j
-    ${actualShiftOrderJoinsSql()}
-    WHERE ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('actual_order', 'actual_client', 'actual_contractor')}
-      AND ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')
-  ) AS ${alias}`;
+function forecastSlaActiveJobJoinSql(jobAlias, orderAlias = 'o') {
+  return `INNER JOIN mg_jobs AS ${jobAlias} ON ${jobAlias}.source = ${orderAlias}._id
+      AND ifNull(${jobAlias}.deleted, 0) = 0
+      AND ifNull(${jobAlias}.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')`;
 }
 
 function closingJobStatusCondition(alias = 'j', options = {}) {
@@ -1132,40 +1114,50 @@ function paramsForPinnedWorkplaces(filters) {
   };
 }
 
-function filterOptionSelect(filter, valueExpression, whereSql) {
-  return `SELECT
-    '${filter}' AS filter,
-    ${valueExpression} AS value
-  FROM mg_orders AS o
-  ${orderDimensionJoinsSql()}
-  WHERE ${whereSql}
-  GROUP BY value
-  HAVING value != ''`;
-}
-
-function jobStatusFilterOptionSelect(whereSql) {
-  return `SELECT
-    'jobStatus' AS filter,
-    ifNull(j.status, '') AS value
-  FROM mg_orders AS o
-  INNER JOIN mg_jobs AS j ON j.source = o._id
-  ${orderDimensionJoinsSql()}
-  WHERE ${whereSql}
-    AND j.deleted = 0
-  GROUP BY value
-  HAVING value != ''`;
-}
-
 function filterOptionsQuery(whereSql) {
-  return `${[
-    filterOptionSelect('client', "ifNull(c.title, '')", whereSql),
-    filterOptionSelect('city', "ifNull(w.address__city, '')", whereSql),
-    filterOptionSelect('region', "ifNull(w.address__region, '')", whereSql),
-    filterOptionSelect('profession', "if(ifNull(p.caption, '') = '', o.spec, p.caption)", whereSql),
-    filterOptionSelect('orderType', "ifNull(o.type, '')", whereSql),
-    jobStatusFilterOptionSelect(whereSql),
-    filterOptionSelect('contractor', "ifNull(ct.legal_name, '')", whereSql)
-  ].join('\n  UNION ALL\n  ')}
+  return `WITH order_dimensions AS (
+    SELECT
+      ifNull(c.title, '') AS client_value,
+      ifNull(w.address__city, '') AS city_value,
+      ifNull(w.address__region, '') AS region_value,
+      if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession_value,
+      ifNull(o.type, '') AS order_type_value,
+      ifNull(ct.legal_name, '') AS contractor_value
+    FROM mg_orders AS o
+    ${orderDimensionJoinsSql()}
+    WHERE ${whereSql}
+  ),
+  order_filter_options AS (
+    SELECT
+      tupleElement(option, 1) AS filter,
+      tupleElement(option, 2) AS value
+    FROM order_dimensions
+    ARRAY JOIN [
+      tuple('client', client_value),
+      tuple('city', city_value),
+      tuple('region', region_value),
+      tuple('profession', profession_value),
+      tuple('orderType', order_type_value),
+      tuple('contractor', contractor_value)
+    ] AS option
+    WHERE value != ''
+    GROUP BY filter, value
+  ),
+  job_status_options AS (
+    SELECT
+      'jobStatus' AS filter,
+      ifNull(j.status, '') AS value
+    FROM mg_orders AS o
+    INNER JOIN mg_jobs AS j ON j.source = o._id
+    ${orderDimensionJoinsSql()}
+    WHERE ${whereSql}
+      AND j.deleted = 0
+    GROUP BY value
+    HAVING value != ''
+  )
+  SELECT filter, value FROM order_filter_options
+  UNION ALL
+  SELECT filter, value FROM job_status_options
   ORDER BY filter, value
   FORMAT JSONEachRow`;
 }
@@ -1245,10 +1237,9 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
       FROM mg_orders AS o
       ${orderDimensionJoinsSql()}
-    INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
+    ${successfulConfirmedJobJoinSql('completed_job')}
     WHERE ${whereSql}
         AND toDate(o.start) < {current_date:Date}
-        AND completed_job.is_successful_confirmed_shift = 1
       GROUP BY workplace_id
     ) AS sc ON os.workplace_id = sc.workplace_id
     LEFT JOIN (
@@ -1257,7 +1248,7 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
       FROM mg_orders AS o
       ${orderDimensionJoinsSql()}
-    INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
+    ${forecastSlaActiveJobJoinSql('forecast_job')}
     WHERE ${whereSql}
         AND toDate(o.start) >= {current_date:Date}
       GROUP BY workplace_id
@@ -1300,70 +1291,6 @@ function totalWorkplacesQuery(whereSql, metricWhereSql, hasMetricFilters) {
   FORMAT JSONEachRow`;
 }
 
-function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
-  return `WITH top_workplaces AS (
-    ${topWorkplacesSelect(whereSql, metricWhereSql, sort)}
-  ),
-  daily_orders AS (
-    SELECT
-      o.workplace AS workplace_id,
-      toString(toDate(o.start)) AS order_date,
-      sum(ifNull(o.amount, 0)) AS ordered_shifts,
-      sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_ordered_shifts
-    FROM mg_orders AS o
-    ${orderDimensionJoinsSql()}
-    INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
-    WHERE ${whereSql}
-    GROUP BY workplace_id, order_date
-  ),
-  daily_completed AS (
-    SELECT
-      o.workplace AS workplace_id,
-      toString(toDate(o.start)) AS order_date,
-      count() AS completed_shifts,
-      countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
-    FROM mg_orders AS o
-    ${orderDimensionJoinsSql()}
-    INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
-    INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
-    WHERE ${whereSql}
-      AND completed_job.is_successful_confirmed_shift = 1
-    GROUP BY workplace_id, order_date
-  ),
-  daily_forecast_active AS (
-    SELECT
-      o.workplace AS workplace_id,
-      toString(toDate(o.start)) AS order_date,
-      count() AS forecast_active_shifts,
-      countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
-    FROM mg_orders AS o
-    ${orderDimensionJoinsSql()}
-    INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
-    INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
-    WHERE ${whereSql}
-      AND toDate(o.start) >= {current_date:Date}
-    GROUP BY workplace_id, order_date
-  )
-  SELECT
-    d.workplace_id AS workplace_id,
-    d.order_date AS order_date,
-    d.ordered_shifts AS ordered_shifts,
-    ifNull(c.completed_shifts, 0) AS completed_shifts,
-    d.sla_ordered_shifts AS sla_ordered_shifts,
-    ifNull(c.sla_completed_shifts, 0) AS sla_completed_shifts,
-    ifNull(f.forecast_active_shifts, 0) AS forecast_active_shifts,
-    ifNull(f.forecast_sla_active_shifts, 0) AS forecast_sla_active_shifts
-  FROM daily_orders AS d
-  LEFT JOIN daily_completed AS c
-    ON d.workplace_id = c.workplace_id
-    AND d.order_date = c.order_date
-  LEFT JOIN daily_forecast_active AS f
-    ON d.workplace_id = f.workplace_id
-    AND d.order_date = f.order_date
-  ORDER BY workplace_id, order_date
-  FORMAT JSONEachRow`;
-}
-
 function dailyOrdersForWorkplacesQuery(whereSql) {
   return `WITH daily_orders AS (
     SELECT
@@ -1385,10 +1312,9 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
     FROM mg_orders AS o
     ${orderDimensionJoinsSql()}
-    INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
+    ${successfulConfirmedJobJoinSql('completed_job')}
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
-      AND completed_job.is_successful_confirmed_shift = 1
     GROUP BY workplace_id, order_date
   ),
   daily_forecast_active AS (
@@ -1399,7 +1325,7 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
     FROM mg_orders AS o
     ${orderDimensionJoinsSql()}
-    INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
+    ${forecastSlaActiveJobJoinSql('forecast_job')}
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
       AND toDate(o.start) >= {current_date:Date}
@@ -1972,42 +1898,59 @@ async function readThroughCache(cache, key, loader) {
 }
 
 function cacheKeyForWorkplaceAnalysisSection(section, filters) {
+  const cacheFilters =
+    section === 'attention'
+      ? {
+          currentDate: filters.currentDate,
+          client: filters.client,
+          city: filters.city,
+          region: filters.region,
+          profession: filters.profession,
+          orderType: filters.orderType,
+          jobStatus: filters.jobStatus,
+          contractor: filters.contractor,
+          search: filters.search,
+          includeDeletedOrders: filters.includeDeletedOrders,
+          includeHiddenOrders: filters.includeHiddenOrders,
+          attentionFrom: filters.attentionFrom,
+          attentionTo: filters.attentionTo,
+          attentionPage: filters.attentionPage,
+          attentionPageSize: filters.attentionPageSize,
+          attentionSort: filters.attentionSort,
+          attentionDirection: filters.attentionDirection,
+          attentionLimit: filters.attentionLimit
+        }
+      : {
+          from: filters.from,
+          to: filters.to,
+          currentDate: filters.currentDate,
+          pinnedWorkplaceIds: filters.pinnedWorkplaceIds,
+          client: filters.client,
+          city: filters.city,
+          region: filters.region,
+          profession: filters.profession,
+          orderType: filters.orderType,
+          jobStatus: filters.jobStatus,
+          contractor: filters.contractor,
+          search: filters.search,
+          includeDeletedOrders: filters.includeDeletedOrders,
+          includeHiddenOrders: filters.includeHiddenOrders,
+          sort: filters.sort,
+          slaFrom: filters.slaFrom,
+          slaTo: filters.slaTo,
+          ordersFrom: filters.ordersFrom,
+          ordersTo: filters.ordersTo,
+          stabilityFrom: filters.stabilityFrom,
+          stabilityTo: filters.stabilityTo,
+          limit: filters.limit,
+          page: filters.page
+        };
+
   return JSON.stringify({
     board: 'workplace-analysis',
     section,
     ...(section === 'attention' ? { schemaVersion: WORKPLACE_ATTENTION_CACHE_SCHEMA_VERSION } : {}),
-    filters: {
-      from: filters.from,
-      to: filters.to,
-      currentDate: filters.currentDate,
-      pinnedWorkplaceIds: filters.pinnedWorkplaceIds,
-      client: filters.client,
-      city: filters.city,
-      region: filters.region,
-      profession: filters.profession,
-      orderType: filters.orderType,
-      jobStatus: filters.jobStatus,
-      contractor: filters.contractor,
-      search: filters.search,
-      includeDeletedOrders: filters.includeDeletedOrders,
-      includeHiddenOrders: filters.includeHiddenOrders,
-      sort: filters.sort,
-      slaFrom: filters.slaFrom,
-      slaTo: filters.slaTo,
-      ordersFrom: filters.ordersFrom,
-      ordersTo: filters.ordersTo,
-      stabilityFrom: filters.stabilityFrom,
-      stabilityTo: filters.stabilityTo,
-      limit: filters.limit,
-      page: filters.page,
-      attentionFrom: filters.attentionFrom,
-      attentionTo: filters.attentionTo,
-      attentionPage: filters.attentionPage,
-      attentionPageSize: filters.attentionPageSize,
-      attentionSort: filters.attentionSort,
-      attentionDirection: filters.attentionDirection,
-      attentionLimit: filters.attentionLimit
-    }
+    filters: cacheFilters
   });
 }
 
@@ -2067,18 +2010,18 @@ async function loadWorkplaceAnalysisPointsDashboard(client, filters, options = {
   let dailyRows;
 
   if (!hasPinnedWorkplaces) {
-    [workplaceRows, dailyRows] = await Promise.all([
-      client.queryJSONEachRow(
-        topWorkplacesQuery(whereSql, metricWhereSql, filters.sort),
-        params,
-        'workplace analysis top workplaces'
-      ),
-      client.queryJSONEachRow(
-        dailyOrdersQuery(whereSql, metricWhereSql, filters.sort),
-        params,
-        'workplace analysis daily orders'
-      )
-    ]);
+    workplaceRows = await client.queryJSONEachRow(
+      topWorkplacesQuery(whereSql, metricWhereSql, filters.sort),
+      params,
+      'workplace analysis top workplaces'
+    );
+    dailyRows = await loadDailyRowsForWorkplaces(
+      client,
+      whereSql,
+      params,
+      uniqueWorkplaceIds(workplaceRows),
+      'workplace analysis daily orders'
+    );
   } else {
     const pinnedParams = paramsForPinnedWorkplaces(filters);
     const [regularRows, rawPinnedRows] = await Promise.all([

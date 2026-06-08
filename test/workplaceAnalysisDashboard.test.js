@@ -688,18 +688,20 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls[2].operation, 'workplace analysis top workplaces');
   assert.equal(calls[3].operation, 'workplace analysis daily orders');
   assert.equal(calls[1].query.includes('countDistinct(o.workplace)'), true);
-  assert.equal(calls[3].query.includes('WITH top_workplaces'), true);
-  assert.equal(calls[3].query.includes('INNER JOIN top_workplaces AS tw'), true);
-  assert.equal(calls[3].query.includes('FROM mg_jobs AS j'), true);
-  assert.equal(calls[3].query.includes('AS is_successful_confirmed_shift'), true);
-  assert.equal(calls[3].query.includes("toFloat64OrZero(ifNull(toString(j.payment), '')) > 0"), true);
+  assert.equal(calls[3].query.includes('WITH top_workplaces'), false);
+  assert.equal(calls[3].query.includes('INNER JOIN top_workplaces AS tw'), false);
+  assert.equal(calls[3].query.includes('o.workplace IN {workplace_ids:Array(String)}'), true);
+  assert.equal(calls[3].params.param_workplace_ids, "['wp1']");
+  assert.equal(calls[3].query.includes('INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id'), true);
+  assert.equal(calls[3].query.includes('AS is_successful_confirmed_shift'), false);
+  assert.equal(calls[3].query.includes("toFloat64OrZero(ifNull(toString(completed_job.payment), '')) > 0"), true);
   assert.equal(calls[3].query.includes('ifNull(j.payment, 0) > 0'), false);
-  assert.equal(calls[3].query.includes('completed_job.is_successful_confirmed_shift = 1'), true);
+  assert.equal(calls[3].query.includes('completed_job.is_successful_confirmed_shift = 1'), false);
   assert.equal(calls[3].query.includes('sla_ordered_shifts'), true);
   assert.equal(calls[3].query.includes('sla_completed_shifts'), true);
   assert.equal(calls[3].params.param_current_date, '2026-06-15');
   assert.equal(calls[3].query.includes('toDate(o.start) >= {current_date:Date}'), true);
-  assert.equal(calls[3].query.includes("ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')"), true);
+  assert.equal(calls[3].query.includes("ifNull(forecast_job.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')"), true);
   assert.equal(calls[3].query.includes('forecast_sla_active_shifts'), true);
   assert.deepEqual(dashboard.filterOptions.client, ['Бренд', 'Бренд 2']);
   assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
@@ -735,13 +737,14 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     assert.equal(call.query.includes("concat(ifNull(w.address__region, ''), ' ', ifNull(w.address__city, ''), ' ', ifNull(w.address__street, ''))"), true);
   }
 
-  for (const call of calls.slice(2)) {
-    assert.equal(call.query.includes('{limit:UInt64}'), true);
-    assert.equal(call.query.includes('OFFSET {offset:UInt64}'), true);
-    assert.equal(call.params.param_limit, 12);
-    assert.equal(call.params.param_offset, 12);
-    assert.equal(call.query.includes('ORDER BY total_ordered_shifts DESC, workplace_id ASC'), true);
-  }
+  assert.equal(calls[2].query.includes('{limit:UInt64}'), true);
+  assert.equal(calls[2].query.includes('OFFSET {offset:UInt64}'), true);
+  assert.equal(calls[2].params.param_limit, 12);
+  assert.equal(calls[2].params.param_offset, 12);
+  assert.equal(calls[2].query.includes('ORDER BY total_ordered_shifts DESC, workplace_id ASC'), true);
+  assert.equal(calls[3].query.includes('{limit:UInt64}'), false);
+  assert.equal(calls[3].query.includes('OFFSET {offset:UInt64}'), false);
+  assert.equal(calls[3].query.includes('ORDER BY total_ordered_shifts DESC, workplace_id ASC'), false);
 });
 
 test('loadWorkplaceAnalysisDashboardShell loads filter options without point datasets', async () => {
@@ -778,6 +781,9 @@ test('loadWorkplaceAnalysisDashboardShell loads filter options without point dat
   );
 
   assert.deepEqual(calls.map((call) => call.operation), ['workplace analysis filter options']);
+  assert.equal((calls[0].query.match(/FROM mg_orders AS o/g) || []).length, 2);
+  assert.equal(calls[0].query.includes('ARRAY JOIN'), true);
+  assert.equal(calls[0].query.includes('LEFT JOIN mg_workplaces AS ow'), false);
   assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
   assert.deepEqual(dashboard.filters.city, ['Москва']);
   assert.deepEqual(dashboard.filters.orderType, ['regular']);
@@ -1054,6 +1060,60 @@ test('loadWorkplaceAnalysisDashboardSection ignores stale attention cache withou
   assert.deepEqual(dashboard.attentionPoints[0].freeProfessions7d, [{ profession: 'Picker', free7d: 6 }]);
 });
 
+test('loadWorkplaceAnalysisDashboardSection keeps attention cache independent from points pagination', async () => {
+  const now = new Date('2026-06-04T12:00:00.000Z');
+  const keys = [];
+  const cache = {
+    async getOrLoad(key) {
+      keys.push(key);
+
+      return {
+        filters: normalizeWorkplaceAttentionFilters({ client: 'Brand' }, now),
+        attentionPoints: [],
+        attentionPagination: {
+          page: 1,
+          pageSize: 15,
+          totalWorkplaces: 0,
+          totalPages: 1,
+          hasPrevious: false,
+          hasNext: false
+        }
+      };
+    }
+  };
+  const client = {
+    async queryJSONEachRow() {
+      throw new Error('attention cache should satisfy the request');
+    }
+  };
+
+  await loadWorkplaceAnalysisDashboardSection(
+    client,
+    { client: 'Brand', page: '1', limit: '10', sort: 'sla', slaFrom: '50' },
+    'attention',
+    now,
+    { cache }
+  );
+  await loadWorkplaceAnalysisDashboardSection(
+    client,
+    { client: 'Brand', page: '3', limit: '50', sort: 'stability', slaFrom: '80' },
+    'attention',
+    now,
+    { cache }
+  );
+
+  const parsed = JSON.parse(keys[0]);
+
+  assert.equal(keys[0], keys[1]);
+  assert.equal(parsed.section, 'attention');
+  assert.equal(parsed.filters.client[0], 'Brand');
+  assert.equal(parsed.filters.attentionFrom, '2026-06-04');
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.filters, 'page'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.filters, 'limit'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.filters, 'sort'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.filters, 'slaFrom'), false);
+});
+
 test('loadWorkplaceAnalysisDashboard keeps pinned workplaces above filtered and sorted results', async () => {
   const calls = [];
   const client = {
@@ -1201,7 +1261,18 @@ test('loadWorkplaceAnalysisDashboard constrains workplace metrics to actual non-
       calls.push({ query, params, operation });
 
       if (operation === 'workplace analysis total workplaces') {
-        return [{ total_workplaces: 0 }];
+        return [{ total_workplaces: 1 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp-domain',
+            workplace_title: 'Domain point',
+            total_ordered_shifts: 1,
+            active_days: 1
+          }
+        ];
       }
 
       return [];
@@ -1228,8 +1299,9 @@ test('loadWorkplaceAnalysisDashboard constrains workplace metrics to actual non-
 
   for (const call of orderMetricCalls) {
     assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
-    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
-    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS w ON w._id = o.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), false);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = w.contractor'), true);
     assert.equal(call.query.includes('c.title IS NULL OR c.title NOT IN'), true);
     assert.equal(call.query.includes("ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
   }
@@ -1238,15 +1310,14 @@ test('loadWorkplaceAnalysisDashboard constrains workplace metrics to actual non-
   const dailyCall = calls.find((call) => call.operation === 'workplace analysis daily orders');
 
   for (const call of [topCall, dailyCall]) {
-    assert.equal(call.query.includes('INNER JOIN mg_orders AS actual_order ON actual_order._id = j.source'), true);
-    assert.equal(call.query.includes('actual_order.deleted = 0'), true);
-    assert.equal(call.query.includes('ifNull(actual_order.is_hidden, false) = false'), true);
-    assert.equal(call.query.includes('INNER JOIN mg_clients AS actual_client ON actual_client._id = actual_order.client'), true);
-    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = actual_order.workplace'), true);
-    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS actual_contractor ON actual_contractor._id = ow.contractor'), true);
-    assert.equal(call.query.includes('actual_client.title IS NULL OR actual_client.title NOT IN'), true);
-    assert.equal(call.query.includes("ifNull(actual_contractor.contract_type, ifNull(actual_order.contract_type, '')) != 'processing'"), true);
-    assert.equal(call.query.includes('toString(actual_order.pieceworks)'), true);
+    assert.equal(call.query.includes('INNER JOIN mg_orders AS actual_order ON actual_order._id = j.source'), false);
+    assert.equal(call.query.includes('actual_order.deleted = 0'), false);
+    assert.equal(call.query.includes('ifNull(actual_order.is_hidden, false) = false'), false);
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS actual_client ON actual_client._id = actual_order.client'), false);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS actual_contractor'), false);
+    assert.equal(call.query.includes('actual_client.title IS NULL OR actual_client.title NOT IN'), false);
+    assert.equal(call.query.includes("ifNull(actual_contractor.contract_type, ifNull(actual_order.contract_type, '')) != 'processing'"), false);
+    assert.equal(call.query.includes('toString(o.pieceworks)'), true);
     assert.equal(call.query.includes('j.piecework'), false);
   }
 });
@@ -1359,6 +1430,8 @@ test('loadWorkplaceAnalysisDashboard adds cached active gigers and refreshes sta
   assert.equal(activeCall.query.includes('mg_workers'), true);
   assert.equal(activeCall.query.includes("ifNull(worker.status, '') IN ('ready', 'worked', 'booked')"), true);
   assert.equal(activeCall.query.includes('parseDateTimeBestEffortOrNull(session_start_datetime) >= now() - INTERVAL 30 DAY'), true);
+  assert.equal(activeCall.query.includes('aw.worker_coordinates[1] BETWEEN sw.workplace_coordinates[1] -'), true);
+  assert.equal(activeCall.query.includes('aw.worker_coordinates[2] BETWEEN sw.workplace_coordinates[2] -'), true);
   assert.equal(activeCall.query.includes('greatCircleDistance'), true);
 });
 
@@ -1407,7 +1480,7 @@ test('loadWorkplaceAnalysisDashboard applies SLA and stability sort before pagin
     assert.equal(topCall.query.includes('sla_completed_shifts'), true);
     assert.equal(topCall.query.includes('sla_sort'), true);
     assert.equal(topCall.query.includes(scenario.orderBy), true);
-    assert.equal(dailyCall.query.includes(scenario.orderBy), true);
+    assert.equal(dailyCall, undefined);
   }
 });
 
@@ -1418,7 +1491,18 @@ test('loadWorkplaceAnalysisDashboard applies metric range filters before paginat
       calls.push({ query, params, operation });
 
       if (operation === 'workplace analysis total workplaces') {
-        return [{ total_workplaces: 0 }];
+        return [{ total_workplaces: 1 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp-visible',
+            workplace_title: 'Visible point',
+            total_ordered_shifts: 1,
+            active_days: 1
+          }
+        ];
       }
 
       return [];
@@ -1450,7 +1534,7 @@ test('loadWorkplaceAnalysisDashboard applies metric range filters before paginat
   assert.equal(dashboard.filters.stabilityFrom, 25);
   assert.equal(dashboard.filters.stabilityTo, 90);
 
-  for (const call of filteredCalls) {
+  for (const call of filteredCalls.filter((item) => item.operation !== 'workplace analysis daily orders')) {
     assert.equal(call.params.param_sla_from, 50);
     assert.equal(call.params.param_sla_to, 95);
     assert.equal(call.params.param_orders_from, 10);
@@ -1465,6 +1549,13 @@ test('loadWorkplaceAnalysisDashboard applies metric range filters before paginat
     assert.equal(call.query.includes('metrics.stability_percent >= {stability_from:Float64}'), true);
     assert.equal(call.query.includes('metrics.stability_percent <= {stability_to:Float64}'), true);
   }
+
+  const dailyCall = filteredCalls.find((call) => call.operation === 'workplace analysis daily orders');
+
+  assert.equal(dailyCall.params.param_workplace_ids, "['wp-visible']");
+  assert.equal(dailyCall.query.includes('metrics.sla_percent >= {sla_from:Float64}'), false);
+  assert.equal(dailyCall.query.includes('metrics.total_ordered_shifts >= {orders_from:Float64}'), false);
+  assert.equal(dailyCall.query.includes('metrics.stability_percent >= {stability_from:Float64}'), false);
 });
 
 test('loadWorkplaceAnalysisDashboard can include deleted and hidden orders', async () => {
@@ -1474,7 +1565,18 @@ test('loadWorkplaceAnalysisDashboard can include deleted and hidden orders', asy
       calls.push({ query, params, operation });
 
       if (operation === 'workplace analysis total workplaces') {
-        return [{ total_workplaces: 0 }];
+        return [{ total_workplaces: 1 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp-visible',
+            workplace_title: 'Visible point',
+            total_ordered_shifts: 1,
+            active_days: 1
+          }
+        ];
       }
 
       return [];
@@ -1584,9 +1686,12 @@ test('loadWorkplaceAnalysisDashboard uses total count for pagination', async () 
 
   assert.equal(pagedCalls[0].operation, 'workplace analysis total workplaces');
 
-  for (const call of pagedCalls.slice(1)) {
-    assert.equal(call.params.param_limit, 10);
-    assert.equal(call.params.param_offset, 20);
-    assert.equal(call.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
-  }
+  const topCall = pagedCalls.find((call) => call.operation === 'workplace analysis top workplaces');
+  const dailyCall = pagedCalls.find((call) => call.operation === 'workplace analysis daily orders');
+
+  assert.equal(topCall.params.param_limit, 10);
+  assert.equal(topCall.params.param_offset, 20);
+  assert.equal(topCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
+  assert.equal(dailyCall.params.param_workplace_ids, "['wp1','wp2','wp3','wp4','wp5','wp6','wp7','wp8','wp9','wp10']");
+  assert.equal(dailyCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), false);
 });

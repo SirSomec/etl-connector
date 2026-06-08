@@ -1649,6 +1649,8 @@ test('renderWorkplaceAnalysisDashboard renders attention tab progressive contain
   assert.match(html, /Обзор точек/);
   assert.match(html, /Требуют внимания/);
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/workplace-analysis\/section\?section=attention/);
+  assert.match(html, /data-dashboard-fragment-defer="#workplace-tab-attention"/);
+  assert.match(html, /loadDeferredDashboardFragment/);
 });
 
 test('renderWorkplaceAnalysisDashboardSection renders attention table without personal data', () => {

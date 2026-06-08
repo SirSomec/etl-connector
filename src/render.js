@@ -3359,6 +3359,10 @@ function renderDashboardProgressiveScript() {
   }
 
   document.querySelectorAll('[data-dashboard-fragment-url], [data-city-analysis-fragment-url]').forEach(function (root) {
+    if (root.getAttribute('data-dashboard-fragment-defer')) {
+      return;
+    }
+
     var url = root.getAttribute('data-dashboard-fragment-url') || root.getAttribute('data-city-analysis-fragment-url');
 
     fetch(url)
@@ -3377,6 +3381,48 @@ function renderDashboardProgressiveScript() {
 
         renderError(root, message);
       });
+  });
+
+  function loadDeferredDashboardFragment(root) {
+    if (!root || root.getAttribute('data-dashboard-fragment-loaded') === '1') {
+      return;
+    }
+
+    var url = root.getAttribute('data-dashboard-fragment-url') || root.getAttribute('data-city-analysis-fragment-url');
+
+    if (!url) {
+      return;
+    }
+
+    root.setAttribute('data-dashboard-fragment-loaded', '1');
+
+    fetch(url)
+      .then(function (response) {
+        return response.text().then(function (html) {
+          if (!response.ok && !html) {
+            renderError(root, '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0431\u043b\u043e\u043a.');
+            return;
+          }
+
+          replaceWithHtml(root, html);
+        });
+      })
+      .catch(function (error) {
+        var message = error && error.message ? error.message : '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0431\u043b\u043e\u043a.';
+
+        renderError(root, message);
+      });
+  }
+
+  document.addEventListener('change', function () {
+    document.querySelectorAll('[data-dashboard-fragment-defer]').forEach(function (root) {
+      var selector = root.getAttribute('data-dashboard-fragment-defer');
+      var trigger = selector ? document.querySelector(selector) : null;
+
+      if (trigger && trigger.checked) {
+        loadDeferredDashboardFragment(root);
+      }
+    });
   });
 
   document.addEventListener('click', function (event) {
@@ -7417,7 +7463,7 @@ function renderWorkplaceAnalysisDashboard({
 </div>`
     : renderWorkplaceAnalysisPointsSection(dashboard, currentUser);
   const attentionHtml = progressive
-    ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'attention'))}">
+    ? `<div data-dashboard-fragment-url="${escapeHtml(workplaceAnalysisSectionUrl(filters, 'attention'))}" data-dashboard-fragment-defer="#workplace-tab-attention">
   <section class="section">
     <h2>Точки, требующие внимания</h2>
     ${renderDashboardLoadingState()}

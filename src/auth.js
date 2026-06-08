@@ -10,8 +10,17 @@ const pbkdf2 = promisify(crypto.pbkdf2);
 const USER_STORE_VERSION = 1;
 const DEFAULT_USER_STORE_PATH = path.join(process.cwd(), 'data', 'users.json');
 const DEFAULT_PASSWORD_HASH_ITERATIONS = 210000;
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 12;
 const PASSWORD_HASH_ALGORITHM = 'pbkdf2-sha256';
+const WEAK_PASSWORD_WORDS = [
+  'password',
+  'qwerty',
+  '123456',
+  'change-me',
+  'changeme',
+  'admin',
+  'analyst'
+];
 
 const PERMISSION_DEFINITIONS = [
   {
@@ -111,15 +120,23 @@ function normalizePermissions(role, permissions) {
 }
 
 function toPublicUser(user) {
+  const source = user.source || 'managed';
+  const hasPasswordMetadata = Object.prototype.hasOwnProperty.call(user, 'mustChangePassword') ||
+    Object.prototype.hasOwnProperty.call(user, 'passwordChangedAt');
+
   return {
     id: user.id,
     email: user.email,
     name: user.name || '',
     role: user.role,
     permissions: normalizePermissions(user.role, user.permissions),
-    source: user.source || 'managed',
+    source,
     createdAt: user.createdAt || '',
-    updatedAt: user.updatedAt || ''
+    updatedAt: user.updatedAt || '',
+    mustChangePassword: source === 'env' ? false : (
+      hasPasswordMetadata ? user.mustChangePassword === true : true
+    ),
+    passwordChangedAt: source === 'env' ? '' : String(user.passwordChangedAt || '')
   };
 }
 
@@ -151,12 +168,52 @@ async function writeStoreFile(filePath, data) {
   await writeFileAtomically(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
 
-function assertPassword(password) {
+function validatePasswordQuality(password, context = {}) {
   const text = String(password || '');
+  const normalizedEmail = normalizeEmail(context.email);
+  const emailLocalPart = normalizedEmail.split('@')[0] || '';
+  const normalizedPassword = text.toLowerCase();
 
   if (text.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`Password must contain at least ${MIN_PASSWORD_LENGTH} characters`);
   }
+
+  if (/\s/.test(text)) {
+    throw new Error('Password must not contain spaces');
+  }
+
+  if (
+    normalizedEmail &&
+    (normalizedPassword === normalizedEmail || normalizedPassword === emailLocalPart)
+  ) {
+    throw new Error('Password must not match email');
+  }
+
+  if (WEAK_PASSWORD_WORDS.some((word) => normalizedPassword === word || normalizedPassword.includes(word))) {
+    throw new Error('Password is too common');
+  }
+
+  if (!/[a-z]/.test(text)) {
+    throw new Error('Password must contain a lowercase letter');
+  }
+
+  if (!/[A-Z]/.test(text)) {
+    throw new Error('Password must contain an uppercase letter');
+  }
+
+  if (!/\d/.test(text)) {
+    throw new Error('Password must contain a number');
+  }
+
+  if (!/[^A-Za-z0-9]/.test(text)) {
+    throw new Error('Password must contain a special character');
+  }
+
+  return text;
+}
+
+function assertPassword(password, context = {}) {
+  const text = validatePasswordQuality(password, context);
 
   return text;
 }
@@ -228,7 +285,9 @@ function envAdminUser({ adminEmail, now = () => new Date() }) {
     permissions: [...ALL_PERMISSION_IDS],
     source: 'env',
     createdAt: timestamp,
-    updatedAt: timestamp
+    updatedAt: timestamp,
+    mustChangePassword: false,
+    passwordChangedAt: ''
   };
 }
 
@@ -337,7 +396,7 @@ function createUserStore(options = {}) {
     async createUser(input) {
       const email = await ensureEmailAvailable(input && input.email);
       const role = normalizeRole(input && input.role);
-      const password = assertPassword(input && input.password);
+      const password = assertPassword(input && input.password, { email });
       const timestamp = now().toISOString();
       const store = await readStore();
       const record = {
@@ -347,6 +406,8 @@ function createUserStore(options = {}) {
         role,
         permissions: normalizePermissions(role, input && input.permissions),
         passwordHash: await createPasswordHash(password, passwordHashOptions),
+        mustChangePassword: true,
+        passwordChangedAt: '',
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -383,8 +444,60 @@ function createUserStore(options = {}) {
       };
 
       if (password !== '') {
-        updated.passwordHash = await createPasswordHash(assertPassword(password), passwordHashOptions);
+        updated.passwordHash = await createPasswordHash(
+          assertPassword(password, { email }),
+          passwordHashOptions
+        );
+        updated.mustChangePassword = true;
+        updated.passwordChangedAt = '';
       }
+
+      store.users[index] = updated;
+      await writeStore(store);
+
+      return toPublicUser({ ...updated, source: 'managed' });
+    },
+
+    async changeOwnPassword(id, input) {
+      if (id === 'env-admin') {
+        throw new Error('Environment administrator password is managed through environment variables');
+      }
+
+      const store = await readStore();
+      const index = store.users.findIndex((user) => user.id === id);
+
+      if (index === -1) {
+        throw new Error('User not found');
+      }
+
+      const current = store.users[index];
+      const currentPassword = String((input && input.currentPassword) || '');
+      const newPassword = String((input && input.newPassword) || '');
+      const confirmPassword = String((input && input.confirmPassword) || '');
+
+      if (!(await verifyPassword(currentPassword, current.passwordHash))) {
+        throw new Error('Current password is incorrect');
+      }
+
+      if (newPassword !== confirmPassword) {
+        throw new Error('Password confirmation must match');
+      }
+
+      if (await verifyPassword(newPassword, current.passwordHash)) {
+        throw new Error('Password must differ from current password');
+      }
+
+      const timestamp = now().toISOString();
+      const updated = {
+        ...current,
+        passwordHash: await createPasswordHash(
+          assertPassword(newPassword, { email: current.email }),
+          passwordHashOptions
+        ),
+        mustChangePassword: false,
+        passwordChangedAt: timestamp,
+        updatedAt: timestamp
+      };
 
       store.users[index] = updated;
       await writeStore(store);

@@ -71,7 +71,7 @@ test('user store exposes env admin and persists managed accounts', async () => {
           name: 'Duplicate',
           role: 'analyst',
           permissions: ['tables'],
-          password: 'AnalystPass123'
+          password: 'WorkerPass123!'
         }),
       /already exists/
     );
@@ -89,7 +89,7 @@ test('user store exposes env admin and persists managed accounts', async () => {
         'users',
         'unknown'
       ],
-      password: 'AnalystPass123'
+      password: 'WorkerPass123!'
     });
 
     assert.equal(created.email, 'analyst@example.test');
@@ -104,10 +104,10 @@ test('user store exposes env admin and persists managed accounts', async () => {
     ]);
 
     const fileBody = await fs.readFile(filePath, 'utf8');
-    assert.doesNotMatch(fileBody, /AnalystPass123/);
+    assert.doesNotMatch(fileBody, /WorkerPass123!/);
     assert.match(fileBody, /pbkdf2-sha256/);
 
-    const analyst = await store.verifyCredentials('analyst@example.test', 'AnalystPass123');
+    const analyst = await store.verifyCredentials('analyst@example.test', 'WorkerPass123!');
 
     assert.equal(analyst.id, created.id);
     assert.equal(hasPermission(analyst, 'city-analysis'), true);
@@ -121,22 +121,185 @@ test('user store exposes env admin and persists managed accounts', async () => {
       name: 'Senior Analyst',
       role: 'admin',
       permissions: [],
-      password: 'NewAdminPass123'
+      password: 'SeniorPass123!'
     });
 
     assert.equal(updated.name, 'Senior Analyst');
     assert.equal(updated.role, 'admin');
     assert.equal(hasPermission(updated, 'users'), true);
-    assert.equal(await store.verifyCredentials('analyst@example.test', 'AnalystPass123'), null);
-    assert.equal((await store.verifyCredentials('analyst@example.test', 'NewAdminPass123')).role, 'admin');
+    assert.equal(await store.verifyCredentials('analyst@example.test', 'WorkerPass123!'), null);
+    assert.equal((await store.verifyCredentials('analyst@example.test', 'SeniorPass123!')).role, 'admin');
 
     await store.deleteUser(created.id);
 
-    assert.equal(await store.verifyCredentials('analyst@example.test', 'NewAdminPass123'), null);
+    assert.equal(await store.verifyCredentials('analyst@example.test', 'SeniorPass123!'), null);
     assert.deepEqual(
       (await store.listUsers()).map((user) => user.email),
       ['admin@example.test']
     );
+  });
+});
+
+test('user store rejects weak managed passwords', async () => {
+  await withTempDir(async (tempDir) => {
+    const filePath = path.join(tempDir, 'users.json');
+    const store = createStore(filePath);
+
+    await assert.rejects(
+      () =>
+        store.createUser({
+          email: 'weak@example.test',
+          name: 'Weak',
+          role: 'analyst',
+          permissions: ['tables'],
+          password: 'Password1!'
+        }),
+      /at least 12/
+    );
+    await assert.rejects(
+      () =>
+        store.createUser({
+          email: 'space@example.test',
+          name: 'Space',
+          role: 'analyst',
+          permissions: ['tables'],
+          password: 'Strong Pass123!'
+        }),
+      /must not contain spaces/
+    );
+    await assert.rejects(
+      () =>
+        store.createUser({
+          email: 'analyst@example.test',
+          name: 'Email Password',
+          role: 'analyst',
+          permissions: ['tables'],
+          password: 'analyst@example.test'
+        }),
+      /must not match email/
+    );
+  });
+});
+
+test('managed users can change their own temporary password', async () => {
+  await withTempDir(async (tempDir) => {
+    const filePath = path.join(tempDir, 'users.json');
+    const store = createStore(filePath);
+    const created = await store.createUser({
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables'],
+      password: 'StrongerPass123!'
+    });
+
+    assert.equal(created.mustChangePassword, true);
+    assert.equal(created.passwordChangedAt, '');
+
+    await assert.rejects(
+      () =>
+        store.changeOwnPassword(created.id, {
+          currentPassword: 'wrong-current',
+          newPassword: 'BetterPass456!',
+          confirmPassword: 'BetterPass456!'
+        }),
+      /Current password is incorrect/
+    );
+    await assert.rejects(
+      () =>
+        store.changeOwnPassword(created.id, {
+          currentPassword: 'StrongerPass123!',
+          newPassword: 'StrongerPass123!',
+          confirmPassword: 'StrongerPass123!'
+        }),
+      /must differ from current password/
+    );
+
+    const changed = await store.changeOwnPassword(created.id, {
+      currentPassword: 'StrongerPass123!',
+      newPassword: 'BetterPass456!',
+      confirmPassword: 'BetterPass456!'
+    });
+
+    assert.equal(changed.email, 'analyst@example.test');
+    assert.equal(changed.mustChangePassword, false);
+    assert.match(changed.passwordChangedAt, /^2026-06-02T10:00:00\.000Z$/);
+    assert.equal(await store.verifyCredentials('analyst@example.test', 'StrongerPass123!'), null);
+    assert.equal(
+      (await store.verifyCredentials('analyst@example.test', 'BetterPass456!')).mustChangePassword,
+      false
+    );
+  });
+});
+
+test('admin password reset marks managed password as temporary again', async () => {
+  await withTempDir(async (tempDir) => {
+    const filePath = path.join(tempDir, 'users.json');
+    const store = createStore(filePath);
+    const created = await store.createUser({
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables'],
+      password: 'StrongerPass123!'
+    });
+
+    await store.changeOwnPassword(created.id, {
+      currentPassword: 'StrongerPass123!',
+      newPassword: 'BetterPass456!',
+      confirmPassword: 'BetterPass456!'
+    });
+
+    const reset = await store.updateUser(created.id, {
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables'],
+      password: 'ResetPass789!'
+    });
+
+    assert.equal(reset.mustChangePassword, true);
+    assert.equal(reset.passwordChangedAt, '');
+    assert.equal(
+      (await store.verifyCredentials('analyst@example.test', 'ResetPass789!')).mustChangePassword,
+      true
+    );
+  });
+});
+
+test('legacy managed users without password metadata require password change', async () => {
+  await withTempDir(async (tempDir) => {
+    const filePath = path.join(tempDir, 'users.json');
+    const legacyHash = await createPasswordHash('LegacyPass123!', {
+      iterations: 1000,
+      salt: '0123456789abcdef'
+    });
+
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        users: [
+          {
+            id: 'legacy-user',
+            email: 'legacy@example.test',
+            name: 'Legacy',
+            role: 'analyst',
+            permissions: ['tables'],
+            passwordHash: legacyHash,
+            createdAt: '2026-06-01T10:00:00.000Z',
+            updatedAt: '2026-06-01T10:00:00.000Z'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const store = createStore(filePath);
+    const legacy = await store.verifyCredentials('legacy@example.test', 'LegacyPass123!');
+
+    assert.equal(legacy.mustChangePassword, true);
+    assert.equal(legacy.passwordChangedAt, '');
   });
 });
 

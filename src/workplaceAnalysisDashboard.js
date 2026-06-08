@@ -1031,16 +1031,18 @@ function orderDimensionJoinsSql() {
   LEFT JOIN mg_professions AS p ON o.spec = p.spec`;
 }
 
-function successfulConfirmedJobJoinSql(jobAlias, orderAlias = 'o') {
-  return `INNER JOIN mg_jobs AS ${jobAlias} ON ${jobAlias}.source = ${orderAlias}._id
-      AND ifNull(${jobAlias}.deleted, 0) = 0
-      AND (${successfulConfirmedShiftCondition(jobAlias, { pieceworkExpression: `${orderAlias}.pieceworks` })})`;
+function jobSourceJoinSql(jobAlias, orderAlias = 'o') {
+  return `INNER JOIN mg_jobs AS ${jobAlias} ON ${jobAlias}.source = ${orderAlias}._id`;
 }
 
-function forecastSlaActiveJobJoinSql(jobAlias, orderAlias = 'o') {
-  return `INNER JOIN mg_jobs AS ${jobAlias} ON ${jobAlias}.source = ${orderAlias}._id
-      AND ifNull(${jobAlias}.deleted, 0) = 0
-      AND ifNull(${jobAlias}.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')`;
+function successfulConfirmedJobWhereSql(jobAlias, orderAlias = 'o') {
+  return `ifNull(${jobAlias}.deleted, 0) = 0
+        AND (${successfulConfirmedShiftCondition(jobAlias, { pieceworkExpression: `${orderAlias}.pieceworks` })})`;
+}
+
+function forecastSlaActiveJobWhereSql(jobAlias) {
+  return `ifNull(${jobAlias}.deleted, 0) = 0
+        AND ifNull(${jobAlias}.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')`;
 }
 
 function closingJobStatusCondition(alias = 'j', options = {}) {
@@ -1237,9 +1239,10 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
       FROM mg_orders AS o
       ${orderDimensionJoinsSql()}
-    ${successfulConfirmedJobJoinSql('completed_job')}
+    ${jobSourceJoinSql('completed_job')}
     WHERE ${whereSql}
         AND toDate(o.start) < {current_date:Date}
+        AND ${successfulConfirmedJobWhereSql('completed_job')}
       GROUP BY workplace_id
     ) AS sc ON os.workplace_id = sc.workplace_id
     LEFT JOIN (
@@ -1248,9 +1251,10 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
       FROM mg_orders AS o
       ${orderDimensionJoinsSql()}
-    ${forecastSlaActiveJobJoinSql('forecast_job')}
+    ${jobSourceJoinSql('forecast_job')}
     WHERE ${whereSql}
         AND toDate(o.start) >= {current_date:Date}
+        AND ${forecastSlaActiveJobWhereSql('forecast_job')}
       GROUP BY workplace_id
     ) AS fa ON os.workplace_id = fa.workplace_id
   ) AS metrics
@@ -1312,9 +1316,10 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
     FROM mg_orders AS o
     ${orderDimensionJoinsSql()}
-    ${successfulConfirmedJobJoinSql('completed_job')}
+    ${jobSourceJoinSql('completed_job')}
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
+      AND ${successfulConfirmedJobWhereSql('completed_job')}
     GROUP BY workplace_id, order_date
   ),
   daily_forecast_active AS (
@@ -1325,10 +1330,11 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
     FROM mg_orders AS o
     ${orderDimensionJoinsSql()}
-    ${forecastSlaActiveJobJoinSql('forecast_job')}
+    ${jobSourceJoinSql('forecast_job')}
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
       AND toDate(o.start) >= {current_date:Date}
+      AND ${forecastSlaActiveJobWhereSql('forecast_job')}
     GROUP BY workplace_id, order_date
   )
   SELECT

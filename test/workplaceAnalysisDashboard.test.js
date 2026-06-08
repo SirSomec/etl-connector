@@ -16,6 +16,26 @@ const {
 
 const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
 
+function extractMgJobJoinOnClauses(query, alias) {
+  const marker = `INNER JOIN mg_jobs AS ${alias} ON `;
+  const clauses = [];
+  let markerIndex = query.indexOf(marker);
+
+  while (markerIndex !== -1) {
+    const clauseStart = markerIndex + marker.length;
+    const clauseEndCandidates = [
+      query.indexOf('\n    WHERE ', clauseStart),
+      query.indexOf('\n    GROUP BY ', clauseStart)
+    ].filter((index) => index !== -1);
+
+    assert.notEqual(clauseEndCandidates.length, 0);
+    clauses.push(query.slice(clauseStart, Math.min(...clauseEndCandidates)).trim());
+    markerIndex = query.indexOf(marker, clauseStart);
+  }
+
+  return clauses;
+}
+
 test('normalizeWorkplaceAnalysisFilters defaults from previous month start to current month end and whitelists limit and order type', () => {
   const filters = normalizeWorkplaceAnalysisFilters(
     {
@@ -693,6 +713,12 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls[3].query.includes('o.workplace IN {workplace_ids:Array(String)}'), true);
   assert.equal(calls[3].params.param_workplace_ids, "['wp1']");
   assert.equal(calls[3].query.includes('INNER JOIN mg_jobs AS completed_job ON completed_job.source = o._id'), true);
+  for (const call of [calls[2], calls[3]]) {
+    assert.deepEqual(extractMgJobJoinOnClauses(call.query, 'completed_job'), ['completed_job.source = o._id']);
+    assert.deepEqual(extractMgJobJoinOnClauses(call.query, 'forecast_job'), ['forecast_job.source = o._id']);
+    assert.equal(call.query.includes('AND ifNull(completed_job.deleted, 0) = 0'), true);
+    assert.equal(call.query.includes('AND ifNull(forecast_job.deleted, 0) = 0'), true);
+  }
   assert.equal(calls[3].query.includes('AS is_successful_confirmed_shift'), false);
   assert.equal(calls[3].query.includes("toFloat64OrZero(ifNull(toString(completed_job.payment), '')) > 0"), true);
   assert.equal(calls[3].query.includes('ifNull(j.payment, 0) > 0'), false);

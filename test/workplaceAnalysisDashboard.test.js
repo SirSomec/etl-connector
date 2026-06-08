@@ -1194,6 +1194,62 @@ test('loadWorkplaceAnalysisDashboard keeps pinned workplaces above filtered and 
   }
 });
 
+test('loadWorkplaceAnalysisDashboard constrains workplace metrics to actual non-fake non-processing orders', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 0 }];
+      }
+
+      return [];
+    }
+  };
+
+  await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-30'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  const orderMetricCalls = calls.filter((call) =>
+    [
+      'workplace analysis filter options',
+      'workplace analysis total workplaces',
+      'workplace analysis top workplaces',
+      'workplace analysis daily orders'
+    ].includes(call.operation)
+  );
+
+  for (const call of orderMetricCalls) {
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+    assert.equal(call.query.includes('c.title IS NULL OR c.title NOT IN'), true);
+    assert.equal(call.query.includes("ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
+  }
+
+  const topCall = calls.find((call) => call.operation === 'workplace analysis top workplaces');
+  const dailyCall = calls.find((call) => call.operation === 'workplace analysis daily orders');
+
+  for (const call of [topCall, dailyCall]) {
+    assert.equal(call.query.includes('INNER JOIN mg_orders AS actual_order ON actual_order._id = j.source'), true);
+    assert.equal(call.query.includes('actual_order.deleted = 0'), true);
+    assert.equal(call.query.includes('ifNull(actual_order.is_hidden, false) = false'), true);
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS actual_client ON actual_client._id = actual_order.client'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = actual_order.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS actual_contractor ON actual_contractor._id = ow.contractor'), true);
+    assert.equal(call.query.includes('actual_client.title IS NULL OR actual_client.title NOT IN'), true);
+    assert.equal(call.query.includes("ifNull(actual_contractor.contract_type, ifNull(actual_order.contract_type, '')) != 'processing'"), true);
+    assert.equal(call.query.includes('toString(j.piecework)'), true);
+  }
+});
+
 test('loadWorkplaceAnalysisDashboard adds cached active gigers and refreshes stale workplace values', async () => {
   const calls = [];
   const writtenCacheValues = [];

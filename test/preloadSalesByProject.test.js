@@ -75,18 +75,29 @@ test('sales preload query builders use parameterized ClickHouse ranges', () => {
   const queries = buildSalesByProjectPreloadQueries();
 
   assert.equal(queries.orderFacts.includes('FROM mg_orders AS o'), true);
+  assert.equal(queries.orderFacts.includes('actual_orders AS ('), true);
   assert.equal(queries.orderFacts.includes('{from:DateTime}'), true);
   assert.equal(queries.orderFacts.includes('{to:DateTime}'), true);
   assert.equal(queries.orderFacts.includes("ifNull(o._id, '') != ''"), false);
   assert.equal(queries.shiftFacts.includes('FROM mg_jobs AS j'), true);
+  assert.equal(queries.shiftFacts.includes('actual_orders AS ('), true);
+  assert.equal(queries.shiftFacts.includes('INNER JOIN actual_orders AS ao ON j.source = ao.order_id'), true);
   assert.equal(queries.shiftFacts.includes('mg_job_history'), true);
   assert.equal(queries.shiftFacts.includes('mg_transactions'), true);
   assert.equal(queries.shiftFacts.includes('INNER JOIN shift_facts AS sf'), true);
+  assert.equal(queries.shiftFacts.includes('row_number() OVER ('), true);
+  assert.equal(queries.shiftFacts.includes('PARTITION BY h.job'), true);
+  assert.equal(queries.shiftFacts.includes("if(ifNull(fh.first_initiator, '') = 'worker', 1, 0) AS is_self_booked"), true);
+  assert.equal(queries.shiftFacts.includes("max(if(h.status = 'booked' AND h.initiator = 'worker'"), false);
+  assert.equal(queries.shiftFacts.includes('ifNull(t.deleted, 0) = 0'), true);
+  assert.equal(queries.shiftFacts.includes("t.transaction_type = 'surcharge'"), false);
+  assert.equal(queries.shiftFacts.includes('j.piecework AS piecework'), true);
+  assert.equal(queries.shiftFacts.includes('nullIf(toFloat64OrNull'), true);
   assert.equal(queries.shiftFacts.includes("contract_type = 'saas'"), true);
   assert.equal(queries.shiftFacts.includes('AS is_successful_confirmed_shift'), true);
   assert.equal(queries.shiftFacts.includes("if(ifNull(cancellation_reason, '') != '' OR status = 'failed', 1, 0) AS cancelled_shifts"), true);
   assert.equal(queries.shiftFacts.includes("if(is_successful_confirmed_shift = 1 AND is_self_booked = 1, 1, 0) AS self_booked_confirmed_shift"), true);
-  assert.equal(queries.shiftFacts.includes("if(is_successful_confirmed_shift = 1 AND salary_per_hour > 0, salary_per_hour, 0) AS worker_rate_hour"), true);
+  assert.equal(queries.shiftFacts.includes('worker_rate_hour'), true);
   assert.equal(queries.shiftFacts.includes('FORMAT JSONEachRow'), true);
 });
 

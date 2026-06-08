@@ -4,6 +4,14 @@
 
 Экран оценивает спрос и базу исполнителей по выбранному городу. Спрос считается по `mg_orders`, активность приложения - по `appmetrica_sessions`, база исполнителей - по последней геолокации `mg_workers.location__coordinates` и статусам исполнителей.
 
+## Доменные правила
+
+- Спрос, отклики и выполнения считаются только по актуальным заказам: не удаленным, не скрытым, без тестовых клиентов и без `processing`.
+- Контрагент заказа берется через рабочее место: `mg_orders.workplace -> mg_workplaces._id -> mg_contractors._id`.
+- История откликов связывается с конкретной сменой: `mg_job_history.job -> mg_jobs._id -> filtered_orders.order_id`; связь только по `history.source` не используется для метрик откликов.
+- Выполнения считаются по успешным `confirmed` через общий helper, включая исключение `piecework`-прогулов.
+- Гео-CTE оставляют `CROSS JOIN` только для scalar/bounds и сопоставления с точками спроса; перед `greatCircleDistance` используются bounding predicates.
+
 ## Фильтры
 
 - `{from:DateTime}`, `{to:DateTime}` - выбранный период по `mg_orders.start`.
@@ -201,7 +209,8 @@ app_30d_active_users AS (
 booked_users AS (
   SELECT DISTINCT worker.user AS user_id
   FROM mg_job_history AS history
-  INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+  INNER JOIN mg_jobs AS job ON history.job = job._id
+  INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON history.worker = worker._id
   WHERE ifNull(history.status, '') = 'booked'
     AND ifNull(worker.user, '') != ''
@@ -417,7 +426,8 @@ daily_booked AS (
     fo.period AS period,
     uniqExact(worker.user) AS booked_users
   FROM mg_job_history AS history
-  INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+  INNER JOIN mg_jobs AS job ON history.job = job._id
+  INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON history.worker = worker._id
   WHERE ifNull(history.status, '') = 'booked'
     AND ifNull(worker.user, '') != ''

@@ -4,6 +4,16 @@
 
 Дашборд показывает плановый спрос, выполненные смены, выручку и разрезы по брендам за выбранный период. Временное поле для заказов - `mg_orders.start`, для смен - `mg_jobs.start`. По умолчанию период - последние 90 дней, группировка - месяц.
 
+## Доменные правила
+
+- Заказы и смены считаются только через актуальные заказы: `mg_jobs.source = mg_orders._id`, `mg_orders.deleted = 0`, `mg_orders.is_hidden = false`.
+- Из расчетов исключаются тестовые клиенты `MyGig ГПХ`, `MyGig Demo`, `Проверка выплаты Альфа-банк`, `Тест`, `ТестДляПроверки`, `ТестСдокументами`, `ООО «МгРу»`.
+- Контракты `processing` исключаются через тип контрагента точки заказа и fallback на `mg_orders.contract_type`.
+- Самобронь считается по первому непустому событию `mg_job_history` внутри конкретной смены через оконную нумерацию по `job`, а не по любому `booked` от `worker`.
+- Транзакции по смене учитываются только при `deleted = false`; сумма берется со знаком и не ограничивается `transaction_type = 'surcharge'`.
+- Для `piecework`-смены нулевая фактическая клиентская оплата считается прогулом даже при `status = 'confirmed'`.
+- Средние ставки считаются только по положительным nullable-ставкам; невалидные, пустые и нулевые значения не превращаются в валидную ставку для среднего.
+
 ## Фильтры и параметры SQL
 
 - `period`: `day`, `week`, `month`, `quarter`.
@@ -21,13 +31,16 @@ toStartOfQuarter(<field>)
 
 ```sql
 o.deleted = 0
+AND ifNull(o.is_hidden, false) = false
+AND c.title NOT IN (<test_client_titles>)
+AND ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'
 AND o.start >= {from:DateTime}
 AND o.start < {to:DateTime}
 ```
 
 ## Общие CTE для смен
 
-Большинство запросов по факту строятся через `shift_facts`, `self_bookings`, `surcharges` и `shift_enriched`.
+Большинство запросов по факту строятся через `actual_orders`, `shift_facts`, `history_ranked`, `first_history`, `job_transactions` и `shift_enriched`. Большой листинг ниже оставлен как форма CTE; актуальные проверяемые SQL-фрагменты доступны в SQL-инспекторе дашборда.
 
 ```sql
 WITH shift_facts AS (
@@ -57,7 +70,7 @@ WITH shift_facts AS (
 self_bookings AS (
   SELECT
     h.job AS job,
-    max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0)) AS is_self_booked
+    row_number() OVER (PARTITION BY h.job ORDER BY coalesce(h.createdAt, h.updatedAt), h._id) AS rn
   FROM mg_job_history AS h
   INNER JOIN shift_facts AS sf ON h.job = sf.job
   WHERE h.job != ''
@@ -69,7 +82,7 @@ surcharges AS (
     sum(coalesce(nullIf(t.payment_amount, 0), t.amount, 0)) AS surcharge_amount
   FROM mg_transactions AS t
   INNER JOIN shift_facts AS sf ON t.entityId = sf.job
-  WHERE t.transaction_type = 'surcharge'
+  WHERE ifNull(t.deleted, 0) = 0
     AND t.entityId != ''
   GROUP BY t.entityId
 ),
@@ -119,7 +132,7 @@ shift_enriched AS (
 )
 ```
 
-Успешная `confirmed`-смена должна иметь ненулевую длительность, начисление/выплату или положительный фактический интервал. `confirmed`-смена с длительностью `0:00` и нулевым начислением/выплатой считается прогулом и не участвует в факте, SLA и выручке.
+Успешная `confirmed`-смена должна иметь ненулевую длительность, начисление/выплату или положительный фактический интервал. `confirmed`-смена с длительностью `0:00` и нулевым начислением/выплатой считается прогулом и не участвует в факте, SLA и выручке. Для `piecework`-смены с непустым `piecework` требуется положительная фактическая клиентская оплата.
 
 Выручка считается только по `is_successful_confirmed_shift = 1`:
 
@@ -273,11 +286,11 @@ FORMAT JSONEachRow
 - `orderedShifts`: сумма `mg_orders.amount`; плановое количество исполнителей в заказах.
 - `workedShifts`: `uniqExactIf(job, is_successful_confirmed_shift = 1)`; факт успешно выполненных смен без прогулов с `0:00` и нулевым начислением/выплатой.
 - `slaPercent`: `workedShifts / orderedShifts * 100`; показывает покрытие планового спроса фактом.
-- `revenueRub`: сумма выражения выручки; для `saas` берется сумма исполнителя с комиссией подрядчика, для остальных контрактов клиентская стоимость, в обоих случаях прибавляются surcharge.
+- `revenueRub`: сумма выражения выручки; для `saas` берется сумма исполнителя с комиссией подрядчика, для остальных контрактов клиентская стоимость, в обоих случаях добавляются подписанные неудаленные транзакции по смене.
 - `uniqueWorkers`: уникальные исполнители успешных подтвержденных смен.
 - `workplacesWithOrders`: уникальные точки в заказах.
 - `workplacesWithWorkedShifts`: уникальные точки с успешными подтвержденными сменами.
 - `cancelledShifts`: смены с непустой причиной отмены или `status = 'failed'`.
-- `selfBookingPercent`: `self_booked_confirmed_shifts / workedShifts * 100`; доля выполненных смен, где в истории было событие `booked` от `initiator = 'worker'`.
-- `avgWorkerRateHour`: средний `salary_per_hour` по успешным подтвержденным сменам с положительной ставкой.
+- `selfBookingPercent`: `self_booked_confirmed_shifts / workedShifts * 100`; доля выполненных смен, где первое непустое событие истории смены создано `initiator = 'worker'`.
+- `avgWorkerRateHour`: средний `salary_per_hour` по успешным подтвержденным сменам с положительной nullable-ставкой.
 - `statusRows.shifts`: количество смен по каждому статусу в `mg_jobs`.

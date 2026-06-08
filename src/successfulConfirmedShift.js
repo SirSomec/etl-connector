@@ -20,18 +20,35 @@ function numericFieldExpression(alias, field) {
   return `toFloat64OrZero(ifNull(toString(${value}), ''))`;
 }
 
+function stringFieldExpression(alias, field) {
+  const value = sqlField(alias, field);
+
+  return `ifNull(toString(${value}), '')`;
+}
+
+function pieceworkNotEmptyCondition(alias) {
+  const piecework = stringFieldExpression(alias, 'piecework');
+
+  return `(${piecework} != '' AND ${piecework} != '[]' AND ${piecework} != '{}')`;
+}
+
 function positiveAccrualCondition(alias) {
   const hours = numericFieldExpression(alias, 'hours');
   const payment = numericFieldExpression(alias, 'payment');
   const salaryPerJob = numericFieldExpression(alias, 'salary_per_job');
   const salaryPerHour = numericFieldExpression(alias, 'salary_per_hour');
-
-  return [
+  const pieceworkNotEmpty = pieceworkNotEmptyCondition(alias);
+  const nonPieceworkPositiveFacts = [
     `${hours} > 0`,
     `${payment} > 0`,
     `${salaryPerJob} > 0`,
     `${salaryPerHour} * ${hours} > 0`,
     `(${positiveFactIntervalCondition(alias)})`
+  ].join(' OR ');
+
+  return [
+    `(${pieceworkNotEmpty} AND ${payment} > 0)`,
+    `(NOT ${pieceworkNotEmpty} AND (${nonPieceworkPositiveFacts}))`
   ].join(' OR ');
 }
 
@@ -45,6 +62,7 @@ function successfulConfirmedShiftFlagExpression(alias) {
 
 module.exports = {
   numericFieldExpression,
+  pieceworkNotEmptyCondition,
   successfulConfirmedShiftCondition,
   successfulConfirmedShiftFlagExpression
 };

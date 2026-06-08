@@ -1,3 +1,5 @@
+const { actualOrderDomainCondition, actualOrderJoinsSql } = require('./analyticsDomainSql');
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ACTIVE_BASE_MODES = new Set(['all', 'ready']);
 const ALLOWED_ACTIVE_BASE_PERIODS = new Set(['last30d', 'selected']);
@@ -343,8 +345,7 @@ function addOrderFilters(filters, where, params) {
 
 function baseOrderWhere(filters, params, { withOptionalFilters = true } = {}) {
   const where = [
-    'ifNull(o.deleted, 0) = 0',
-    'ifNull(o.is_hidden, 0) = 0',
+    actualOrderDomainCondition('o', 'c', 'ct'),
     'o.start >= {from:DateTime}',
     'o.start < {to:DateTime}',
     'ifNull(o.amount, 0) > 0'
@@ -363,7 +364,7 @@ function filterOptionSelect(filter, valueExpression, whereSql) {
     ${valueExpression} AS value
   FROM mg_orders AS o
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
   WHERE ${whereSql}
   GROUP BY value
@@ -381,7 +382,6 @@ function filterOptionsQuery(whereSql) {
 
 function activeWorkersWhere(filters) {
   const where = [
-    'bounds.points > 0',
     'length(worker_coordinates) >= 2',
     'worker_coordinates[1] BETWEEN -180 AND 180',
     'worker_coordinates[2] BETWEEN -90 AND 90',
@@ -409,7 +409,7 @@ function demandPointsQuery(whereSql, filters) {
       ifNull(o.amount, 0) AS amount
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
+    ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
     WHERE ${whereSql}
   ),
@@ -477,7 +477,7 @@ function demandPointsQuery(whereSql, filters) {
       user_id AS user_id,
       worker_coordinates AS worker_coordinates
     FROM latest_workers
-    CROSS JOIN demand_bounds AS bounds
+    INNER JOIN demand_bounds AS bounds ON bounds.points > 0
     WHERE ${activeWorkersWhere(filters)}
   ),
   influence_pairs AS (
@@ -497,10 +497,10 @@ function demandPointsQuery(whereSql, filters) {
           aw.worker_coordinates[2]
         ) AS distance_m
       FROM demand_points AS dp
-      CROSS JOIN active_workers AS aw
-      WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
+      INNER JOIN active_workers AS aw
+        ON aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
         AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
-        AND greatCircleDistance(
+      WHERE greatCircleDistance(
           dp.lon,
           dp.lat,
           aw.worker_coordinates[1],

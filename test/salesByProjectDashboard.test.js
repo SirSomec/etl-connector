@@ -185,14 +185,24 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.ok(calls.every((call) => call.params.param_from_string === '2026-04-01 00:00:00'));
   assert.ok(calls.every((call) => call.params.param_to_string === '2026-05-01 00:00:00'));
   assert.equal(calls.some((call) => call.query.includes('DROP TABLE')), false);
+  assert.ok(calls.some((call) => call.query.includes('actual_orders AS (')));
+  assert.ok(calls.some((call) => call.query.includes('INNER JOIN actual_orders AS ao ON j.source = ao.order_id')));
+  assert.ok(calls.some((call) => call.query.includes('ifNull(o.is_hidden, false) = false')));
+  assert.ok(calls.some((call) => call.query.includes('c.title NOT IN')));
+  assert.ok(calls.some((call) => call.query.includes('MyGig Demo')));
+  assert.ok(calls.some((call) => call.query.includes("!= 'processing'")));
   assert.ok(calls.some((call) => call.query.includes('FROM mg_jobs AS j')));
   assert.ok(calls.some((call) => call.query.includes('j.start >= {from:DateTime}')));
   assert.ok(calls.some((call) => call.query.includes('j.start < {to:DateTime}')));
-  assert.ok(calls.some((call) => call.query.includes('LEFT JOIN self_bookings AS sb ON sf.job = sb.job')));
+  assert.ok(calls.some((call) => call.query.includes('LEFT JOIN first_history AS fh ON sf.job = fh.job')));
   assert.equal(calls.some((call) => call.query.includes("h.start != 'NaT'")), false);
   assert.equal(calls.some((call) => call.query.includes('h.start >= {from_string:String}')), false);
-  assert.ok(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0))")));
+  assert.ok(calls.some((call) => call.query.includes('row_number() OVER (')));
+  assert.ok(calls.some((call) => call.query.includes('PARTITION BY h.job')));
+  assert.ok(calls.some((call) => call.query.includes("if(ifNull(fh.first_initiator, '') = 'worker', 1, 0) AS is_self_booked")));
+  assert.equal(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker'")), false);
   assert.ok(calls.some((call) => call.query.includes('AS cancellation_reason')));
+  assert.ok(calls.some((call) => call.query.includes('j.piecework AS piecework')));
   assert.ok(calls.some((call) => call.query.includes('AS is_successful_confirmed_shift')));
   assert.ok(calls.some((call) => call.query.includes("uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts")));
   assert.equal(calls.some((call) => call.query.includes("uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts")), false);
@@ -203,10 +213,11 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   );
   assert.ok(
     calls.some((call) =>
-      call.query.includes("avgIf(salary_per_hour, is_successful_confirmed_shift = 1 AND salary_per_hour > 0) AS avg_worker_rate_hour")
+      call.query.includes("avgIf(worker_rate_hour, is_successful_confirmed_shift = 1 AND worker_rate_hour IS NOT NULL) AS avg_worker_rate_hour")
     )
   );
   assert.ok(calls.some((call) => call.query.includes('sf.salary_per_hour AS salary_per_hour')));
+  assert.ok(calls.some((call) => call.query.includes('nullIf(toFloat64OrNull')));
   assert.ok(
     calls.some((call) =>
       call.query.includes("countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders")
@@ -217,17 +228,11 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.equal(calls.some((call) => call.query.includes("countIf(status = 'cancelled') AS cancelled_shifts")), false);
   assert.ok(
     calls.some((call) =>
-      call.query.includes("ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type")
+      call.query.includes("ifNull(nullIf(sf.order_contract_type, ''), ifNull(nullIf(sf.contractor_contract_type, ''), 'services')) AS contract_type")
     )
   );
-  assert.equal(
-    calls.some((call) => call.query.includes('ct.contract_type AS contract_type')),
-    false
-  );
-  assert.equal(
-    calls.some((call) => call.query.includes("nullIf(ct.contract_type, '')")),
-    false
-  );
+  assert.ok(calls.some((call) => call.query.includes('ifNull(t.deleted, 0) = 0')));
+  assert.equal(calls.some((call) => call.query.includes("t.transaction_type = 'surcharge'")), false);
 });
 
 test('loadSalesByProjectDashboardShell returns filters and does not query dashboard datasets', async () => {
@@ -482,7 +487,7 @@ test('loadSalesByProjectDashboard merges brand rows before limiting them', async
   assert.ok(brandQueries.every((call) => !call.query.includes('LIMIT 50')));
 });
 
-test('loadSalesByProjectDashboard limits surcharges to selected shift facts', async () => {
+test('loadSalesByProjectDashboard uses signed non-deleted transactions for selected shift facts', async () => {
   const { calls, client } = createDashboardClient({});
 
   await loadSalesByProjectDashboard(
@@ -499,8 +504,10 @@ test('loadSalesByProjectDashboard limits surcharges to selected shift facts', as
   assert.ok(
     calls.some((call) => call.query.includes('INNER JOIN shift_facts AS sf ON t.entityId = sf.job'))
   );
-  assert.ok(calls.some((call) => call.query.includes("t.transaction_type = 'surcharge'")));
+  assert.ok(calls.some((call) => call.query.includes('ifNull(t.deleted, 0) = 0')));
+  assert.equal(calls.some((call) => call.query.includes("t.transaction_type = 'surcharge'")), false);
   assert.ok(calls.some((call) => call.query.includes("t.entityId != ''")));
+  assert.ok(calls.some((call) => call.query.includes('sum(')));
 });
 
 test('loadSalesByProjectDashboard uses a lightweight status breakdown query', async () => {
@@ -518,10 +525,10 @@ test('loadSalesByProjectDashboard uses a lightweight status breakdown query', as
 
   const statusQuery = calls.find((call) => call.operation === 'sales by project status breakdown');
 
+  assert.ok(statusQuery.query.includes('actual_orders AS ('));
   assert.ok(statusQuery.query.includes('FROM shift_facts'));
   assert.equal(statusQuery.query.includes('FROM shift_enriched'), false);
   assert.equal(statusQuery.query.includes('FROM mg_transactions AS t'), false);
-  assert.equal(statusQuery.query.includes('LEFT JOIN mg_clients'), false);
 });
 
 test('loadSalesByProjectDashboard maps empty responses to zero summary and empty rows', async () => {

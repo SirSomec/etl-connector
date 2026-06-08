@@ -3,6 +3,10 @@ const {
   successfulConfirmedShiftFlagExpression
 } = require('./successfulConfirmedShift');
 const {
+  actualOrderDomainCondition,
+  actualOrderJoinsSql
+} = require('./analyticsDomainSql');
+const {
   GIGER_DETAILS_PAGE_SIZE,
   cleanBooleanFlag: cleanGigerDetailsBooleanFlag,
   firstCleanText: firstGigerDetailsText,
@@ -998,6 +1002,7 @@ function baseParamsForFilters(filters) {
     param_current_date: filters.currentDate
   };
   const where = [
+    actualOrderDomainCondition('o', 'c', 'ct'),
     'o.start >= {from:DateTime}',
     'o.start < {to:DateTime}',
     "ifNull(o.workplace, '') != ''",
@@ -1018,12 +1023,28 @@ function baseParamsForFilters(filters) {
   };
 }
 
+function orderDimensionJoinsSql() {
+  return `LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
+  ${actualOrderJoinsSql('o')}
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec`;
+}
+
+function actualShiftOrderJoinsSql(orderAlias = 'actual_order') {
+  return `INNER JOIN mg_orders AS ${orderAlias} ON ${orderAlias}._id = j.source
+    ${actualOrderJoinsSql(orderAlias, {
+      clientAlias: 'actual_client',
+      contractorAlias: 'actual_contractor'
+    })}`;
+}
+
 function successfulConfirmedJobsSubquery(alias) {
   return `(SELECT
       j.source AS source,
       ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
+    ${actualShiftOrderJoinsSql()}
     WHERE ifNull(j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('actual_order', 'actual_client', 'actual_contractor')}
   ) AS ${alias}`;
 }
 
@@ -1031,7 +1052,9 @@ function forecastSlaActiveJobsSubquery(alias) {
   return `(SELECT
       j.source AS source
     FROM mg_jobs AS j
+    ${actualShiftOrderJoinsSql()}
     WHERE ifNull(j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('actual_order', 'actual_client', 'actual_contractor')}
       AND ifNull(j.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')
   ) AS ${alias}`;
 }
@@ -1112,10 +1135,7 @@ function filterOptionSelect(filter, valueExpression, whereSql) {
     '${filter}' AS filter,
     ${valueExpression} AS value
   FROM mg_orders AS o
-  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
   GROUP BY value
   HAVING value != ''`;
@@ -1127,10 +1147,7 @@ function jobStatusFilterOptionSelect(whereSql) {
     ifNull(j.status, '') AS value
   FROM mg_orders AS o
   INNER JOIN mg_jobs AS j ON j.source = o._id
-  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
     AND j.deleted = 0
   GROUP BY value
@@ -1216,10 +1233,7 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0 AND toDate(o.start) >= {current_date:Date}) AS forecast_sla_ordered_shifts,
         countDistinct(toDate(o.start)) AS active_days
       FROM mg_orders AS o
-      LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-      LEFT JOIN mg_clients AS c ON o.client = c._id
-      LEFT JOIN mg_professions AS p ON o.spec = p.spec
-      LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+      ${orderDimensionJoinsSql()}
       WHERE ${whereSql}
       GROUP BY workplace_id
     ) AS os
@@ -1228,10 +1242,7 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         o.workplace AS workplace_id,
         countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
       FROM mg_orders AS o
-      LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-      LEFT JOIN mg_clients AS c ON o.client = c._id
-      LEFT JOIN mg_professions AS p ON o.spec = p.spec
-      LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+      ${orderDimensionJoinsSql()}
     INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
     WHERE ${whereSql}
         AND toDate(o.start) < {current_date:Date}
@@ -1243,10 +1254,7 @@ function workplaceMetricsSelect(whereSql, metricWhereSql = '1 = 1') {
         o.workplace AS workplace_id,
         countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
       FROM mg_orders AS o
-      LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-      LEFT JOIN mg_clients AS c ON o.client = c._id
-      LEFT JOIN mg_professions AS p ON o.spec = p.spec
-      LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+      ${orderDimensionJoinsSql()}
     INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
     WHERE ${whereSql}
         AND toDate(o.start) >= {current_date:Date}
@@ -1285,10 +1293,7 @@ function totalWorkplacesQuery(whereSql, metricWhereSql, hasMetricFilters) {
   return `SELECT
     countDistinct(o.workplace) AS total_workplaces
   FROM mg_orders AS o
-  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
   FORMAT JSONEachRow`;
 }
@@ -1304,10 +1309,7 @@ function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
       sum(ifNull(o.amount, 0)) AS ordered_shifts,
       sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_ordered_shifts
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
     WHERE ${whereSql}
     GROUP BY workplace_id, order_date
@@ -1319,10 +1321,7 @@ function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
       count() AS completed_shifts,
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
     INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
     WHERE ${whereSql}
@@ -1336,10 +1335,7 @@ function dailyOrdersQuery(whereSql, metricWhereSql, sort) {
       count() AS forecast_active_shifts,
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     INNER JOIN top_workplaces AS tw ON o.workplace = tw.workplace_id
     INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
     WHERE ${whereSql}
@@ -1374,10 +1370,7 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       sum(ifNull(o.amount, 0)) AS ordered_shifts,
       sumIf(ifNull(o.amount, 0), ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_ordered_shifts
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
     GROUP BY workplace_id, order_date
@@ -1389,10 +1382,7 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       count() AS completed_shifts,
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS sla_completed_shifts
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     INNER JOIN ${successfulConfirmedJobsSubquery('completed_job')} ON completed_job.source = o._id
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
@@ -1406,10 +1396,7 @@ function dailyOrdersForWorkplacesQuery(whereSql) {
       count() AS forecast_active_shifts,
       countIf(ifNull(o.deleted, 0) = 0 AND ifNull(o.is_hidden, 0) = 0) AS forecast_sla_active_shifts
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     INNER JOIN ${forecastSlaActiveJobsSubquery('forecast_job')} ON forecast_job.source = o._id
     WHERE ${whereSql}
       AND o.workplace IN {workplace_ids:Array(String)}
@@ -1456,10 +1443,7 @@ function attentionPointsQuery(whereSql) {
       ) AS profession,
       sum(ifNull(o.amount, 0)) AS amount
     FROM mg_orders AS o
-    LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
+    ${orderDimensionJoinsSql()}
     WHERE ${whereSql}
     GROUP BY order_id, workplace_id, order_date
   ),

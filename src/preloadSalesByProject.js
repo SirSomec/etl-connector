@@ -1,4 +1,8 @@
 const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+const {
+  actualOrderDomainCondition,
+  actualOrderJoinsSql
+} = require('./analyticsDomainSql');
 
 function toDateTimeParam(dateOnly) {
   return `${dateOnly} 00:00:00`;
@@ -11,27 +15,65 @@ function preloadParams(fromDate, toDate) {
   };
 }
 
+function nullableNumberExpression(alias, field) {
+  return `toFloat64OrNull(nullIf(trimBoth(ifNull(toString(${alias}.${field}), '')), ''))`;
+}
+
+function nullablePositiveNumberExpression(alias, field) {
+  return `nullIf(${nullableNumberExpression(alias, field)}, 0)`;
+}
+
+function positiveOrZeroNumberExpression(alias, field) {
+  return `ifNull(${nullablePositiveNumberExpression(alias, field)}, 0)`;
+}
+
+function transactionAmountExpression(alias = 't') {
+  return `coalesce(${nullableNumberExpression(alias, 'payment_amount')}, ${nullableNumberExpression(alias, 'amount')}, 0)`;
+}
+
+function actualOrdersCte({ includeDateFilter = false } = {}) {
+  const where = [actualOrderDomainCondition('o', 'c', 'ct')];
+
+  if (includeDateFilter) {
+    where.push('o.start >= {from:DateTime}', 'o.start < {to:DateTime}');
+  }
+
+  return `actual_orders AS (
+  SELECT
+    o._id AS order_id,
+    o.start AS start,
+    o.client AS client,
+    o.workplace AS workplace,
+    ifNull(o.amount, 0) AS amount,
+    ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
+    ifNull(o.contract_type, '') AS order_contract_type,
+    ifNull(ct.contract_type, '') AS contractor_contract_type,
+    ifNull(ct.comission, 0) AS commission_percent
+  FROM mg_orders AS o
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
+  WHERE ${where.join('\n    AND ')}
+)`;
+}
+
 function buildSalesByProjectPreloadQueries() {
   return {
-    orderFacts: `SELECT
+    orderFacts: `WITH ${actualOrdersCte({ includeDateFilter: true })}
+SELECT
   toString(toDate(o.start, 'Europe/Moscow')) AS period_date,
-  ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
-  o._id AS order_id,
+  o.brand AS brand,
+  o.order_id AS order_id,
   ifNull(o.workplace, '') AS workplace_id,
-  ifNull(o.amount, 0) AS ordered_shifts
-FROM mg_orders AS o
-LEFT JOIN mg_clients AS c ON o.client = c._id
-WHERE o.deleted = 0
-  AND o.start >= {from:DateTime}
-  AND o.start < {to:DateTime}
+  o.amount AS ordered_shifts
+FROM actual_orders AS o
 FORMAT JSONEachRow`,
-    shiftFacts: `WITH shift_facts AS (
+    shiftFacts: `WITH ${actualOrdersCte()},
+shift_facts AS (
   SELECT
     j._id AS job,
     j.start AS shift_start,
     ifNull(j.status, '') AS status,
-    j.client AS client,
-    j.workplace AS workplace,
+    coalesce(nullIf(j.client, ''), ao.client) AS client,
+    coalesce(nullIf(j.workplace, ''), ao.workplace) AS workplace,
     j.worker AS worker,
     j.source AS source,
     j.cancellation_reason AS cancellation_reason,
@@ -41,30 +83,49 @@ FORMAT JSONEachRow`,
     j.payment_per_job AS payment_per_job,
     j.hours AS hours,
     j.payment AS payment,
+    j.piecework AS piecework,
     j.start_fact AS start_fact,
-    j.finish_fact AS finish_fact
+    j.finish_fact AS finish_fact,
+    ao.order_contract_type AS order_contract_type,
+    ao.contractor_contract_type AS contractor_contract_type,
+    ao.commission_percent AS commission_percent,
+    ao.brand AS brand
   FROM mg_jobs AS j
+  INNER JOIN actual_orders AS ao ON j.source = ao.order_id
   WHERE ifNull(j._id, '') != ''
-    AND j.deleted = 0
+    AND ifNull(j.deleted, 0) = 0
     AND j.start >= {from:DateTime}
     AND j.start < {to:DateTime}
 ),
-self_bookings AS (
+history_ranked AS (
   SELECT
     h.job AS job,
-    max(if(h.status = 'booked' AND h.initiator = 'worker', 1, 0)) AS is_self_booked
+    ifNull(h.status, '') AS first_status,
+    ifNull(h.initiator, '') AS first_initiator,
+    row_number() OVER (
+      PARTITION BY h.job
+      ORDER BY coalesce(h.createdAt, h.updatedAt), h._id
+    ) AS rn
   FROM mg_job_history AS h
   INNER JOIN shift_facts AS sf ON h.job = sf.job
-  WHERE h.job != ''
-  GROUP BY h.job
+  WHERE ifNull(h.job, '') != ''
+    AND ifNull(h.status, '') != ''
 ),
-surcharges AS (
+first_history AS (
+  SELECT
+    job,
+    first_status,
+    first_initiator
+  FROM history_ranked
+  WHERE rn = 1
+),
+job_transactions AS (
   SELECT
     t.entityId AS job,
-    sum(coalesce(nullIf(t.payment_amount, 0), t.amount, 0)) AS surcharge_amount
+    sum(${transactionAmountExpression('t')}) AS transaction_amount
   FROM mg_transactions AS t
   INNER JOIN shift_facts AS sf ON t.entityId = sf.job
-  WHERE t.transaction_type = 'surcharge'
+  WHERE ifNull(t.deleted, 0) = 0
     AND t.entityId != ''
   GROUP BY t.entityId
 ),
@@ -80,42 +141,41 @@ shift_enriched AS (
     sf.payment AS payment,
     sf.start_fact AS start_fact,
     sf.finish_fact AS finish_fact,
-    coalesce(nullIf(sf.client, ''), o.client) AS client,
-    coalesce(nullIf(sf.workplace, ''), o.workplace) AS workplace,
-    ifNull(sb.is_self_booked, 0) AS is_self_booked,
-    ifNull(nullIf(o.contract_type, ''), 'services') AS contract_type,
-    ifNull(ct.comission, 0) AS commission_percent,
-    if(ifNull(sf.salary_per_job, 0) > 0, ifNull(sf.salary_per_job, 0), ifNull(sf.salary_per_hour, 0) * ifNull(sf.hours, 0)) AS worker_shift_amount,
-    if(ifNull(sf.payment_per_job, 0) > 0, ifNull(sf.payment_per_job, 0), ifNull(sf.payment_per_hour, 0) * ifNull(sf.hours, 0)) AS customer_shift_amount,
-    ifNull(s.surcharge_amount, 0) AS surcharge_amount,
+    sf.piecework AS piecework,
+    sf.client AS client,
+    sf.workplace AS workplace,
+    sf.brand AS brand,
+    if(ifNull(fh.first_initiator, '') = 'worker', 1, 0) AS is_self_booked,
+    ifNull(nullIf(sf.order_contract_type, ''), ifNull(nullIf(sf.contractor_contract_type, ''), 'services')) AS contract_type,
+    sf.commission_percent AS commission_percent,
+    if(${positiveOrZeroNumberExpression('sf', 'salary_per_job')} > 0, ${positiveOrZeroNumberExpression('sf', 'salary_per_job')}, ${positiveOrZeroNumberExpression('sf', 'salary_per_hour')} * ${positiveOrZeroNumberExpression('sf', 'hours')}) AS worker_shift_amount,
+    if(${positiveOrZeroNumberExpression('sf', 'payment_per_job')} > 0, ${positiveOrZeroNumberExpression('sf', 'payment_per_job')}, ${positiveOrZeroNumberExpression('sf', 'payment_per_hour')} * ${positiveOrZeroNumberExpression('sf', 'hours')}) AS customer_shift_amount,
+    ifNull(jt.transaction_amount, 0) AS transaction_amount,
+    ${nullablePositiveNumberExpression('sf', 'salary_per_hour')} AS worker_rate_hour,
     ${successfulConfirmedShiftFlagExpression('sf')} AS is_successful_confirmed_shift
   FROM shift_facts AS sf
-  LEFT JOIN mg_orders AS o ON sf.source = o._id
-  LEFT JOIN mg_workplaces AS w ON coalesce(nullIf(sf.workplace, ''), o.workplace) = w._id
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
-  LEFT JOIN self_bookings AS sb ON sf.job = sb.job
-  LEFT JOIN surcharges AS s ON sf.job = s.job
+  LEFT JOIN first_history AS fh ON sf.job = fh.job
+  LEFT JOIN job_transactions AS jt ON sf.job = jt.job
 )
 SELECT
   toString(toDate(shift_start, 'Europe/Moscow')) AS period_date,
-  ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
+  ifNull(nullIf(brand, ''), 'Без бренда') AS brand,
   job AS job_id,
   ifNull(worker, '') AS worker_id,
   ifNull(workplace, '') AS workplace_id,
   status,
   if(is_successful_confirmed_shift = 1,
     if(contract_type = 'saas',
-      worker_shift_amount * (1 + commission_percent / 100) + surcharge_amount,
-      customer_shift_amount + surcharge_amount
+      worker_shift_amount * (1 + commission_percent / 100) + transaction_amount,
+      customer_shift_amount + transaction_amount
     ),
     0
   ) AS revenue_rub,
   if(ifNull(cancellation_reason, '') != '' OR status = 'failed', 1, 0) AS cancelled_shifts,
   is_successful_confirmed_shift,
   if(is_successful_confirmed_shift = 1 AND is_self_booked = 1, 1, 0) AS self_booked_confirmed_shift,
-  if(is_successful_confirmed_shift = 1 AND salary_per_hour > 0, salary_per_hour, 0) AS worker_rate_hour
+  if(is_successful_confirmed_shift = 1, worker_rate_hour, NULL) AS worker_rate_hour
 FROM shift_enriched
-LEFT JOIN mg_clients AS c ON shift_enriched.client = c._id
 FORMAT JSONEachRow`
   };
 }

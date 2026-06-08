@@ -347,3 +347,48 @@ test('loadHeatmapDashboard loads filter options and map data for non-progressive
     'heatmap demand points'
   ]);
 });
+
+test('heatmap SQL uses actual order domain and bounded worker joins', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+      return [];
+    }
+  };
+
+  await loadHeatmapDashboard(
+    client,
+    {
+      year: '2026',
+      month: '5',
+      client: 'Brand A',
+      excludedProfession: 'РљСѓСЂСЊРµСЂ',
+      activeBaseMode: 'ready'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  const filterOptionsCall = calls.find((call) => call.operation === 'heatmap filter options');
+  const demandCall = calls.find((call) => call.operation === 'heatmap demand points');
+
+  for (const call of [filterOptionsCall, demandCall]) {
+    assert.equal(call.query.includes('FROM mygig_'), false);
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+    assert.equal(call.query.includes('c.title NOT IN'), true);
+    assert.equal(call.query.includes("!= 'processing'"), true);
+    assert.equal(call.query.includes('ifNull(o.is_hidden, false) = false'), true);
+  }
+
+  assert.equal(demandCall.query.includes('CROSS JOIN demand_bounds AS bounds'), false);
+  assert.equal(demandCall.query.includes('INNER JOIN demand_bounds AS bounds ON bounds.points > 0'), true);
+  assert.equal(demandCall.query.includes('CROSS JOIN active_workers AS aw'), false);
+  assert.equal(demandCall.query.includes('INNER JOIN active_workers AS aw'), true);
+  assert.equal(demandCall.query.includes('aw.worker_coordinates[1] BETWEEN dp.lon'), true);
+  assert.equal(demandCall.query.includes('aw.worker_coordinates[2] BETWEEN dp.lat'), true);
+  assert.equal(demandCall.query.includes('greatCircleDistance'), true);
+  assert.equal(demandCall.query.includes('<= 15000'), true);
+  assert.equal(demandCall.query.includes('CROSS JOIN mg_workers AS worker'), false);
+});

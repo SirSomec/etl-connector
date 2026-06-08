@@ -4,6 +4,14 @@
 
 Экран показывает паспорт точки, спрос и факт по дням, распределение по специальностям, активную базу в радиусах 5/10/15/20 км и детализацию конкретного дня.
 
+## Доменные правила
+
+- Все заказы точки фильтруются как актуальные: не удаленные, не скрытые, без тестовых клиентов и без `processing`.
+- Контрагент определяется через рабочее место заказа: `mg_orders.workplace -> mg_workplaces._id -> mg_contractors._id`.
+- Смены в `shift_facts`, деталях дня и истории связываются с уже отфильтрованными заказами через `mg_jobs.source = filtered_orders.order_id`.
+- Успешные `confirmed` используют общее правило исключения прогулов, включая `piecework`: сделка с нулевой фактической клиентской оплатой не считается успешной.
+- Агрегатные summary CTE соединяются обычным `LEFT JOIN ... ON 1 = 1`; `CROSS JOIN` оставлен только в радиусной гео-логике.
+
 ## Фильтры
 
 - `{workplace_id:String}` - обязательный id точки.
@@ -206,8 +214,8 @@ SELECT
   ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
   ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
 FROM order_summary AS os
-CROSS JOIN shift_summary AS ss
-CROSS JOIN booked_workers AS bw
+LEFT JOIN shift_summary AS ss ON 1 = 1
+LEFT JOIN booked_workers AS bw ON 1 = 1
 FORMAT JSONEachRow
 ```
 

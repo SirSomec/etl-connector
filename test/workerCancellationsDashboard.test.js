@@ -648,6 +648,39 @@ test('loadWorkerCancellationsDashboardSection queries workers with safe params a
   assert.equal(workersCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
 });
 
+test('loadWorkerCancellationsDashboardSection constrains cancellation metrics to actual orders', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations total workers': [{ total_workers: '0' }],
+    'worker cancellations workers': []
+  });
+
+  await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31'
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const totalCall = calls.find((call) => call.operation === 'worker cancellations total workers');
+  const workersCall = calls.find((call) => call.operation === 'worker cancellations workers');
+
+  for (const call of [totalCall, workersCall]) {
+    assert.equal(call.query.includes('INNER JOIN mg_orders AS o ON o._id = j.source'), true);
+    assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+    assert.equal(call.query.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+    assert.equal(call.query.includes('o.deleted = 0'), true);
+    assert.equal(call.query.includes('ifNull(o.is_hidden, false) = false'), true);
+    assert.equal(call.query.includes('c.title IS NULL OR c.title NOT IN'), true);
+    assert.equal(call.query.includes("ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
+  }
+
+  assert.equal(workersCall.query.includes('toString(j.piecework)'), true);
+});
+
 test('loadWorkerCancellationsDashboardSection filters search and numeric ranges before pagination', async () => {
   const { calls, client } = createDashboardClient({
     'worker cancellations total workers': [{ total_workers: '7' }],
@@ -758,6 +791,14 @@ test('loadWorkerCancellationsDetails queries selected metric with shift timeline
   assert.equal(detailCall.params.param_worker_id, 'worker-1');
   assert.equal(detailCall.params.param_limit, 500);
   assert.equal(detailCall.query.includes('FROM mg_jobs AS j'), true);
+  assert.equal(detailCall.query.includes('INNER JOIN mg_orders AS o ON o._id = j.source'), true);
+  assert.equal(detailCall.query.includes('INNER JOIN mg_clients AS actual_client ON actual_client._id = o.client'), true);
+  assert.equal(detailCall.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+  assert.equal(detailCall.query.includes('LEFT JOIN mg_contractors AS actual_contractor ON actual_contractor._id = ow.contractor'), true);
+  assert.equal(detailCall.query.includes('o.deleted = 0'), true);
+  assert.equal(detailCall.query.includes('ifNull(o.is_hidden, false) = false'), true);
+  assert.equal(detailCall.query.includes('actual_client.title IS NULL OR actual_client.title NOT IN'), true);
+  assert.equal(detailCall.query.includes("ifNull(actual_contractor.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
   assert.equal(detailCall.query.includes('j.worker = {worker_id:String}'), true);
   assert.equal(detailCall.query.includes('j.start >= {from:DateTime}'), true);
   assert.equal(detailCall.query.includes('j.start < {to:DateTime}'), true);

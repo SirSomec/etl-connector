@@ -3,6 +3,10 @@ const {
   successfulConfirmedShiftFlagExpression
 } = require('./successfulConfirmedShift');
 const {
+  actualOrderDomainCondition,
+  actualOrderJoinsSql
+} = require('./analyticsDomainSql');
+const {
   GIGER_DETAILS_PAGE_SIZE,
   cleanBooleanFlag: cleanGigerDetailsBooleanFlag,
   firstCleanText: firstGigerDetailsText,
@@ -650,6 +654,7 @@ function addOptionalWhere(filters, where, params) {
 
 function orderWhereForFilters(filters, params) {
   const where = [
+    actualOrderDomainCondition('o', 'c', 'ct'),
     'o.workplace = {workplace_id:String}',
     'o.start >= {from:DateTime}',
     'o.start < {to:DateTime}',
@@ -667,6 +672,11 @@ function orderWhereForFilters(filters, params) {
   addOptionalWhere(filters, where, params);
 
   return where.join('\n    AND ');
+}
+
+function orderDimensionJoinsSql() {
+  return `${actualOrderJoinsSql('o')}
+  LEFT JOIN mg_professions AS p ON o.spec = p.spec`;
 }
 
 function metadataQuery() {
@@ -773,7 +783,7 @@ function filterOptionsQuery(filters) {
     'profession' AS filter,
     if(ifNull(p.caption, '') = '', o.spec, p.caption) AS value
   FROM mg_orders AS o
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
   GROUP BY value
   HAVING value != ''`,
@@ -781,7 +791,7 @@ function filterOptionsQuery(filters) {
     'orderType' AS filter,
     ifNull(o.type, '') AS value
   FROM mg_orders AS o
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
   GROUP BY value
   HAVING value != ''`,
@@ -790,7 +800,7 @@ function filterOptionsQuery(filters) {
     ifNull(j.status, '') AS value
   FROM mg_orders AS o
   INNER JOIN mg_jobs AS j ON j.source = o._id
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
     AND j.deleted = 0
   GROUP BY value
@@ -818,7 +828,7 @@ function filteredOrdersCte(whereSql) {
       ifNull(o.amount, 0) AS amount,
       if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession
     FROM mg_orders AS o
-    LEFT JOIN mg_professions AS p ON o.spec = p.spec
+    ${orderDimensionJoinsSql()}
     WHERE ${whereSql}
   )`;
 }
@@ -921,8 +931,8 @@ function summaryQuery(whereSql) {
     ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
     ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
   FROM order_summary AS os
-  CROSS JOIN shift_summary AS ss
-  CROSS JOIN booked_workers AS bw
+  LEFT JOIN shift_summary AS ss ON 1 = 1
+  LEFT JOIN booked_workers AS bw ON 1 = 1
   FORMAT JSONEachRow`;
 }
 
@@ -1331,7 +1341,7 @@ function dayDetailsOrdersQuery(whereSql) {
     formatDateTime(toTimeZone(o.start, 'Europe/Moscow'), '%F %T') AS order_start_local,
     ${plannedHoursExpression('o', 'start', 'finish')} AS planned_hours
   FROM mg_orders AS o
-  LEFT JOIN mg_professions AS p ON o.spec = p.spec
+  ${orderDimensionJoinsSql()}
   WHERE ${whereSql}
   ORDER BY order_start_local ASC, profession ASC, order_id ASC
   FORMAT JSONEachRow`;

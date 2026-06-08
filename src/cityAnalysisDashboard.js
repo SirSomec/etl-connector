@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const { actualOrderDomainCondition, actualOrderJoinsSql } = require('./analyticsDomainSql');
 const { writeFileAtomically } = require('./atomicFile');
 const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
 const {
@@ -628,6 +629,7 @@ function orderWhereForFilters(
   { forceActiveRequests = false, fromParam = 'from', toParam = 'to' } = {}
 ) {
   const where = [
+    actualOrderDomainCondition('o', 'c', 'ct'),
     `o.start >= {${fromParam}:DateTime}`,
     `o.start < {${toParam}:DateTime}`,
     "ifNull(o.workplace, '') != ''",
@@ -664,10 +666,10 @@ function cityOptionsQuery() {
     ifNull(w.address__city, '') AS city
   FROM mg_orders AS o
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  WHERE o.start >= {from:DateTime}
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
+  WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
+    AND o.start >= {from:DateTime}
     AND o.start < {to:DateTime}
-    AND ifNull(o.deleted, 0) = 0
-    AND ifNull(o.is_hidden, 0) = 0
     AND ifNull(o.amount, 0) > 0
   GROUP BY city
   HAVING city != ''
@@ -681,9 +683,8 @@ function filterOptionSelect(filter, valueExpression, whereSql) {
     ${valueExpression} AS value
   FROM mg_orders AS o
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   WHERE ${whereSql}
   GROUP BY value
   HAVING value != ''`;
@@ -696,9 +697,8 @@ function jobStatusFilterOptionSelect(whereSql) {
   FROM mg_orders AS o
   INNER JOIN mg_jobs AS j ON j.source = o._id
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   WHERE ${whereSql}
     AND ifNull(j.deleted, 0) = 0
   GROUP BY value
@@ -722,9 +722,8 @@ function cityCoordinatesQuery(whereSql) {
     w._id AS workplace_id
   FROM mg_orders AS o
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  LEFT JOIN mg_clients AS c ON o.client = c._id
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
-  LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
   WHERE ${whereSql}
     AND length(w.location__coordinates) >= 2
     AND w.location__coordinates[1] BETWEEN -180 AND 180
@@ -812,7 +811,11 @@ function locatedUsersCte() {
       max(ifNull(worker.status, '') = 'worked') AS is_worked_status
     FROM candidate_workers AS worker
     CROSS JOIN city_workplaces AS cw
-    WHERE greatCircleDistance(
+    WHERE worker.location__coordinates[1] BETWEEN cw.workplace_coordinates[1] - (15000 / (111320 * greatest(abs(cos(cw.workplace_coordinates[2] * pi() / 180)), 0.2)))
+      AND cw.workplace_coordinates[1] + (15000 / (111320 * greatest(abs(cos(cw.workplace_coordinates[2] * pi() / 180)), 0.2)))
+      AND worker.location__coordinates[2] BETWEEN cw.workplace_coordinates[2] - (15000 / 111000)
+      AND cw.workplace_coordinates[2] + (15000 / 111000)
+      AND greatCircleDistance(
         cw.workplace_coordinates[1],
         cw.workplace_coordinates[2],
         worker.location__coordinates[1],
@@ -836,9 +839,8 @@ function filteredOrdersCte(whereSql, name = 'filtered_orders') {
       ifNull(o.deleted, 0) = 0 AS is_active_request
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
+    ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
     WHERE ${whereSql}
   )`;
 }
@@ -873,9 +875,11 @@ function bookedUsersCte() {
   return `booked_users AS (
     SELECT DISTINCT worker.user AS user_id
     FROM mg_job_history AS history
-    INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+    INNER JOIN mg_jobs AS job ON history.job = job._id
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON history.worker = worker._id
     WHERE ifNull(history.status, '') = 'booked'
+      AND ifNull(job.deleted, 0) = 0
       AND ifNull(worker.user, '') != ''
   )`;
 }
@@ -885,13 +889,12 @@ function completedUsersCte() {
     SELECT DISTINCT worker.user AS user_id
     FROM (
       SELECT
-        job.source AS source,
         job.worker AS worker,
         ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
       FROM mg_jobs AS job
+      INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
       WHERE ifNull(job.deleted, 0) = 0
     ) AS job
-    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
     WHERE job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''
@@ -907,9 +910,8 @@ function active30dOrdersCte(active30dWhereSql) {
       ifNull(o.deleted, 0) = 0 AS is_active_request
     FROM mg_orders AS o
     LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-    LEFT JOIN mg_clients AS c ON o.client = c._id
+    ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
     LEFT JOIN mg_professions AS p ON o.spec = p.spec
-    LEFT JOIN mg_contractors AS ct ON w.contractor = ct._id
     WHERE ${active30dWhereSql}
   )`;
 }
@@ -1100,25 +1102,27 @@ function dynamicsQuery(whereSql) {
       fo.period AS period,
       uniqExact(worker.user) AS booked_users
     FROM mg_job_history AS history
-    INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+    INNER JOIN mg_jobs AS job ON history.job = job._id
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON history.worker = worker._id
     WHERE ifNull(history.status, '') = 'booked'
+      AND ifNull(job.deleted, 0) = 0
       AND ifNull(worker.user, '') != ''
     GROUP BY period
   ),
   daily_completed AS (
     SELECT
-      fo.period AS period,
+      job.period AS period,
       uniqExact(worker.user) AS completed_users
     FROM (
       SELECT
-        job.source AS source,
+        fo.period AS period,
         job.worker AS worker,
         ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
       FROM mg_jobs AS job
+      INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
       WHERE ifNull(job.deleted, 0) = 0
     ) AS job
-    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
     WHERE job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''
@@ -1243,27 +1247,29 @@ function cityGigerBookedUsersCte(input) {
   return `booked_users AS (
     SELECT DISTINCT worker.user AS user_id
     FROM mg_job_history AS history
-    INNER JOIN filtered_orders AS fo ON history.source = fo.order_id
+    INNER JOIN mg_jobs AS job ON history.job = job._id
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON history.worker = worker._id
     WHERE ifNull(history.status, '') = 'booked'
+      AND ifNull(job.deleted, 0) = 0
       AND ifNull(worker.user, '') != ''${dateWhere}
   )`;
 }
 
 function cityGigerCompletedUsersCte(input) {
-  const dateWhere = input.metric === 'dynamic-completed-users' ? '\n      AND fo.period = toString({metric_date:Date})' : '';
+  const dateWhere = input.metric === 'dynamic-completed-users' ? '\n      AND job.period = toString({metric_date:Date})' : '';
 
   return `completed_users AS (
     SELECT DISTINCT worker.user AS user_id
     FROM (
       SELECT
-        job.source AS source,
+        fo.period AS period,
         job.worker AS worker,
         ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
       FROM mg_jobs AS job
+      INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
       WHERE ifNull(job.deleted, 0) = 0
     ) AS job
-    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     INNER JOIN mg_workers AS worker ON job.worker = worker._id
     WHERE job.is_successful_confirmed_shift = 1
       AND ifNull(worker.user, '') != ''${dateWhere}

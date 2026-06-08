@@ -3168,7 +3168,8 @@ test('renderHeatmapDashboard renders filters, navigation, and progressive map pl
         excludedProfession: ['Курьер<script>bad</script>'],
         addressSearch: 'Тверская<script>addr</script>',
         activeBaseMode: 'ready',
-        activeBasePeriod: 'selected'
+        activeBasePeriod: 'selected',
+        workerConcentrationLayer: 'on'
       },
       filterOptions: {
         client: ['<script>client</script>', 'Brand A'],
@@ -3197,6 +3198,8 @@ test('renderHeatmapDashboard renders filters, navigation, and progressive map pl
   assert.match(html, /name="activeBaseMode" value="ready" checked/);
   assert.match(html, /name="activeBasePeriod" value="last30d"/);
   assert.match(html, /name="activeBasePeriod" value="selected" checked/);
+  assert.match(html, /<input type="checkbox" name="workerConcentrationLayer" value="on" checked>/);
+  assert.match(html, /Концентрация исполнителей/);
   assert.match(html, /Все зарегистрированные/);
   assert.match(html, /ready, booked, worked/);
   assert.match(html, /Выбранный месяц/);
@@ -3205,6 +3208,7 @@ test('renderHeatmapDashboard renders filters, navigation, and progressive map pl
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/heatmap\/section\?section=map&amp;year=2026&amp;month=5/);
   assert.match(html, /addressSearch=%D0%A2%D0%B2%D0%B5%D1%80%D1%81%D0%BA%D0%B0%D1%8F%3Cscript%3Eaddr%3C%2Fscript%3E/);
   assert.match(html, /activeBasePeriod=selected/);
+  assert.match(html, /workerConcentrationLayer=on/);
   assert.match(html, /Загружается/);
   assert.match(html, /Активная база: 2026-05-01 00:00:00 - 2026-06-01 00:00:00/);
   assert.doesNotMatch(html, /<script>client<\/script>/);
@@ -3221,7 +3225,8 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
       to: '2026-05-31',
       client: [],
       excludedProfession: [],
-      activeBaseMode: 'all'
+      activeBaseMode: 'all',
+      workerConcentrationLayer: 'on'
     },
     summary: {
       pointsWithOrder: 2,
@@ -3262,14 +3267,31 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
         lon: 49.1,
         lat: 55.8
       }
+    ],
+    workerConcentration: [
+      { lon: 37.62, lat: 55.75, activeUsers: 12, intensity: 0.8 },
+      { lon: 49.12, lat: 55.79, activeUsers: 5, intensity: 0.3 }
     ]
   };
-  const html = renderHeatmapDashboardSection({ dashboard, section: 'map' });
+  const html = renderHeatmapDashboardSection({
+    dashboard,
+    section: 'map',
+    currentUser: { role: 'admin', permissions: [] }
+  });
 
   assert.match(html, /leaflet\.css/);
   assert.match(html, /leaflet\.js/);
   assert.match(html, /data-heatmap-leaflet-map/);
   assert.match(html, /data-heatmap-points="/);
+  assert.match(html, /data-worker-concentration="/);
+  assert.match(html, /&quot;activeUsers&quot;:12/);
+  assert.match(html, /&quot;intensity&quot;:0\.8/);
+  assert.match(html, /workerConcentrationLayer/);
+  assert.match(html, /drawWorkerConcentrationLayer/);
+  assert.ok(
+    html.indexOf('map.fitBounds(bounds') < html.indexOf('drawWorkerConcentrationLayer(map, root, workerConcentration);')
+  );
+  assert.match(html, /data-sql-inspector-open="heatmap\.map\.worker-concentration"/);
   assert.match(html, /&quot;lat&quot;:55\.7/);
   assert.match(html, /&quot;lon&quot;:37\.6/);
   assert.match(html, /&quot;color&quot;:&quot;hsl\(24, 72%, 44%\)&quot;/);
@@ -3291,6 +3313,30 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
   assert.doesNotMatch(html, /<table>/);
   assert.doesNotMatch(html, /<html/);
   assert.doesNotMatch(html, /<script>bad<\/script>/);
+});
+
+test('renderHeatmapDashboardSection renders worker concentration when demand points are empty', () => {
+  const html = renderHeatmapDashboardSection({
+    section: 'map',
+    dashboard: {
+      filters: {
+        from: '2026-05-01',
+        to: '2026-05-31',
+        workerConcentrationLayer: 'on'
+      },
+      summary: {},
+      points: [],
+      workerConcentration: [
+        { lon: 37.62, lat: 55.75, activeUsers: 12, intensity: 0.8 }
+      ]
+    }
+  });
+
+  assert.match(html, /data-heatmap-leaflet-map/);
+  assert.match(html, /data-heatmap-points="\[\]"/);
+  assert.match(html, /data-worker-concentration="/);
+  assert.match(html, /heatmap-gradient-workers/);
+  assert.doesNotMatch(html, /<p class="empty">/);
 });
 
 test('renderCityAnalysisDashboard shows empty states for missing city and missing coordinates', () => {

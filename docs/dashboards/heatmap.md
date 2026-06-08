@@ -137,8 +137,9 @@ active_workers AS (
     user_id AS user_id,
     worker_coordinates AS worker_coordinates
   FROM latest_workers
-  INNER JOIN demand_bounds AS bounds ON bounds.points > 0
-  WHERE length(worker_coordinates) >= 2
+  CROSS JOIN demand_bounds AS bounds
+  WHERE bounds.points > 0
+    AND length(worker_coordinates) >= 2
     AND worker_coordinates[1] BETWEEN -180 AND 180
     AND worker_coordinates[2] BETWEEN -90 AND 90
     AND worker_coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
@@ -157,10 +158,10 @@ influence_pairs AS (
       aw.user_id AS user_id,
       greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) AS distance_m
     FROM demand_points AS dp
-    INNER JOIN active_workers AS aw
-      ON aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
+    CROSS JOIN active_workers AS aw
+    WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
       AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
-    WHERE greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) <= 15000
+      AND greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) <= 15000
   )
 ),
 worker_influence AS (

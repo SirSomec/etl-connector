@@ -3,11 +3,13 @@ const { actualOrderDomainCondition, actualOrderJoinsSql } = require('./analytics
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ACTIVE_BASE_MODES = new Set(['all', 'ready']);
 const ALLOWED_ACTIVE_BASE_PERIODS = new Set(['last30d', 'selected']);
+const ALLOWED_WORKER_CONCENTRATION_LAYERS = new Set(['off', 'on']);
 const FILTER_OPTION_KEYS = ['client', 'excludedProfession'];
 const HEATMAP_SECTION_NAMES = ['map'];
 const HEATMAP_SECTIONS = new Set(HEATMAP_SECTION_NAMES);
 const DEFAULT_ACTIVE_BASE_MODE = 'all';
 const DEFAULT_ACTIVE_BASE_PERIOD = 'last30d';
+const DEFAULT_WORKER_CONCENTRATION_LAYER = 'off';
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -120,6 +122,12 @@ function normalizeHeatmapFilters(input = {}, now = new Date()) {
   const activeBasePeriod = ALLOWED_ACTIVE_BASE_PERIODS.has(requestedPeriod)
     ? requestedPeriod
     : DEFAULT_ACTIVE_BASE_PERIOD;
+  const requestedWorkerConcentrationLayer = cleanText(input.workerConcentrationLayer);
+  const workerConcentrationLayer = ALLOWED_WORKER_CONCENTRATION_LAYERS.has(
+    requestedWorkerConcentrationLayer
+  )
+    ? requestedWorkerConcentrationLayer
+    : DEFAULT_WORKER_CONCENTRATION_LAYER;
   const activeFromDate = activeBasePeriod === 'selected'
     ? fromDate
     : addDaysUTC(toExclusiveDate, -30);
@@ -139,7 +147,8 @@ function normalizeHeatmapFilters(input = {}, now = new Date()) {
     excludedProfession: cleanValues(input.excludedProfession),
     addressSearch: cleanText(input.addressSearch),
     activeBaseMode,
-    activeBasePeriod
+    activeBasePeriod,
+    workerConcentrationLayer
   };
 }
 
@@ -225,6 +234,7 @@ function filterOptionsFromRows(rows) {
 function mergeHeatmapRows(filters, datasets) {
   const filterOptions = filterOptionsFromRows(datasets.filterOptionRows || []);
   const points = [];
+  const workerConcentration = [];
 
   for (const row of datasets.demandPointRows || []) {
     const orderedShifts = numberValue(row.ordered_shifts);
@@ -278,6 +288,29 @@ function mergeHeatmapRows(filters, datasets) {
   const weightedActiveUsers = points.reduce((sum, row) => sum + row.weightedActiveUsers, 0);
   const regionsWithOrder = new Set(points.map((point) => point.region).filter(Boolean)).size;
 
+  for (const row of datasets.workerConcentrationRows || []) {
+    const lon = numberValue(row.lon);
+    const lat = numberValue(row.lat);
+    const activeUsers = numberValue(row.active_users);
+
+    if (
+      activeUsers <= 0 ||
+      lon < -180 ||
+      lon > 180 ||
+      lat < -90 ||
+      lat > 90
+    ) {
+      continue;
+    }
+
+    workerConcentration.push({
+      lon,
+      lat,
+      activeUsers,
+      intensity: clamp(numberValue(row.intensity), 0, 1)
+    });
+  }
+
   return {
     filters,
     filterOptions,
@@ -293,7 +326,8 @@ function mergeHeatmapRows(filters, datasets) {
         orderedShifts > 0 ? weightedActiveUsers / orderedShifts : 0
     },
     points,
-    regions: points
+    regions: points,
+    workerConcentration
   };
 }
 
@@ -396,6 +430,20 @@ function activeWorkersWhere(filters) {
   return where.join('\n      AND ');
 }
 
+function workerConcentrationWhere(filters) {
+  const where = [
+    'length(worker_coordinates) >= 2',
+    'worker_coordinates[1] BETWEEN -180 AND 180',
+    'worker_coordinates[2] BETWEEN -90 AND 90'
+  ];
+
+  if (filters.activeBaseMode === 'ready') {
+    where.push("status IN ('ready', 'booked', 'worked')");
+  }
+
+  return where.join('\n      AND ');
+}
+
 function demandPointsQuery(whereSql, filters) {
   return `WITH filtered_orders AS (
     SELECT
@@ -477,8 +525,9 @@ function demandPointsQuery(whereSql, filters) {
       user_id AS user_id,
       worker_coordinates AS worker_coordinates
     FROM latest_workers
-    INNER JOIN demand_bounds AS bounds ON bounds.points > 0
-    WHERE ${activeWorkersWhere(filters)}
+    CROSS JOIN demand_bounds AS bounds
+    WHERE bounds.points > 0
+      AND ${activeWorkersWhere(filters)}
   ),
   influence_pairs AS (
     SELECT
@@ -497,10 +546,10 @@ function demandPointsQuery(whereSql, filters) {
           aw.worker_coordinates[2]
         ) AS distance_m
       FROM demand_points AS dp
-      INNER JOIN active_workers AS aw
-        ON aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
+      CROSS JOIN active_workers AS aw
+      WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
         AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
-      WHERE greatCircleDistance(
+        AND greatCircleDistance(
           dp.lon,
           dp.lat,
           aw.worker_coordinates[1],
@@ -538,6 +587,61 @@ function demandPointsQuery(whereSql, filters) {
   FORMAT JSONEachRow`;
 }
 
+function workerConcentrationQuery(filters) {
+  return `WITH app_active_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= now() - INTERVAL 30 DAY
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < now()
+  ),
+  worker_rows AS (
+    SELECT
+      worker.user AS user_id,
+      ifNull(worker.status, '') AS status,
+      worker.location__coordinates AS worker_coordinates,
+      ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
+    FROM mg_workers AS worker
+    INNER JOIN app_active_users AS active ON active.user_id = worker.user
+    LEFT JOIN mg_users AS u ON worker.user = u._id
+    WHERE ifNull(worker.user, '') != ''
+      AND ifNull(worker.deleted, 0) = 0
+      AND ifNull(u.deleted, 0) = 0
+  ),
+  latest_workers AS (
+    SELECT
+      user_id AS user_id,
+      argMax(status, updated_at) AS status,
+      argMax(worker_coordinates, updated_at) AS worker_coordinates
+    FROM worker_rows
+    GROUP BY user_id
+  ),
+  concentration_cells AS (
+    SELECT
+      round(worker_coordinates[1], 2) AS lon,
+      round(worker_coordinates[2], 2) AS lat,
+      uniqExact(user_id) AS active_users
+    FROM latest_workers
+    WHERE ${workerConcentrationWhere(filters)}
+    GROUP BY lon, lat
+    HAVING active_users > 0
+  ),
+  max_cell AS (
+    SELECT max(active_users) AS max_active_users
+    FROM concentration_cells
+  )
+  SELECT
+    lon,
+    lat,
+    active_users,
+    if(ifNull(max_active_users, 0) > 0, active_users / max_active_users, 0) AS intensity
+  FROM concentration_cells
+  CROSS JOIN max_cell
+  ORDER BY active_users DESC, lat DESC, lon ASC
+  LIMIT 3000
+  FORMAT JSONEachRow`;
+}
+
 async function readThroughCache(cache, key, loader) {
   if (!cache || typeof cache.getOrLoad !== 'function') {
     return loader();
@@ -557,7 +661,8 @@ function cacheKeyForHeatmapSection(section, filters) {
       excludedProfession: filters.excludedProfession,
       addressSearch: filters.addressSearch,
       activeBaseMode: filters.activeBaseMode,
-      activeBasePeriod: filters.activeBasePeriod
+      activeBasePeriod: filters.activeBasePeriod,
+      workerConcentrationLayer: filters.workerConcentrationLayer
     }
   });
 }
@@ -576,7 +681,8 @@ function emptyHeatmapDashboard(filters, filterOptions = emptyFilterOptions()) {
       avgActiveUsersPerShift: 0
     },
     points: [],
-    regions: []
+    regions: [],
+    workerConcentration: []
   };
 }
 
@@ -610,8 +716,15 @@ async function loadHeatmapMapRows(client, filters) {
     params,
     'heatmap demand points'
   );
+  const workerConcentrationRows = filters.workerConcentrationLayer === 'on'
+    ? await client.queryJSONEachRow(
+      workerConcentrationQuery(filters),
+      {},
+      'heatmap worker concentration'
+    )
+    : [];
 
-  return { demandPointRows };
+  return { demandPointRows, workerConcentrationRows };
 }
 
 async function loadHeatmapDashboardShell(client, input = {}, now = new Date()) {

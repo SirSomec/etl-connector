@@ -9,7 +9,7 @@
 - Спрос, отклики и выполнения считаются только по актуальным заказам: не удаленным, не скрытым, без тестовых клиентов и без `processing`.
 - Контрагент заказа берется через рабочее место: `mg_orders.workplace -> mg_workplaces._id -> mg_contractors._id`.
 - История откликов связывается с конкретной сменой: `mg_job_history.job -> mg_jobs._id -> filtered_orders.order_id`; связь только по `history.source` не используется для метрик откликов.
-- Выполнения считаются по успешным `confirmed` через общий helper, включая исключение `piecework`-прогулов.
+- Выполнения считаются по успешным `confirmed` через общий helper, включая исключение прогулов по сделкам из `mg_orders.pieceworks`.
 - Гео-CTE оставляют `CROSS JOIN` только для scalar/bounds и сопоставления с точками спроса; перед `greatCircleDistance` используются bounding predicates.
 
 ## Фильтры

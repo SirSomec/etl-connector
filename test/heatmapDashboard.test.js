@@ -39,7 +39,8 @@ test('normalizeHeatmapFilters defaults to the previous month and cleans filter v
     excludedProfession: ['Курьер'],
     addressSearch: 'Тверская',
     activeBaseMode: 'all',
-    activeBasePeriod: 'last30d'
+    activeBasePeriod: 'last30d',
+    workerConcentrationLayer: 'off'
   });
 });
 
@@ -61,6 +62,28 @@ test('normalizeHeatmapFilters accepts selected year, month, ready-status base mo
   assert.equal(filters.activeFromDateTime, '2024-02-01 00:00:00');
   assert.equal(filters.activeBaseMode, 'ready');
   assert.equal(filters.activeBasePeriod, 'selected');
+});
+
+test('normalizeHeatmapFilters accepts only the worker concentration layer toggle', () => {
+  const enabled = normalizeHeatmapFilters(
+    {
+      year: '2026',
+      month: '5',
+      workerConcentrationLayer: 'on'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+  const unsafe = normalizeHeatmapFilters(
+    {
+      year: '2026',
+      month: '5',
+      workerConcentrationLayer: 'unsafe'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(enabled.workerConcentrationLayer, 'on');
+  assert.equal(unsafe.workerConcentrationLayer, 'off');
 });
 
 test('mergeHeatmapRows joins weighted demand points and calculates balance', () => {
@@ -316,6 +339,76 @@ test('loadHeatmapDashboardSection caches the map section', async () => {
   ]);
 });
 
+test('loadHeatmapDashboardSection loads worker concentration only when layer is enabled', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'heatmap demand points') {
+        return [{
+          region: 'Москва',
+          city: 'Москва',
+          street: 'Тверская',
+          workplace_id: 'workplace-1',
+          ordered_shifts: 100,
+          order_requests: 25,
+          lon: 37.6,
+          lat: 55.7,
+          weighted_active_users: 30
+        }];
+      }
+
+      if (operation === 'heatmap worker concentration') {
+        return [{
+          lon: 37.62,
+          lat: 55.75,
+          active_users: 12,
+          intensity: 0.8
+        }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const now = new Date('2026-06-15T12:00:00.000Z');
+  const disabled = await loadHeatmapDashboardSection(
+    client,
+    { year: '2026', month: '5' },
+    'map',
+    now
+  );
+  const enabled = await loadHeatmapDashboardSection(
+    client,
+    { year: '2026', month: '5', workerConcentrationLayer: 'on', activeBaseMode: 'ready' },
+    'map',
+    now
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'heatmap demand points',
+    'heatmap demand points',
+    'heatmap worker concentration'
+  ]);
+  assert.deepEqual(disabled.workerConcentration, []);
+  assert.deepEqual(enabled.workerConcentration, [{
+    lon: 37.62,
+    lat: 55.75,
+    activeUsers: 12,
+    intensity: 0.8
+  }]);
+
+  const concentrationCall = calls.find((call) => call.operation === 'heatmap worker concentration');
+
+  assert.match(concentrationCall.query, /appmetrica_sessions/);
+  assert.match(concentrationCall.query, /now\(\) - INTERVAL 30 DAY/);
+  assert.match(concentrationCall.query, /mg_workers AS worker/);
+  assert.match(concentrationCall.query, /mg_users AS u/);
+  assert.match(concentrationCall.query, /round\(worker_coordinates\[1\], 2\)/);
+  assert.match(concentrationCall.query, /status IN \('ready', 'booked', 'worked'\)/);
+});
+
 test('loadHeatmapDashboard loads filter options and map data for non-progressive use', async () => {
   const calls = [];
   const client = {
@@ -382,10 +475,11 @@ test('heatmap SQL uses actual order domain and bounded worker joins', async () =
     assert.equal(call.query.includes('ifNull(o.is_hidden, false) = false'), true);
   }
 
-  assert.equal(demandCall.query.includes('CROSS JOIN demand_bounds AS bounds'), false);
-  assert.equal(demandCall.query.includes('INNER JOIN demand_bounds AS bounds ON bounds.points > 0'), true);
-  assert.equal(demandCall.query.includes('CROSS JOIN active_workers AS aw'), false);
-  assert.equal(demandCall.query.includes('INNER JOIN active_workers AS aw'), true);
+  assert.equal(demandCall.query.includes('CROSS JOIN demand_bounds AS bounds'), true);
+  assert.equal(demandCall.query.includes('INNER JOIN demand_bounds AS bounds ON bounds.points > 0'), false);
+  assert.match(demandCall.query, /active_workers AS \([\s\S]*CROSS JOIN demand_bounds AS bounds[\s\S]*WHERE bounds\.points > 0/s);
+  assert.equal(demandCall.query.includes('CROSS JOIN active_workers AS aw'), true);
+  assert.equal(demandCall.query.includes('INNER JOIN active_workers AS aw'), false);
   assert.equal(demandCall.query.includes('aw.worker_coordinates[1] BETWEEN dp.lon'), true);
   assert.equal(demandCall.query.includes('aw.worker_coordinates[2] BETWEEN dp.lat'), true);
   assert.equal(demandCall.query.includes('greatCircleDistance'), true);

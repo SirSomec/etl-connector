@@ -1252,7 +1252,8 @@ test('loadWorkplacePointDashboard constrains point metrics to actual orders and 
 
   const summaryCall = calls.find((call) => call.operation === 'workplace point summary');
 
-  assert.equal(summaryCall.query.includes('toString(j.piecework)'), true);
+  assert.equal(summaryCall.query.includes('toString(fo.pieceworks)'), true);
+  assert.equal(summaryCall.query.includes('j.piecework'), false);
   assert.equal(summaryCall.query.includes('CROSS JOIN shift_summary AS ss'), false);
   assert.equal(summaryCall.query.includes('CROSS JOIN booked_workers AS bw'), false);
   assert.equal(summaryCall.query.includes('LEFT JOIN shift_summary AS ss ON 1 = 1'), true);

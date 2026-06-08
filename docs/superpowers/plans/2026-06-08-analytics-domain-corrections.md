@@ -22,7 +22,7 @@
 - Самобронь считается по первому непустому событию `mg_job_history` в рамках смены, а не по любому `status = 'booked'`.
 - `mg_transactions.deleted = true` исключаются; связанные со сменой транзакции учитываются как положительные и отрицательные суммы.
 - Нулевые/пустые/строковые ставки не должны смещать средние и не должны создавать деление на ноль.
-- `confirmed`-смена типа `piecework` с непустым `piecework` и нулевой фактической клиентской оплатой считается прогулом.
+- `confirmed`-смена типа сделка с непустым `mg_orders.pieceworks` у связанного заказа и нулевой фактической клиентской оплатой считается прогулом.
 - Необязательные `CROSS JOIN` нужно убрать; географические many-to-many расчеты оставлять только там, где они действительно нужны и ограничены bounding box.
 
 ## File Structure
@@ -264,7 +264,7 @@ In `test/successfulConfirmedShift.test.js`, add:
 test('successful confirmed shift excludes piecework absences with zero client payment', () => {
   const condition = successfulConfirmedShiftCondition('j');
 
-  assert.equal(condition.includes('j.piecework'), true);
+  assert.equal(condition.includes('o.pieceworks'), true);
   assert.equal(condition.includes('notEmpty'), true);
   assert.equal(condition.includes("toFloat64OrZero(ifNull(toString(j.payment), '')) <= 0"), true);
   assert.equal(condition.includes('AND NOT'), true);
@@ -277,7 +277,7 @@ Add:
 
 ```js
 function pieceworkNotEmptyCondition(alias) {
-  return `notEmpty(ifNull(${sqlField(alias, 'piecework')}, []))`;
+  return `notEmpty(ifNull(${pieceworkExpression}, []))`;
 }
 
 function pieceworkAbsenceCondition(alias) {
@@ -337,7 +337,7 @@ assert.ok(calls.some((call) => call.query.includes("ifNull(fh.first_initiator, '
 assert.equal(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker'")), false);
 assert.ok(calls.some((call) => call.query.includes('ifNull(t.deleted, 0) = 0')));
 assert.equal(calls.some((call) => call.query.includes("t.transaction_type = 'surcharge'")), false);
-assert.ok(calls.some((call) => call.query.includes('j.piecework AS piecework')));
+assert.ok(calls.some((call) => call.query.includes('ao.pieceworks AS piecework')));
 assert.ok(calls.some((call) => call.query.includes('nullIf(toFloat64OrNull')));
 ```
 
@@ -374,7 +374,7 @@ assert.equal(queries.shiftFacts.includes("ifNull(fh.first_initiator, '') = 'work
 assert.equal(queries.shiftFacts.includes("max(if(h.status = 'booked' AND h.initiator = 'worker'"), false);
 assert.equal(queries.shiftFacts.includes('ifNull(t.deleted, 0) = 0'), true);
 assert.equal(queries.shiftFacts.includes("t.transaction_type = 'surcharge'"), false);
-assert.equal(queries.shiftFacts.includes('j.piecework AS piecework'), true);
+assert.equal(queries.shiftFacts.includes('ao.pieceworks AS piecework'), true);
 ```
 
 - [ ] **Step 3: Run focused tests and verify they fail**
@@ -441,7 +441,7 @@ WHERE ifNull(j._id, '') != ''
 Add selected fields:
 
 ```sql
-j.piecework AS piecework,
+ao.pieceworks AS piecework,
 ao.client AS order_client,
 ao.workplace AS order_workplace,
 ao.order_contract_type AS order_contract_type,
@@ -587,7 +587,7 @@ In `test/workplacePointDashboard.test.js`, assert:
 assert.equal(call.query.includes("ifNull(c.title, '') NOT IN"), true);
 assert.equal(call.query.includes("!= 'processing'"), true);
 assert.equal(call.query.includes('INNER JOIN filtered_orders AS fo ON j.source = fo.order_id'), true);
-assert.equal(call.query.includes('j.piecework AS piecework'), true);
+assert.equal(call.query.includes('fo.pieceworks'), true);
 ```
 
 In `test/workerCancellationsDashboard.test.js`, assert in worker and detail SQL:

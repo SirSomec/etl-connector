@@ -222,6 +222,7 @@ const SALES_DOMAIN_ACTUAL_ORDERS_SQL = `actual_orders AS (
     o.workplace AS workplace,
     ifNull(o.amount, 0) AS amount,
     ifNull(nullIf(c.title, ''), 'Р‘РµР· Р±СЂРµРЅРґР°') AS brand,
+    o.pieceworks AS pieceworks,
     ifNull(o.contract_type, '') AS order_contract_type,
     ifNull(ct.contract_type, '') AS contractor_contract_type,
     ifNull(ct.comission, 0) AS commission_percent
@@ -249,7 +250,7 @@ shift_facts AS (
     j.payment_per_job AS payment_per_job,
     j.hours AS hours,
     j.payment AS payment,
-    j.piecework AS piecework,
+    ao.pieceworks AS piecework,
     j.start_fact AS start_fact,
     j.finish_fact AS finish_fact,
     ao.order_contract_type AS order_contract_type,
@@ -318,7 +319,7 @@ shift_enriched AS (
     if(${sqlInspectorPositiveOrZeroNumberExpression('sf', 'payment_per_job')} > 0, ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'payment_per_job')}, ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'payment_per_hour')} * ${sqlInspectorPositiveOrZeroNumberExpression('sf', 'hours')}) AS customer_shift_amount,
     ifNull(jt.transaction_amount, 0) AS transaction_amount,
     ${sqlInspectorNullablePositiveNumberExpression('sf', 'salary_per_hour')} AS worker_rate_hour,
-    ${successfulConfirmedShiftFlagExpression('sf')} AS is_successful_confirmed_shift
+    ${successfulConfirmedShiftFlagExpression('sf', { pieceworkExpression: 'sf.piecework' })} AS is_successful_confirmed_shift
   FROM shift_facts AS sf
   LEFT JOIN first_history AS fh ON sf.job = fh.job
   LEFT JOIN job_transactions AS jt ON sf.job = jt.job
@@ -459,8 +460,9 @@ FROM (
     INNER JOIN (
       SELECT
         j.source AS source,
-        ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+        ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'actual_order.pieceworks' })} AS is_successful_confirmed_shift
       FROM mg_jobs AS j
+      INNER JOIN mg_orders AS actual_order ON actual_order._id = j.source
       WHERE ifNull(j.deleted, 0) = 0
     ) AS completed_job ON completed_job.source = o._id
     WHERE <whereSql>
@@ -527,8 +529,9 @@ daily_completed AS (
   INNER JOIN (
     SELECT
       j.source AS source,
-      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+      ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'actual_order.pieceworks' })} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
+    INNER JOIN mg_orders AS actual_order ON actual_order._id = j.source
     WHERE ifNull(j.deleted, 0) = 0
   ) AS completed_job ON completed_job.source = o._id
   WHERE <whereSql>
@@ -626,6 +629,7 @@ const WORKPLACE_ATTENTION_SQL = `WITH filtered_orders AS (
       if(ifNull(o.spec, '') = '', 'Без специальности', o.spec),
       p.caption
     ) AS profession,
+    o.pieceworks AS pieceworks,
     ifNull(o.amount, 0) AS amount
   FROM mg_orders AS o
   LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
@@ -647,7 +651,7 @@ covered_jobs AS (
   WHERE ifNull(j.deleted, 0) = 0
     AND (
       ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')
-      OR (${successfulConfirmedShiftCondition('j')})
+      OR (${successfulConfirmedShiftCondition('j', { pieceworkExpression: 'fo.pieceworks' })})
     )
   GROUP BY order_id
 ),
@@ -758,8 +762,9 @@ const WORKER_CANCELLATIONS_SQL = `WITH shift_facts AS (
     j.worker AS worker_id,
     j.start AS start,
     ifNull(j.status, '') AS status,
-    ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+    ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift
   FROM mg_jobs AS j
+  INNER JOIN mg_orders AS o ON o._id = j.source
   WHERE j.start >= {from:DateTime}
     AND j.start < {to:DateTime}
     AND ifNull(j.worker, '') != ''
@@ -829,6 +834,7 @@ const WORKPLACE_POINT_SUMMARY_SQL = `WITH filtered_orders AS (
     o.createdAt AS order_created_at,
     if(o.createdAt IS NOT NULL AND o.start IS NOT NULL AND o.createdAt <= o.start, dateDiff('minute', o.createdAt, o.start), NULL) AS order_lead_minutes,
     ifNull(o.amount, 0) AS amount,
+    o.pieceworks AS pieceworks,
     if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession
   FROM mg_orders AS o
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
@@ -847,7 +853,7 @@ shift_facts AS (
     j.salary_per_job AS salary_per_job,
     j.start_fact AS start_fact,
     j.finish_fact AS finish_fact,
-    ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
+    ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift,
     ifNull(j.cancellation_reason, '') AS cancellation_reason,
     ifNull(j.failure_reason, '') AS failure_reason
   FROM mg_jobs AS j
@@ -933,6 +939,7 @@ const WORKPLACE_POINT_DAILY_SQL = `WITH filtered_orders AS (
     o.createdAt AS order_created_at,
     if(o.createdAt IS NOT NULL AND o.start IS NOT NULL AND o.createdAt <= o.start, dateDiff('minute', o.createdAt, o.start), NULL) AS order_lead_minutes,
     ifNull(o.amount, 0) AS amount,
+    o.pieceworks AS pieceworks,
     if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession
   FROM mg_orders AS o
   LEFT JOIN mg_professions AS p ON o.spec = p.spec
@@ -951,7 +958,7 @@ shift_facts AS (
     j.salary_per_job AS salary_per_job,
     j.start_fact AS start_fact,
     j.finish_fact AS finish_fact,
-    ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
+    ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift,
     ifNull(j.cancellation_reason, '') AS cancellation_reason,
     ifNull(j.failure_reason, '') AS failure_reason
   FROM mg_jobs AS j
@@ -1080,6 +1087,7 @@ const CITY_SUMMARY_SQL = `WITH filtered_orders AS (
     ifNull(o.salary_per_hour, 0) AS salary_per_hour,
     ifNull(c.title, '') AS brand,
     if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession,
+    o.pieceworks AS pieceworks,
     w.location__coordinates AS workplace_coordinates,
     ifNull(o.deleted, 0) = 0 AS is_active_request
   FROM mg_orders AS o
@@ -1157,13 +1165,12 @@ completed_users AS (
   SELECT DISTINCT worker.user AS user_id
   FROM (
     SELECT
-      job.source AS source,
       job.worker AS worker,
-      ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+      ${successfulConfirmedShiftFlagExpression('job', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift
     FROM mg_jobs AS job
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     WHERE ifNull(job.deleted, 0) = 0
   ) AS job
-  INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON job.worker = worker._id
   WHERE job.is_successful_confirmed_shift = 1
     AND ifNull(worker.user, '') != ''
@@ -1270,6 +1277,7 @@ const CITY_DYNAMICS_SQL = `WITH filtered_orders AS (
     o._id AS order_id,
     toString(toDate(o.start)) AS period,
     ifNull(o.amount, 0) AS amount,
+    o.pieceworks AS pieceworks,
     w.location__coordinates AS workplace_coordinates,
     ifNull(o.deleted, 0) = 0 AS is_active_request
   FROM mg_orders AS o
@@ -1315,17 +1323,17 @@ daily_booked AS (
 ),
 daily_completed AS (
   SELECT
-    fo.period AS period,
+    job.period AS period,
     uniqExact(worker.user) AS completed_users
   FROM (
     SELECT
-      job.source AS source,
+      fo.period AS period,
       job.worker AS worker,
-      ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+      ${successfulConfirmedShiftFlagExpression('job', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift
     FROM mg_jobs AS job
+    INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
     WHERE ifNull(job.deleted, 0) = 0
   ) AS job
-  INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
   INNER JOIN mg_workers AS worker ON job.worker = worker._id
   WHERE job.is_successful_confirmed_shift = 1
     AND ifNull(worker.user, '') != ''
@@ -1430,8 +1438,9 @@ active_workers AS (
     user_id AS user_id,
     worker_coordinates AS worker_coordinates
   FROM latest_workers
-  INNER JOIN demand_bounds AS bounds ON bounds.points > 0
-  WHERE <activeWorkersWhere(filters)>
+  CROSS JOIN demand_bounds AS bounds
+  WHERE bounds.points > 0
+    AND <activeWorkersWhere(filters)>
 ),
 influence_pairs AS (
   SELECT
@@ -1445,10 +1454,10 @@ influence_pairs AS (
       aw.user_id AS user_id,
       greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) AS distance_m
     FROM demand_points AS dp
-    INNER JOIN active_workers AS aw
-      ON aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
+    CROSS JOIN active_workers AS aw
+    WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
       AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
-    WHERE greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) <= 15000
+      AND greatCircleDistance(dp.lon, dp.lat, aw.worker_coordinates[1], aw.worker_coordinates[2]) <= 15000
   )
 ),
 worker_influence AS (
@@ -1478,6 +1487,62 @@ SELECT
 FROM demand_points AS dp
 LEFT JOIN worker_influence AS wi ON dp.workplace_id = wi.workplace_id
 ORDER BY ordered_shifts DESC, weighted_active_users DESC, city, street, workplace_title
+FORMAT JSONEachRow`;
+
+const HEATMAP_WORKER_CONCENTRATION_SQL = `WITH app_active_users AS (
+  SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+  FROM appmetrica_sessions AS s
+  WHERE ifNull(s.profile_id, '') != ''
+    AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= now() - INTERVAL 30 DAY
+    AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < now()
+),
+worker_rows AS (
+  SELECT
+    worker.user AS user_id,
+    ifNull(worker.status, '') AS status,
+    worker.location__coordinates AS worker_coordinates,
+    ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
+  FROM mg_workers AS worker
+  INNER JOIN app_active_users AS active ON active.user_id = worker.user
+  LEFT JOIN mg_users AS u ON worker.user = u._id
+  WHERE ifNull(worker.user, '') != ''
+    AND ifNull(worker.deleted, 0) = 0
+    AND ifNull(u.deleted, 0) = 0
+),
+latest_workers AS (
+  SELECT
+    user_id AS user_id,
+    argMax(status, updated_at) AS status,
+    argMax(worker_coordinates, updated_at) AS worker_coordinates
+  FROM worker_rows
+  GROUP BY user_id
+),
+concentration_cells AS (
+  SELECT
+    round(worker_coordinates[1], 2) AS lon,
+    round(worker_coordinates[2], 2) AS lat,
+    uniqExact(user_id) AS active_users
+  FROM latest_workers
+  WHERE length(worker_coordinates) >= 2
+    AND worker_coordinates[1] BETWEEN -180 AND 180
+    AND worker_coordinates[2] BETWEEN -90 AND 90
+    /* если activeBaseMode = 'ready': AND status IN ('ready', 'booked', 'worked') */
+  GROUP BY lon, lat
+  HAVING active_users > 0
+),
+max_cell AS (
+  SELECT max(active_users) AS max_active_users
+  FROM concentration_cells
+)
+SELECT
+  lon,
+  lat,
+  active_users,
+  if(ifNull(max_active_users, 0) > 0, active_users / max_active_users, 0) AS intensity
+FROM concentration_cells
+CROSS JOIN max_cell
+ORDER BY active_users DESC, lat DESC, lon ASC
+LIMIT 3000
 FORMAT JSONEachRow`;
 
 defineMetricSet({
@@ -1691,7 +1756,8 @@ defineMetricSet({
     { suffix: 'points-with-order', title: 'Тепловая карта: точки с заказом', description: 'Количество рабочих мест с координатами и заказом в выбранном периоде.' },
     { suffix: 'ordered-shifts', title: 'Тепловая карта: заказано смен', description: 'Сумма планового заказа по точкам на карте.' },
     { suffix: 'weighted-active-users', title: 'Тепловая карта: взвешенная база', description: 'Суммарный вклад активных исполнителей рядом с точками: до 5 км полный вес, 5-10 км половина, 10-15 км четверть.' },
-    { suffix: 'avg-weighted-active-users-per-shift', title: 'Тепловая карта: база / смена', description: 'Отношение взвешенной активной базы к плановому заказу смен.' }
+    { suffix: 'avg-weighted-active-users-per-shift', title: 'Тепловая карта: база / смена', description: 'Отношение взвешенной активной базы к плановому заказу смен.' },
+    { suffix: 'worker-concentration', title: 'Тепловая карта: концентрация исполнителей', description: 'Подключаемый слой пятен по координатам исполнителей, входивших в приложение за последние 30 дней относительно текущей даты.', sql: HEATMAP_WORKER_CONCENTRATION_SQL }
   ]
 });
 

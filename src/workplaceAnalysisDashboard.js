@@ -1040,7 +1040,9 @@ function actualShiftOrderJoinsSql(orderAlias = 'actual_order') {
 function successfulConfirmedJobsSubquery(alias) {
   return `(SELECT
       j.source AS source,
-      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+      ${successfulConfirmedShiftFlagExpression('j', {
+        pieceworkExpression: 'actual_order.pieceworks'
+      })} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
     ${actualShiftOrderJoinsSql()}
     WHERE ifNull(j.deleted, 0) = 0
@@ -1059,10 +1061,10 @@ function forecastSlaActiveJobsSubquery(alias) {
   ) AS ${alias}`;
 }
 
-function closingJobStatusCondition(alias = 'j') {
+function closingJobStatusCondition(alias = 'j', options = {}) {
   return `(
         ifNull(${alias}.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')
-        OR (${successfulConfirmedShiftCondition(alias)})
+        OR (${successfulConfirmedShiftCondition(alias, options)})
       )`;
 }
 
@@ -1436,6 +1438,7 @@ function attentionPointsQuery(whereSql) {
       ifNull(any(w.address__region), '') AS region,
       ifNull(any(w.address__street), '') AS street,
       any(w.location__coordinates) AS workplace_coordinates,
+      any(o.pieceworks) AS pieceworks,
       if(
         ifNull(any(p.caption), '') = '',
         if(ifNull(any(o.spec), '') = '', 'Без специальности', any(o.spec)),
@@ -1454,7 +1457,7 @@ function attentionPointsQuery(whereSql) {
     FROM mg_jobs AS j
     INNER JOIN filtered_orders AS fo ON j.source = fo.order_id
     WHERE ifNull(j.deleted, 0) = 0
-      AND ${closingJobStatusCondition('j')}
+      AND ${closingJobStatusCondition('j', { pieceworkExpression: 'fo.pieceworks' })}
     GROUP BY order_id
   ),
   daily_point AS (

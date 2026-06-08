@@ -125,7 +125,8 @@ const RENDERED_SQL_METRIC_IDS = [
   'heatmap.map.points-with-order',
   'heatmap.map.ordered-shifts',
   'heatmap.map.weighted-active-users',
-  'heatmap.map.avg-weighted-active-users-per-shift'
+  'heatmap.map.avg-weighted-active-users-per-shift',
+  'heatmap.map.worker-concentration'
 ];
 
 test('getSqlMetricInfo returns stable metadata without secrets', () => {
@@ -216,9 +217,29 @@ test('geo and cancellation metrics show the specialized SQL used for those value
   assert.match(activeGigers.sql, /greatCircleDistance/);
   assert.match(heatmap.sql, /influence_weight/);
   assert.match(heatmap.sql, /appmetrica_sessions/);
+  assert.match(heatmap.sql, /CROSS JOIN demand_bounds AS bounds/);
+  assert.match(heatmap.sql, /WHERE bounds\.points > 0/);
+  assert.doesNotMatch(heatmap.sql, /INNER JOIN demand_bounds AS bounds ON bounds\.points > 0/);
+  assert.match(heatmap.sql, /CROSS JOIN active_workers AS aw/);
+  assert.doesNotMatch(heatmap.sql, /INNER JOIN active_workers AS aw/);
   assert.match(cancellations.sql, /is_worker_cancelled_24h/);
   assert.match(cancellations.sql, /INTERVAL 24 HOUR/);
   assert.match(cancellations.sql, /is_successful_confirmed_shift/);
+});
+
+test('heatmap worker concentration metric documents the 30 day current-date layer SQL', () => {
+  const info = getSqlMetricInfo('heatmap.map.worker-concentration');
+
+  assert.match(info.description, /30/);
+  assert.match(info.sql, /appmetrica_sessions/);
+  assert.match(info.sql, /now\(\) - INTERVAL 30 DAY/);
+  assert.match(info.sql, /mg_workers AS worker/);
+  assert.match(info.sql, /mg_users AS u/);
+  assert.match(info.sql, /round\(worker_coordinates\[1\], 2\) AS lon/);
+  assert.match(info.sql, /round\(worker_coordinates\[2\], 2\) AS lat/);
+  assert.match(info.sql, /uniqExact\(user_id\) AS active_users/);
+  assert.match(info.sql, /status IN \('ready', 'booked', 'worked'\)/);
+  assert.match(info.sql, /CROSS JOIN max_cell/);
 });
 
 test('workplace attention metrics show 15km base and closing statuses SQL', () => {

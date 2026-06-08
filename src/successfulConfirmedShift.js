@@ -20,24 +20,25 @@ function numericFieldExpression(alias, field) {
   return `toFloat64OrZero(ifNull(toString(${value}), ''))`;
 }
 
-function stringFieldExpression(alias, field) {
-  const value = sqlField(alias, field);
-
-  return `ifNull(toString(${value}), '')`;
+function stringSqlExpression(expression) {
+  return `ifNull(toString(${expression}), '')`;
 }
 
-function pieceworkNotEmptyCondition(alias) {
-  const piecework = stringFieldExpression(alias, 'piecework');
+function stringFieldExpression(alias, field) {
+  return stringSqlExpression(sqlField(alias, field));
+}
+
+function pieceworkNotEmptyCondition(pieceworkExpression) {
+  const piecework = stringSqlExpression(pieceworkExpression);
 
   return `(${piecework} != '' AND ${piecework} != '[]' AND ${piecework} != '{}')`;
 }
 
-function positiveAccrualCondition(alias) {
+function positiveAccrualCondition(alias, options = {}) {
   const hours = numericFieldExpression(alias, 'hours');
   const payment = numericFieldExpression(alias, 'payment');
   const salaryPerJob = numericFieldExpression(alias, 'salary_per_job');
   const salaryPerHour = numericFieldExpression(alias, 'salary_per_hour');
-  const pieceworkNotEmpty = pieceworkNotEmptyCondition(alias);
   const nonPieceworkPositiveFacts = [
     `${hours} > 0`,
     `${payment} > 0`,
@@ -46,18 +47,24 @@ function positiveAccrualCondition(alias) {
     `(${positiveFactIntervalCondition(alias)})`
   ].join(' OR ');
 
+  if (!options.pieceworkExpression) {
+    return nonPieceworkPositiveFacts;
+  }
+
+  const pieceworkNotEmpty = pieceworkNotEmptyCondition(options.pieceworkExpression);
+
   return [
     `(${pieceworkNotEmpty} AND ${payment} > 0)`,
     `(NOT ${pieceworkNotEmpty} AND (${nonPieceworkPositiveFacts}))`
   ].join(' OR ');
 }
 
-function successfulConfirmedShiftCondition(alias) {
-  return `ifNull(${sqlField(alias, 'status')}, '') = 'confirmed' AND (${positiveAccrualCondition(alias)})`;
+function successfulConfirmedShiftCondition(alias, options = {}) {
+  return `ifNull(${sqlField(alias, 'status')}, '') = 'confirmed' AND (${positiveAccrualCondition(alias, options)})`;
 }
 
-function successfulConfirmedShiftFlagExpression(alias) {
-  return `if(${successfulConfirmedShiftCondition(alias)}, 1, 0)`;
+function successfulConfirmedShiftFlagExpression(alias, options = {}) {
+  return `if(${successfulConfirmedShiftCondition(alias, options)}, 1, 0)`;
 }
 
 module.exports = {

@@ -30,10 +30,20 @@ test('successful confirmed shift flag wraps the safe condition', () => {
   assert.equal(flag.includes("toFloat64OrZero(ifNull(toString(sf.payment), '')) > 0"), true);
 });
 
-test('piecework confirmed shift requires positive customer payment to count as successful', () => {
+test('piecework confirmed shift uses explicit order pieceworks field when provided', () => {
+  const condition = successfulConfirmedShiftCondition('j', {
+    pieceworkExpression: 'o.pieceworks'
+  });
+
+  assert.equal(condition.includes("ifNull(toString(o.pieceworks), '')"), true);
+  assert.equal(condition.includes('j.piecework'), false);
+  assert.equal(condition.includes("toFloat64OrZero(ifNull(toString(j.payment), '')) > 0"), true);
+});
+
+test('successful confirmed shift does not assume mg_jobs has piecework by default', () => {
   const condition = successfulConfirmedShiftCondition('j');
 
-  assert.equal(condition.includes("ifNull(toString(j.piecework), '')"), true);
+  assert.equal(condition.includes('piecework'), false);
   assert.equal(condition.includes("toFloat64OrZero(ifNull(toString(j.payment), '')) > 0"), true);
 });
 

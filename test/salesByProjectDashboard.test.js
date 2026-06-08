@@ -202,7 +202,8 @@ test('loadSalesByProjectDashboard queries dashboard datasets and merges KPI valu
   assert.ok(calls.some((call) => call.query.includes("if(ifNull(fh.first_initiator, '') = 'worker', 1, 0) AS is_self_booked")));
   assert.equal(calls.some((call) => call.query.includes("max(if(h.status = 'booked' AND h.initiator = 'worker'")), false);
   assert.ok(calls.some((call) => call.query.includes('AS cancellation_reason')));
-  assert.ok(calls.some((call) => call.query.includes('j.piecework AS piecework')));
+  assert.ok(calls.some((call) => call.query.includes('ao.pieceworks AS piecework')));
+  assert.equal(calls.some((call) => call.query.includes('j.piecework')), false);
   assert.ok(calls.some((call) => call.query.includes('AS is_successful_confirmed_shift')));
   assert.ok(calls.some((call) => call.query.includes("uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts")));
   assert.equal(calls.some((call) => call.query.includes("uniqExactIf(job, status = 'confirmed' AND job != '') AS worked_shifts")), false);

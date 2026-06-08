@@ -1246,7 +1246,8 @@ test('loadWorkplaceAnalysisDashboard constrains workplace metrics to actual non-
     assert.equal(call.query.includes('LEFT JOIN mg_contractors AS actual_contractor ON actual_contractor._id = ow.contractor'), true);
     assert.equal(call.query.includes('actual_client.title IS NULL OR actual_client.title NOT IN'), true);
     assert.equal(call.query.includes("ifNull(actual_contractor.contract_type, ifNull(actual_order.contract_type, '')) != 'processing'"), true);
-    assert.equal(call.query.includes('toString(j.piecework)'), true);
+    assert.equal(call.query.includes('toString(actual_order.pieceworks)'), true);
+    assert.equal(call.query.includes('j.piecework'), false);
   }
 });
 

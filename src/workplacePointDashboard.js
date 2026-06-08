@@ -826,6 +826,7 @@ function filteredOrdersCte(whereSql) {
         NULL
       ) AS order_lead_minutes,
       ifNull(o.amount, 0) AS amount,
+      o.pieceworks AS pieceworks,
       if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession
     FROM mg_orders AS o
     ${orderDimensionJoinsSql()}
@@ -847,7 +848,7 @@ function shiftFactsCte() {
       j.salary_per_job AS salary_per_job,
       j.start_fact AS start_fact,
       j.finish_fact AS finish_fact,
-      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
+      ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift,
       ifNull(j.cancellation_reason, '') AS cancellation_reason,
       ifNull(j.failure_reason, '') AS failure_reason
     FROM mg_jobs AS j

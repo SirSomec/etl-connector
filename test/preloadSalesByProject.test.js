@@ -91,7 +91,8 @@ test('sales preload query builders use parameterized ClickHouse ranges', () => {
   assert.equal(queries.shiftFacts.includes("max(if(h.status = 'booked' AND h.initiator = 'worker'"), false);
   assert.equal(queries.shiftFacts.includes('ifNull(t.deleted, 0) = 0'), true);
   assert.equal(queries.shiftFacts.includes("t.transaction_type = 'surcharge'"), false);
-  assert.equal(queries.shiftFacts.includes('j.piecework AS piecework'), true);
+  assert.equal(queries.shiftFacts.includes('ao.pieceworks AS piecework'), true);
+  assert.equal(queries.shiftFacts.includes('j.piecework'), false);
   assert.equal(queries.shiftFacts.includes('nullIf(toFloat64OrNull'), true);
   assert.equal(queries.shiftFacts.includes("contract_type = 'saas'"), true);
   assert.equal(queries.shiftFacts.includes('AS is_successful_confirmed_shift'), true);

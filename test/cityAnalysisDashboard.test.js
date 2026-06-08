@@ -1094,6 +1094,7 @@ test('city giger details uses job-bound history and successful confirmed helper'
   assert.equal(bookedCall.query.includes('INNER JOIN filtered_orders AS fo ON job.source = fo.order_id'), true);
   assert.equal(bookedCall.query.includes('INNER JOIN filtered_orders AS fo ON history.source = fo.order_id'), false);
   assert.match(completedCall.query, /FROM mg_jobs AS job\s+INNER JOIN filtered_orders AS fo ON job\.source = fo\.order_id/);
-  assert.equal(completedCall.query.includes('piecework'), true);
+  assert.equal(completedCall.query.includes('toString(fo.pieceworks)'), true);
+  assert.equal(completedCall.query.includes('job.piecework'), false);
   assert.equal(completedCall.query.includes('is_successful_confirmed_shift = 1'), true);
 });

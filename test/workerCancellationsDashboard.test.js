@@ -678,7 +678,8 @@ test('loadWorkerCancellationsDashboardSection constrains cancellation metrics to
     assert.equal(call.query.includes("ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
   }
 
-  assert.equal(workersCall.query.includes('toString(j.piecework)'), true);
+  assert.equal(workersCall.query.includes('toString(o.pieceworks)'), true);
+  assert.equal(workersCall.query.includes('j.piecework'), false);
 });
 
 test('loadWorkerCancellationsDashboardSection filters search and numeric ranges before pagination', async () => {

@@ -46,6 +46,7 @@ function actualOrdersCte({ includeDateFilter = false } = {}) {
     o.workplace AS workplace,
     ifNull(o.amount, 0) AS amount,
     ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
+    o.pieceworks AS pieceworks,
     ifNull(o.contract_type, '') AS order_contract_type,
     ifNull(ct.contract_type, '') AS contractor_contract_type,
     ifNull(ct.comission, 0) AS commission_percent
@@ -83,7 +84,7 @@ shift_facts AS (
     j.payment_per_job AS payment_per_job,
     j.hours AS hours,
     j.payment AS payment,
-    j.piecework AS piecework,
+    ao.pieceworks AS piecework,
     j.start_fact AS start_fact,
     j.finish_fact AS finish_fact,
     ao.order_contract_type AS order_contract_type,
@@ -152,7 +153,7 @@ shift_enriched AS (
     if(${positiveOrZeroNumberExpression('sf', 'payment_per_job')} > 0, ${positiveOrZeroNumberExpression('sf', 'payment_per_job')}, ${positiveOrZeroNumberExpression('sf', 'payment_per_hour')} * ${positiveOrZeroNumberExpression('sf', 'hours')}) AS customer_shift_amount,
     ifNull(jt.transaction_amount, 0) AS transaction_amount,
     ${nullablePositiveNumberExpression('sf', 'salary_per_hour')} AS worker_rate_hour,
-    ${successfulConfirmedShiftFlagExpression('sf')} AS is_successful_confirmed_shift
+    ${successfulConfirmedShiftFlagExpression('sf', { pieceworkExpression: 'sf.piecework' })} AS is_successful_confirmed_shift
   FROM shift_facts AS sf
   LEFT JOIN first_history AS fh ON sf.job = fh.job
   LEFT JOIN job_transactions AS jt ON sf.job = jt.job

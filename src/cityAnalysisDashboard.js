@@ -834,6 +834,7 @@ function filteredOrdersCte(whereSql, name = 'filtered_orders') {
       ifNull(o.amount, 0) AS amount,
       ifNull(o.salary_per_hour, 0) AS salary_per_hour,
       ifNull(c.title, '') AS brand,
+      o.pieceworks AS pieceworks,
       if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession,
       w.location__coordinates AS workplace_coordinates,
       ifNull(o.deleted, 0) = 0 AS is_active_request
@@ -890,7 +891,7 @@ function completedUsersCte() {
     FROM (
       SELECT
         job.worker AS worker,
-        ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+        ${successfulConfirmedShiftFlagExpression('job', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift
       FROM mg_jobs AS job
       INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
       WHERE ifNull(job.deleted, 0) = 0
@@ -1118,7 +1119,7 @@ function dynamicsQuery(whereSql) {
       SELECT
         fo.period AS period,
         job.worker AS worker,
-        ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+        ${successfulConfirmedShiftFlagExpression('job', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift
       FROM mg_jobs AS job
       INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
       WHERE ifNull(job.deleted, 0) = 0
@@ -1265,7 +1266,7 @@ function cityGigerCompletedUsersCte(input) {
       SELECT
         fo.period AS period,
         job.worker AS worker,
-        ${successfulConfirmedShiftFlagExpression('job')} AS is_successful_confirmed_shift
+        ${successfulConfirmedShiftFlagExpression('job', { pieceworkExpression: 'fo.pieceworks' })} AS is_successful_confirmed_shift
       FROM mg_jobs AS job
       INNER JOIN filtered_orders AS fo ON job.source = fo.order_id
       WHERE ifNull(job.deleted, 0) = 0

@@ -2777,6 +2777,14 @@ function layout({
       background: linear-gradient(90deg, #b42318, #d8a100, #16803a);
     }
 
+    .heatmap-gradient-workers {
+      background: linear-gradient(90deg, #38bdf8, #0ea5e9, #facc15, #f97316, #dc2626);
+    }
+
+    .worker-concentration-canvas {
+      mix-blend-mode: multiply;
+    }
+
     .heatmap-legend-labels {
       display: flex;
       justify-content: space-between;
@@ -8665,6 +8673,19 @@ function renderHeatmapActivePeriod(filters) {
     </div>`;
 }
 
+function renderHeatmapWorkerConcentrationLayer(filters) {
+  const checked = String((filters && filters.workerConcentrationLayer) || 'off') === 'on'
+    ? ' checked'
+    : '';
+
+  return `<div class="field">
+      <label>Слои карты</label>
+      <div class="heatmap-mode-group">
+        <label class="heatmap-mode-option"><input type="checkbox" name="workerConcentrationLayer" value="on"${checked}>Концентрация исполнителей</label>
+      </div>
+    </div>`;
+}
+
 function addHeatmapQueryParam(params, key, value) {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -8692,6 +8713,7 @@ function heatmapSectionUrl(filters, section) {
   addHeatmapQueryParam(params, 'addressSearch', filters.addressSearch);
   addHeatmapQueryParam(params, 'activeBaseMode', filters.activeBaseMode);
   addHeatmapQueryParam(params, 'activeBasePeriod', filters.activeBasePeriod);
+  addHeatmapQueryParam(params, 'workerConcentrationLayer', filters.workerConcentrationLayer);
 
   return `/dashboards/heatmap/section?${params.toString()}`;
 }
@@ -8768,6 +8790,25 @@ function heatmapMapPoints(points, filters) {
     }));
 }
 
+function heatmapWorkerConcentrationRows(rows) {
+  return safeRows(rows)
+    .map((row) => ({
+      lat: Number(row.lat),
+      lon: Number(row.lon),
+      activeUsers: Number(row.activeUsers) || 0,
+      intensity: Math.max(0, Math.min(1, Number(row.intensity) || 0))
+    }))
+    .filter((row) => (
+      Number.isFinite(row.lat) &&
+      Number.isFinite(row.lon) &&
+      row.lat >= -90 &&
+      row.lat <= 90 &&
+      row.lon >= -180 &&
+      row.lon <= 180 &&
+      row.activeUsers > 0
+    ));
+}
+
 function renderHeatmapLeafletAssets() {
   return `<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>`;
@@ -8808,6 +8849,71 @@ function renderHeatmapLeafletScript() {
       detailLink;
   }
 
+  function workerConcentrationColor(intensity, alpha) {
+    var value = Math.max(0, Math.min(1, Number(intensity) || 0));
+
+    if (value >= 0.82) {
+      return 'rgba(220, 38, 38, ' + alpha + ')';
+    }
+
+    if (value >= 0.58) {
+      return 'rgba(249, 115, 22, ' + alpha + ')';
+    }
+
+    if (value >= 0.34) {
+      return 'rgba(250, 204, 21, ' + alpha + ')';
+    }
+
+    if (value >= 0.16) {
+      return 'rgba(14, 165, 233, ' + alpha + ')';
+    }
+
+    return 'rgba(56, 189, 248, ' + alpha + ')';
+  }
+
+  function drawWorkerConcentrationLayer(map, root, concentration) {
+    if (!concentration.length) {
+      return;
+    }
+
+    var pane = map.getPanes().overlayPane;
+    var canvas = L.DomUtil.create('canvas', 'worker-concentration-canvas', pane);
+    var context = canvas.getContext('2d');
+
+    canvas.style.pointerEvents = 'none';
+    canvas.style.opacity = '0.72';
+
+    function redraw() {
+      var size = map.getSize();
+      var topLeft = map.containerPointToLayerPoint([0, 0]);
+
+      L.DomUtil.setPosition(canvas, topLeft);
+      canvas.width = size.x;
+      canvas.height = size.y;
+      context.clearRect(0, 0, size.x, size.y);
+      context.globalCompositeOperation = 'source-over';
+
+      concentration.forEach(function (cell) {
+        var point = map.latLngToContainerPoint([cell.lat, cell.lon]);
+        var intensity = Math.max(0.08, Math.min(1, Number(cell.intensity) || 0));
+        var radius = Math.max(36, Math.min(130, 34 + intensity * 96));
+        var gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+
+        gradient.addColorStop(0, workerConcentrationColor(intensity, 0.62));
+        gradient.addColorStop(0.46, workerConcentrationColor(intensity, 0.28));
+        gradient.addColorStop(1, workerConcentrationColor(intensity, 0));
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        context.fill();
+      });
+    }
+
+    map.on('move zoom resize zoomend moveend', redraw);
+    root.dataset.workerConcentrationLayer = 'on';
+    redraw();
+  }
+
   window.initHeatmapLeafletMaps = function initHeatmapLeafletMaps() {
     if (!window.L) {
       window.setTimeout(window.initHeatmapLeafletMaps, 80);
@@ -8820,11 +8926,18 @@ function renderHeatmapLeafletScript() {
       }
 
       var points = [];
+      var workerConcentration = [];
 
       try {
         points = JSON.parse(root.getAttribute('data-heatmap-points') || '[]');
       } catch (error) {
         points = [];
+      }
+
+      try {
+        workerConcentration = JSON.parse(root.getAttribute('data-worker-concentration') || '[]');
+      } catch (error) {
+        workerConcentration = [];
       }
 
       root.dataset.initialized = 'true';
@@ -8839,12 +8952,16 @@ function renderHeatmapLeafletScript() {
         attribution: tileAttribution
       }).addTo(map);
 
-      if (points.length === 0) {
+      if (points.length === 0 && workerConcentration.length === 0) {
         map.setView([55.751244, 37.618423], 5);
         return;
       }
 
       var bounds = [];
+
+      workerConcentration.forEach(function (cell) {
+        bounds.push([cell.lat, cell.lon]);
+      });
 
       points.forEach(function (point) {
         var marker = L.circleMarker([point.lat, point.lon], {
@@ -8863,6 +8980,8 @@ function renderHeatmapLeafletScript() {
         padding: [28, 28],
         maxZoom: 12
       });
+
+      drawWorkerConcentrationLayer(map, root, workerConcentration);
     });
   };
 
@@ -8875,11 +8994,28 @@ function renderHeatmapLeafletScript() {
 </script>`;
 }
 
-function renderHeatmapMap(points, filters) {
+function renderHeatmapMap(points, filters, currentUser) {
   const rows = safeRows(points);
   const mapPoints = heatmapMapPoints(rows, filters || {});
+  const workerConcentration = heatmapWorkerConcentrationRows(
+    filters && filters.workerConcentrationLayer === 'on'
+      ? (filters.workerConcentration || [])
+      : []
+  );
+  const workerLegend = workerConcentration.length > 0
+    ? renderMetricInfoScope({
+      className: 'heatmap-legend',
+      metricId: 'heatmap.map.worker-concentration',
+      currentUser,
+      content: `<div class="heatmap-gradient heatmap-gradient-workers"></div>
+    <div class="heatmap-legend-labels">
+      <span>Ниже концентрация исполнителей</span>
+      <span>Выше концентрация исполнителей</span>
+    </div>`
+    })
+    : '';
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && workerConcentration.length === 0) {
     return `<div class="country-heatmap-panel">
   <p class="empty">Нет точек заказа с координатами за выбранный период.</p>
 </div>`;
@@ -8888,7 +9024,7 @@ function renderHeatmapMap(points, filters) {
   return `<div class="country-heatmap-panel">
   <h2>Карта баланса по точкам заказа</h2>
   <div class="country-heatmap-map-wrap">
-    <div class="country-heatmap-map" data-heatmap-leaflet-map data-heatmap-points="${escapeHtml(JSON.stringify(mapPoints))}" role="img" aria-label="Реалистичная карта баланса активной базы и заказа"></div>
+    <div class="country-heatmap-map" data-heatmap-leaflet-map data-heatmap-points="${escapeHtml(JSON.stringify(mapPoints))}" data-worker-concentration="${escapeHtml(JSON.stringify(workerConcentration))}" role="img" aria-label="Реалистичная карта баланса активной базы и заказа"></div>
   </div>
   <div class="heatmap-legend" aria-hidden="true">
     <div class="heatmap-gradient"></div>
@@ -8897,6 +9033,7 @@ function renderHeatmapMap(points, filters) {
       <span>Больше базы к заказу</span>
     </div>
   </div>
+  ${workerLegend}
 </div>`;
 }
 
@@ -8909,7 +9046,10 @@ function renderHeatmapDashboardSection({ dashboard, section, currentUser }) {
   ${renderHeatmapLeafletAssets()}
   ${renderMetricPanelHead('Карта баланса по точкам заказа', 'heatmap.map', currentUser)}
   ${renderHeatmapKpis(dashboard.summary, currentUser)}
-  ${renderHeatmapMap(dashboard.points, dashboard.filters)}
+  ${renderHeatmapMap(dashboard.points, {
+    ...(dashboard.filters || {}),
+    workerConcentration: dashboard.workerConcentration || []
+  }, currentUser)}
   ${renderHeatmapLeafletScript()}
 </section>`;
 }
@@ -8965,6 +9105,7 @@ function renderHeatmapDashboard({
     })}
     ${renderHeatmapActiveMode(filters)}
     ${renderHeatmapActivePeriod(filters)}
+    ${renderHeatmapWorkerConcentrationLayer(filters)}
     <button type="submit">Применить</button>
   </form>
 </section>

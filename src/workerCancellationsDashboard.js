@@ -518,7 +518,7 @@ function workerCancellationMetricsCtes() {
       j.worker AS worker_id,
       j.start AS start,
       ifNull(j.status, '') AS status,
-      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift
+      ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
     ${workerShiftActualOrderJoinsSql()}
     WHERE j.start >= {from:DateTime}
@@ -675,7 +675,7 @@ function workerCancellationDetailsQuery(metric) {
       j.worker AS worker_id,
       j.start AS start,
       ifNull(j.status, '') AS status,
-      ${successfulConfirmedShiftFlagExpression('j')} AS is_successful_confirmed_shift,
+      ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift,
       ifNull(o.client, '') AS client_id,
       ifNull(o.workplace, '') AS workplace_id
     FROM mg_jobs AS j

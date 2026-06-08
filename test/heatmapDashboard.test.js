@@ -407,8 +407,10 @@ test('loadHeatmapDashboardSection loads worker concentration only when layer is 
   assert.match(concentrationCall.query, /mg_users AS u/);
   assert.match(concentrationCall.query, /round\(worker_coordinates\[1\], 2\)/);
   assert.match(concentrationCall.query, /density_per_km2/);
+  assert.match(concentrationCall.query, /min\(density_per_km2\) AS min_density_per_km2/);
   assert.match(concentrationCall.query, /quantileExact\(0\.95\)\(density_per_km2\)/);
-  assert.match(concentrationCall.query, /least\(1\.0, density_per_km2 \/ p95_density_per_km2\) AS intensity/);
+  assert.match(concentrationCall.query, /\(density_per_km2 - min_density_per_km2\) \/ \(p95_density_per_km2 - min_density_per_km2\)/);
+  assert.match(concentrationCall.query, /AS intensity/);
   assert.doesNotMatch(concentrationCall.query, /active_users \/ max_active_users/);
   assert.match(concentrationCall.query, /status IN \('ready', 'booked', 'worked'\)/);
 });

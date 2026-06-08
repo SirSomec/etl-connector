@@ -1539,7 +1539,9 @@ concentration_cells AS (
   FROM concentration_raw
 ),
 density_scale AS (
-  SELECT greatest(ifNull(quantileExact(0.95)(density_per_km2), 0), 0.000001) AS p95_density_per_km2
+  SELECT
+    min(density_per_km2) AS min_density_per_km2,
+    greatest(ifNull(quantileExact(0.95)(density_per_km2), 0), 0.000001) AS p95_density_per_km2
   FROM concentration_cells
 )
 SELECT
@@ -1547,7 +1549,11 @@ SELECT
   lat,
   active_users,
   density_per_km2,
-  least(1.0, density_per_km2 / p95_density_per_km2) AS intensity
+  if(
+    p95_density_per_km2 > min_density_per_km2,
+    least(1.0, greatest(0.0, (density_per_km2 - min_density_per_km2) / (p95_density_per_km2 - min_density_per_km2))),
+    if(density_per_km2 > 0, 1.0, 0.0)
+  ) AS intensity
 FROM concentration_cells
 CROSS JOIN density_scale
 ORDER BY density_per_km2 DESC, active_users DESC, lat DESC, lon ASC

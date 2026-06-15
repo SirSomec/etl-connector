@@ -756,13 +756,7 @@ function paramsAndWhere(filters) {
 function cityOptionsQuery() {
   return `SELECT
     ifNull(w.address__city, '') AS city
-  FROM mg_orders AS o
-  LEFT JOIN mg_workplaces AS w ON o.workplace = w._id
-  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
-  WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
-    AND o.start >= {from:DateTime}
-    AND o.start < {to:DateTime}
-    AND ifNull(o.amount, 0) > 0
+  FROM mg_workplaces AS w
   GROUP BY city
   HAVING city != ''
   ORDER BY city
@@ -1521,7 +1515,7 @@ async function loadCityOptionRows(client, filters, cache) {
   return readThroughValidatedCache(
     cache,
     cacheKeyForFilters('city-options', filters),
-    () => client.queryJSONEachRow(cityOptionsQuery(), periodParams(filters), 'city analysis city options'),
+    () => client.queryJSONEachRow(cityOptionsQuery(), {}, 'city analysis city options'),
     isValidCityOptionRows
   );
 }
@@ -1663,7 +1657,7 @@ async function loadCityAnalysisDashboard(client, input = {}, now = new Date()) {
   const filters = normalizeCityAnalysisFilters(input, now);
   const cityOptionRows = await client.queryJSONEachRow(
     cityOptionsQuery(),
-    periodParams(filters),
+    {},
     'city analysis city options'
   );
 

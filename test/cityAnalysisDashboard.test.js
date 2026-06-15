@@ -409,8 +409,8 @@ test('loadCityAnalysisDashboard returns city options and skips heavy queries wit
   assert.equal(dashboard.context.hasCity, false);
   assert.deepEqual(dashboard.filterOptions.city, ['Москва', 'Казань']);
   assert.deepEqual(calls.map((call) => call.operation), ['city analysis city options']);
-  assert.equal(calls[0].params.param_from, '2026-06-01 00:00:00');
-  assert.equal(calls[0].params.param_to, '2026-06-16 00:00:00');
+  assert.equal(calls[0].query.includes('FROM mg_workplaces AS w'), true);
+  assert.equal(calls[0].query.includes('FROM mg_orders AS o'), false);
 });
 
 test('loadCityAnalysisDashboardShell keeps selected city page light', async () => {
@@ -1042,6 +1042,9 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
   for (const call of calls) {
     assert.equal(call.query.includes(maliciousCity), false);
     assert.equal(call.query.includes('DROP TABLE'), false);
+  }
+
+  for (const call of calls.filter((item) => item.operation !== 'city analysis city options')) {
     assert.equal(call.params.param_from, '2026-06-01 00:00:00');
     assert.equal(call.params.param_to, '2026-06-04 00:00:00');
   }
@@ -1185,7 +1188,7 @@ test('city analysis SQL uses actual order domain and ties history metrics to job
     new Date('2026-06-15T12:00:00.000Z')
   );
 
-  for (const call of calls) {
+  for (const call of calls.filter((item) => item.operation !== 'city analysis city options')) {
     assert.equal(call.query.includes('FROM mygig_'), false);
     assert.equal(call.query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
     assert.equal(call.query.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
@@ -1193,6 +1196,10 @@ test('city analysis SQL uses actual order domain and ties history metrics to job
     assert.equal(call.query.includes('c.title NOT IN'), true);
     assert.equal(call.query.includes("!= 'processing'"), true);
   }
+
+  const cityOptionsCall = calls.find((call) => call.operation === 'city analysis city options');
+  assert.equal(cityOptionsCall.query.includes('FROM mg_workplaces AS w'), true);
+  assert.equal(cityOptionsCall.query.includes('FROM mg_orders AS o'), false);
 
   const summaryCall = calls.find((call) => call.operation === 'city analysis summary');
   const dynamicsCall = calls.find((call) => call.operation === 'city analysis dynamics');

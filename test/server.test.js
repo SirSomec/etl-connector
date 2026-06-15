@@ -543,7 +543,7 @@ test('GET /dashboards/sales-by-project renders dashboard', async () => {
   assert.equal(client.calls.filter((call) => call[0] === 'queryJSONEachRow').length, 0);
 });
 
-test('GET /dashboards/sales-by-project/section renders cached dashboard fragment', async () => {
+test('GET /dashboards/sales-by-project/section reloads dashboard fragment without cache', async () => {
   const client = createFakeClient();
 
   await withServer(client, async (baseUrl) => {
@@ -565,6 +565,8 @@ test('GET /dashboards/sales-by-project/section renders cached dashboard fragment
   );
 
   assert.deepEqual(salesCalls.map((call) => call[1]), [
+    'sales by project orders summary',
+    'sales by project shifts summary',
     'sales by project orders summary',
     'sales by project shifts summary'
   ]);
@@ -898,7 +900,7 @@ test('GET /dashboards/workplace-analysis/point renders point detail page', async
   }
 });
 
-test('GET /dashboards/workplace-analysis/point/section renders cached point summary fragment', async () => {
+test('GET /dashboards/workplace-analysis/point/section reloads point summary fragment without cache', async () => {
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {
       this.calls.push(['queryJSONEachRow', operation, params, query]);
@@ -944,6 +946,8 @@ test('GET /dashboards/workplace-analysis/point/section renders cached point summ
   );
 
   assert.deepEqual(pointCalls.map((call) => call[1]), [
+    'workplace point summary',
+    'workplace point review summary',
     'workplace point summary',
     'workplace point review summary'
   ]);
@@ -1310,7 +1314,7 @@ test('GET /dashboards/city-analysis renders dashboard with query filters', async
   }
 });
 
-test('GET /dashboards/city-analysis/section renders cached city dashboard fragment', async () => {
+test('GET /dashboards/city-analysis/section reloads city dashboard fragment without cache', async () => {
   const client = createFakeClient();
 
   await withServer(client, async (baseUrl) => {
@@ -1331,7 +1335,10 @@ test('GET /dashboards/city-analysis/section renders cached city dashboard fragme
     (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('city analysis')
   );
 
-  assert.deepEqual(cityCalls.map((call) => call[1]), ['city analysis summary demand']);
+  assert.deepEqual(cityCalls.map((call) => call[1]), [
+    'city analysis summary demand',
+    'city analysis summary demand'
+  ]);
   assert.equal(cityCalls[0][2].param_from, '2026-06-01 00:00:00');
   assert.equal(cityCalls[0][2].param_to, '2026-06-04 00:00:00');
   assert.equal(cityCalls[0][2].param_city, 'РњРѕСЃРєРІР°');
@@ -1407,7 +1414,7 @@ test('GET /dashboards/heatmap renders dashboard with query filters', async () =>
   assert.equal(Object.prototype.hasOwnProperty.call(heatmapCalls[0][2], 'param_clients'), false);
 });
 
-test('GET /dashboards/heatmap/section renders cached heatmap fragment', async () => {
+test('GET /dashboards/heatmap/section reloads heatmap fragment without cache', async () => {
   const client = createFakeClient();
 
   await withServer(client, async (baseUrl) => {
@@ -1431,7 +1438,10 @@ test('GET /dashboards/heatmap/section renders cached heatmap fragment', async ()
     (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('heatmap')
   );
 
-  assert.deepEqual(heatmapCalls.map((call) => call[1]), ['heatmap demand points']);
+  assert.deepEqual(heatmapCalls.map((call) => call[1]), [
+    'heatmap demand points',
+    'heatmap demand points'
+  ]);
   assert.equal(heatmapCalls[0][2].param_clients, "['Brand A']");
   assert.equal(heatmapCalls[0][2].param_excluded_professions, "['Курьер']");
   assert.equal(heatmapCalls[0][2].param_address_search, 'Тверская');
@@ -1505,7 +1515,7 @@ test('GET /dashboards/worker-cancellations renders dashboard shell without heavy
   assert.equal(workerCalls.length, 0);
 });
 
-test('GET /dashboards/worker-cancellations/section renders cached workers fragment', async () => {
+test('GET /dashboards/worker-cancellations/section reloads workers fragment without cache', async () => {
   const client = createFakeClient();
 
   await withServer(client, async (baseUrl) => {
@@ -1529,6 +1539,8 @@ test('GET /dashboards/worker-cancellations/section renders cached workers fragme
   );
 
   assert.deepEqual(workerCalls.map((call) => call[1]), [
+    'worker cancellations total workers',
+    'worker cancellations workers',
     'worker cancellations total workers',
     'worker cancellations workers'
   ]);
@@ -2198,7 +2210,9 @@ test('start uses injectable dependencies and logs the listening port without sec
     assert.equal(createAppArgs.preloadService, fakePreloadService);
     assert.equal(preloadServiceArgs.client, createAppArgs.client);
     assert.equal(preloadServiceArgs.storePath, config.preload.storePath);
-    assert.equal(typeof createAppArgs.cityAnalysisCache.getOrLoad, 'function');
+    assert.equal(createAppArgs.activeGigersCache, null);
+    assert.equal(createAppArgs.cityAnalysisCache, null);
+    assert.equal(createAppArgs.dashboardSectionCache, null);
     assert.equal(logMessages.length, 1);
     assert.match(logMessages[0], new RegExp(`port ${port}`));
     assert.doesNotMatch(logMessages[0], /super-secret/);

@@ -209,6 +209,7 @@ function createWorkplaceDirectoryCache(options = {}) {
     : workplaceDirectoryCachePathFromEnv(options.env);
   const now = options.now || (() => Date.now());
   const ttlMs = options.ttlMs || WORKPLACE_DIRECTORY_CACHE_TTL_MS;
+  const disabled = options.disabled === true;
   let loaded = false;
   let loadPromise = null;
   let refreshPromise = null;
@@ -292,6 +293,10 @@ function createWorkplaceDirectoryCache(options = {}) {
 
   return {
     async refreshIfStale(client) {
+      if (disabled) {
+        return refresh(client);
+      }
+
       await loadFromFile();
 
       if (isFresh()) {
@@ -304,6 +309,12 @@ function createWorkplaceDirectoryCache(options = {}) {
     async suggest(client, query, limit = DEFAULT_SUGGESTION_LIMIT) {
       if (normalizeSearchText(query).length < MIN_SUGGESTION_QUERY_LENGTH) {
         return [];
+      }
+
+      if (disabled) {
+        const entries = await refresh(client);
+
+        return filterWorkplaceDirectorySuggestions(entries, query, limit);
       }
 
       await loadFromFile();
@@ -326,6 +337,13 @@ function createWorkplaceDirectoryCache(options = {}) {
         return null;
       }
 
+      if (disabled) {
+        const entries = await refresh(client);
+        const entry = entries.find((item) => item.workplaceId === id);
+
+        return entry ? publicSuggestion(entry) : null;
+      }
+
       await loadFromFile();
 
       if (!isFresh()) {
@@ -342,6 +360,12 @@ function createWorkplaceDirectoryCache(options = {}) {
     },
 
     scheduleRefresh(client, { intervalMs = WORKPLACE_DIRECTORY_CACHE_TTL_MS } = {}) {
+      if (disabled) {
+        return {
+          stop() {}
+        };
+      }
+
       const run = () => {
         this.refreshIfStale(client).catch(() => {});
       };

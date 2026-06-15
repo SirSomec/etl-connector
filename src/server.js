@@ -8,14 +8,7 @@ const {
 } = require('./auth');
 const { ClickHouseClient } = require('./clickhouseClient');
 const { loadConfig } = require('./config');
-const {
-  createDashboardSectionCache,
-  dashboardSectionCachePathFromEnv
-} = require('./dashboardSectionCache');
-const {
-  createWorkplaceDirectoryCache,
-  workplaceDirectoryCachePathFromEnv
-} = require('./workplaceDirectoryCache');
+const { createWorkplaceDirectoryCache } = require('./workplaceDirectoryCache');
 const { createPreloadService } = require('./preloadService');
 const { buildSalesByProjectPreloadQueries } = require('./preloadSalesByProject');
 const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
@@ -29,8 +22,6 @@ const {
 } = require('./userActivityStore');
 const {
   CITY_ANALYSIS_SECTIONS,
-  cityAnalysisCachePathFromEnv,
-  createCityAnalysisCache,
   loadCityAnalysisGigerDetails,
   loadCityAnalysisDashboardSection,
   loadCityAnalysisDashboardShell
@@ -65,7 +56,6 @@ const {
   loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell
 } = require('./workerCancellationsDashboard');
-const { createWorkplaceActiveGigersCache } = require('./workplaceActiveGigersCache');
 const {
   renderAccountManagement,
   renderDashboardSectionError,
@@ -417,9 +407,9 @@ function createApp({
   config,
   client,
   activeGigersCache = null,
-  cityAnalysisCache = createCityAnalysisCache(),
-  dashboardSectionCache = createDashboardSectionCache(),
-  workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null }),
+  cityAnalysisCache = null,
+  dashboardSectionCache = null,
+  workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null, disabled: true }),
   preloadService = null,
   userStore = null,
   sessionManager = null,
@@ -1927,32 +1917,12 @@ function start(options = {}) {
   } = options;
   const config = loadConfigFn(env);
   const client = new ClientClass(config.clickhouse);
-  const reportCachePersistenceError = (error, context = {}) => {
-    const cacheName = context.cache || 'dashboard';
-    const operation = context.operation || 'persist';
-    const filePath = context.filePath || '';
-    const message = `Cache persistence failed (${cacheName}, ${operation}${filePath ? `, ${filePath}` : ''}): ${sanitizeForResponse(error && error.message, config)}`;
-
-    if (logger && typeof logger.warn === 'function') {
-      logger.warn(message);
-      return;
-    }
-
-    if (logger && typeof logger.log === 'function') {
-      logger.log(message);
-    }
-  };
-  const activeGigersCache = createWorkplaceActiveGigersCache();
-  const cityAnalysisCache = createCityAnalysisCache({
-    filePath: cityAnalysisCachePathFromEnv(env),
-    onPersistenceError: reportCachePersistenceError
-  });
-  const dashboardSectionCache = createDashboardSectionCache({
-    filePath: dashboardSectionCachePathFromEnv(env),
-    onPersistenceError: reportCachePersistenceError
-  });
+  const activeGigersCache = null;
+  const cityAnalysisCache = null;
+  const dashboardSectionCache = null;
   const workplaceDirectoryCache = createWorkplaceDirectoryCache({
-    filePath: workplaceDirectoryCachePathFromEnv(env)
+    filePath: null,
+    disabled: true
   });
   let preloadService = null;
   let activityStore = null;

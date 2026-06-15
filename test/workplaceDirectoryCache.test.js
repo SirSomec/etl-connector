@@ -149,6 +149,63 @@ test('workplace directory cache returns a point by id from persisted entries', a
   assert.equal(calls.length, 1);
 });
 
+test('disabled workplace directory cache loads suggestions and point metadata from source every time', async () => {
+  const calls = [];
+  const cache = createWorkplaceDirectoryCache({
+    filePath: null,
+    disabled: true
+  });
+
+  const first = await cache.suggest(fakeClient(
+    [
+      {
+        workplace_id: 'wp1',
+        workplace_title: 'Северный хаб',
+        technical_name: 'north',
+        client_title: 'Brand A',
+        region: 'Москва',
+        city: 'Москва',
+        street: 'Ленина 10'
+      }
+    ],
+    calls
+  ), 'Ленин', 5);
+  const second = await cache.suggest(fakeClient(
+    [
+      {
+        workplace_id: 'wp2',
+        workplace_title: 'Южный хаб',
+        technical_name: 'south',
+        client_title: 'Brand B',
+        region: 'Москва',
+        city: 'Москва',
+        street: 'Ленина 20'
+      }
+    ],
+    calls
+  ), 'Ленин', 5);
+  const entry = await cache.getById(fakeClient(
+    [
+      {
+        workplace_id: 'wp3',
+        workplace_title: 'Point 3',
+        technical_name: 'point-3',
+        client_title: 'Brand C',
+        region: 'Region',
+        city: 'City',
+        street: 'Street'
+      }
+    ],
+    calls
+  ), 'wp3');
+
+  assert.deepEqual(first.map((row) => row.workplaceId), ['wp1']);
+  assert.deepEqual(second.map((row) => row.workplaceId), ['wp2']);
+  assert.equal(entry.workplaceId, 'wp3');
+  assert.equal(calls.length, 3);
+  assert.equal(cache.scheduleRefresh({}).stop(), undefined);
+});
+
 test('workplaceDirectoryCachePathFromEnv supports env override', () => {
   assert.equal(
     workplaceDirectoryCachePathFromEnv({ WORKPLACE_DIRECTORY_CACHE_PATH: 'C:\\cache\\workplaces.json' }),

@@ -462,6 +462,103 @@ test('loadCityAnalysisDashboardShell keeps selected city page light', async () =
   assert.equal(Object.prototype.hasOwnProperty.call(calls[1].params, 'param_salary_from'), false);
 });
 
+function cityAnalysisTestCacheKey(scope, filters) {
+  return JSON.stringify({
+    board: 'city-analysis',
+    scope,
+    filters: {
+      from: filters.from,
+      to: filters.to,
+      active30dFromDateTime: filters.active30dFromDateTime,
+      active30dToExclusiveDateTime: filters.active30dToExclusiveDateTime,
+      city: filters.city,
+      client: filters.client,
+      profession: filters.profession,
+      orderType: filters.orderType,
+      jobStatus: filters.jobStatus,
+      contractor: filters.contractor,
+      salaryFrom: filters.salaryFrom,
+      salaryTo: filters.salaryTo,
+      includeDeletedOrders: filters.includeDeletedOrders,
+      includeHiddenOrders: filters.includeHiddenOrders
+    }
+  });
+}
+
+test('loadCityAnalysisDashboardShell reloads city options when persisted cache value is malformed', async () => {
+  const now = new Date('2026-06-15T12:00:00.000Z');
+  const filters = normalizeCityAnalysisFilters({}, now);
+  const cache = createCityAnalysisCache({ now: () => Date.parse('2026-06-15T10:00:00.000Z') });
+
+  await cache.getOrLoad(cityAnalysisTestCacheKey('city-options', filters), async () => ({
+    city: 'stale object instead of rows'
+  }));
+
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'city analysis city options') {
+        return [{ city: 'РњРѕСЃРєРІР°' }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadCityAnalysisDashboardShell(client, {}, now, { cache });
+
+  assert.deepEqual(dashboard.filterOptions.city, ['РњРѕСЃРєРІР°']);
+  assert.deepEqual(calls.map((call) => call.operation), ['city analysis city options']);
+});
+
+test('loadCityAnalysisDashboardShell reloads filter options when persisted cache value is malformed', async () => {
+  const now = new Date('2026-06-15T12:00:00.000Z');
+  const input = { city: 'РњРѕСЃРєРІР°' };
+  const filters = normalizeCityAnalysisFilters(input, now);
+  const optionFilters = {
+    ...filters,
+    client: [],
+    profession: [],
+    orderType: [],
+    jobStatus: [],
+    contractor: [],
+    salaryFrom: null,
+    salaryTo: null,
+    includeDeletedOrders: false,
+    includeHiddenOrders: false
+  };
+  const cache = createCityAnalysisCache({ now: () => Date.parse('2026-06-15T10:00:00.000Z') });
+
+  await cache.getOrLoad(cityAnalysisTestCacheKey('city-options', filters), async () => [
+    { city: 'РњРѕСЃРєРІР°' }
+  ]);
+  await cache.getOrLoad(cityAnalysisTestCacheKey('filter-options', optionFilters), async () => ({
+    filter: 'client',
+    value: 'stale object instead of rows'
+  }));
+
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'city analysis filter options') {
+        return [{ filter: 'client', value: 'Brand A' }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadCityAnalysisDashboardShell(client, input, now, { cache });
+
+  assert.deepEqual(dashboard.filterOptions.city, ['РњРѕСЃРєРІР°']);
+  assert.deepEqual(dashboard.filterOptions.client, ['Brand A']);
+  assert.deepEqual(calls.map((call) => call.operation), ['city analysis filter options']);
+});
+
 test('loadCityAnalysisDashboardSection keeps cached fragments until the end of the UTC day', async () => {
   let timestamp = Date.parse('2026-06-15T10:00:00.000Z');
   const cache = createCityAnalysisCache({ now: () => timestamp });

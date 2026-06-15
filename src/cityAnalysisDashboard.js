@@ -251,6 +251,20 @@ function filterOptionsFromRows(rows) {
   return options;
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isValidCityOptionRows(value) {
+  return Array.isArray(value) && value.every((row) => isPlainObject(row) && typeof row.city === 'string');
+}
+
+function isValidFilterOptionRows(value) {
+  return Array.isArray(value) && value.every((row) =>
+    isPlainObject(row) && typeof row.filter === 'string' && typeof row.value === 'string'
+  );
+}
+
 function compositionRows(rows) {
   const total = rows.reduce((sum, row) => sum + numberValue(row.ordered_shifts), 0);
 
@@ -532,6 +546,17 @@ function createCityAnalysisCache({
       entries.clear();
       fileLoaded = false;
       fileLoadPromise = null;
+    },
+    async invalidate(key) {
+      await loadFileEntries();
+
+      const deleted = entries.delete(key);
+
+      if (deleted) {
+        await persistEntries();
+      }
+
+      return deleted;
     }
   };
 }
@@ -542,6 +567,25 @@ async function readThroughCache(cache, key, loader) {
   }
 
   return cache.getOrLoad(key, loader);
+}
+
+async function readThroughValidatedCache(cache, key, loader, isValidValue) {
+  if (!cache || typeof cache.getOrLoad !== 'function') {
+    return loader();
+  }
+
+  const value = await cache.getOrLoad(key, loader);
+
+  if (isValidValue(value)) {
+    return value;
+  }
+
+  if (typeof cache.invalidate === 'function') {
+    await cache.invalidate(key);
+    return cache.getOrLoad(key, loader);
+  }
+
+  return loader();
 }
 
 function cacheKeyForFilters(scope, filters) {
@@ -1426,8 +1470,11 @@ function filterOptionsBaseFilters(filters) {
 }
 
 async function loadCityOptionRows(client, filters, cache) {
-  return readThroughCache(cache, cacheKeyForFilters('city-options', filters), () =>
-    client.queryJSONEachRow(cityOptionsQuery(), periodParams(filters), 'city analysis city options')
+  return readThroughValidatedCache(
+    cache,
+    cacheKeyForFilters('city-options', filters),
+    () => client.queryJSONEachRow(cityOptionsQuery(), periodParams(filters), 'city analysis city options'),
+    isValidCityOptionRows
   );
 }
 
@@ -1435,8 +1482,11 @@ async function loadFilterOptionRows(client, filters, cache) {
   const optionFilters = filterOptionsBaseFilters(filters);
   const { params, whereSql } = paramsAndWhere(optionFilters);
 
-  return readThroughCache(cache, cacheKeyForFilters('filter-options', optionFilters), () =>
-    client.queryJSONEachRow(filterOptionsQuery(whereSql), params, 'city analysis filter options')
+  return readThroughValidatedCache(
+    cache,
+    cacheKeyForFilters('filter-options', optionFilters),
+    () => client.queryJSONEachRow(filterOptionsQuery(whereSql), params, 'city analysis filter options'),
+    isValidFilterOptionRows
   );
 }
 

@@ -542,10 +542,12 @@ function createCityAnalysisCache({
 
       return promise;
     },
-    clear() {
+    async clear() {
       entries.clear();
       fileLoaded = false;
       fileLoadPromise = null;
+
+      await persistEntries();
     },
     async invalidate(key) {
       await loadFileEntries();

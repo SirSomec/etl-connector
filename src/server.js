@@ -213,6 +213,10 @@ function preloadMessage(code) {
     'already-running': 'Обновление уже выполняется'
   };
 
+  if (String(code || '') === 'city-cache-cleared') {
+    return 'Кеш анализа городов удален';
+  }
+
   return messages[String(code || '')] || '';
 }
 
@@ -1264,6 +1268,23 @@ function createApp({
 
       recordCurrentUserActivity(req, 'admin_action');
       res.redirect(303, `/admin/preload?message=${message}`);
+    })
+  );
+
+  app.post(
+    '/admin/preload/cache/city-analysis/clear',
+    requireAuth('preload-admin'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'preload-admin')) {
+        return;
+      }
+
+      if (cityAnalysisCache && typeof cityAnalysisCache.clear === 'function') {
+        await cityAnalysisCache.clear();
+      }
+
+      recordCurrentUserActivity(req, 'admin_action');
+      res.redirect(303, '/admin/preload?message=city-cache-cleared');
     })
   );
 

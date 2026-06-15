@@ -149,6 +149,8 @@ test('renderPreloadManagement renders schedule, manual run, and history', () => 
   assert.match(html, /Предзагрузка витрин/);
   assert.match(html, /action="\/admin\/preload\/run"/);
   assert.match(html, /action="\/admin\/preload\/schedule"/);
+  assert.match(html, /action="\/admin\/preload\/cache\/city-analysis\/clear"/);
+  assert.match(html, /Удалить кеш анализа городов/);
   assert.match(html, /name="csrfToken" value="csrf-token"/);
   assert.match(html, /value="03:00"/);
   assert.match(html, /value="45"/);

@@ -1881,6 +1881,12 @@ test('GET /admin/diagnostics returns build, ClickHouse and preload diagnostics',
 test('preload admin routes render, save schedule, and run manual refresh', async () => {
   const client = createFakeClient();
   const preloadService = createFakePreloadService();
+  const cityAnalysisCache = {
+    calls: [],
+    clear() {
+      this.calls.push(['clear']);
+    }
+  };
 
   await withServer(
     client,
@@ -1929,11 +1935,29 @@ test('preload admin routes render, save schedule, and run manual refresh', async
 
       assert.equal(run.response.status, 303);
       assert.equal(run.response.headers.get('location'), '/admin/preload?message=run-started');
+
+      const clearCache = await fetchText(baseUrl, '/admin/preload/cache/city-analysis/clear', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({})
+      });
+
+      assert.equal(clearCache.response.status, 303);
+      assert.equal(clearCache.response.headers.get('location'), '/admin/preload?message=city-cache-cleared');
+
+      const clearedMessagePage = await fetchText(baseUrl, '/admin/preload?message=city-cache-cleared');
+
+      assert.equal(clearedMessagePage.response.status, 200);
+      assert.match(clearedMessagePage.text, /Кеш анализа городов удален/);
     },
     baseConfig(),
-    { preloadService }
+    { preloadService, cityAnalysisCache }
   );
 
+  assert.deepEqual(cityAnalysisCache.calls, [['clear']]);
   assert.deepEqual(preloadService.calls, [
     ['getJob'],
     ['getOverview'],
@@ -1957,7 +1981,11 @@ test('preload admin routes render, save schedule, and run manual refresh', async
         fromDate: '2026-05-01',
         toDate: '2026-06-01'
       }
-    ]
+    ],
+    ['getJob'],
+    ['getOverview'],
+    ['getDiagnostics'],
+    ['listRuns']
   ]);
 });
 

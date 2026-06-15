@@ -4308,6 +4308,14 @@ function renderPreloadManagement({
   </form>
 </section>
 <section class="section">
+  <h2>Кеши дашбордов</h2>
+  <p class="technical-note">Удаляет файловый и in-memory кеш дашборда Анализ городов. SQLite-витрина, пользователи и журнал активности не затрагиваются.</p>
+  <form class="filter-bar" action="/admin/preload/cache/city-analysis/clear" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <button class="danger-button" type="submit">Удалить кеш анализа городов</button>
+  </form>
+</section>
+<section class="section">
   <h2>Расписание</h2>
   <form class="filter-bar" action="/admin/preload/schedule" method="post">
     ${renderHiddenCsrf(csrfToken)}

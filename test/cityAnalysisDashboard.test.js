@@ -731,6 +731,35 @@ test('city analysis cache can prune expired persisted entries without loading a 
   }
 });
 
+test('city analysis cache clear removes persisted entries', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'city-analysis-cache-'));
+  const filePath = path.join(tempDir, 'cache.json');
+  let loads = 0;
+
+  try {
+    const firstCache = createCityAnalysisCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z')
+    });
+
+    await firstCache.getOrLoad('city-options', async () => [{ city: 'РњРѕСЃРєРІР°', load: ++loads }]);
+    await firstCache.clear();
+
+    const secondCache = createCityAnalysisCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T11:00:00.000Z')
+    });
+    const rows = await secondCache.getOrLoad('city-options', async () => [{ city: 'РљР°Р·Р°РЅСЊ', load: ++loads }]);
+    const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+    assert.deepEqual(rows, [{ city: 'РљР°Р·Р°РЅСЊ', load: 2 }]);
+    assert.equal(loads, 2);
+    assert.equal(Object.keys(data.entries).length, 1);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('loadCityAnalysisDashboardSection keeps geo base summary separate from app sessions', async () => {
   const calls = [];
   const client = {

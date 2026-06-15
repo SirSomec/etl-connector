@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const { writeFileAtomically } = require('./atomicFile');
 
-const DASHBOARD_SECTION_CACHE_VERSION = 1;
+const DASHBOARD_SECTION_CACHE_VERSION = 2;
 const DEFAULT_DASHBOARD_SECTION_CACHE_PATH = path.join(
   process.cwd(),
   'data',

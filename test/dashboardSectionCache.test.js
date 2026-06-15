@@ -56,6 +56,43 @@ test('dashboard section cache persists fresh values across cache recreation', as
   }
 });
 
+test('dashboard section cache ignores persisted entries from older cache versions', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-section-cache-'));
+  const filePath = path.join(tempDir, 'cache.json');
+  let loads = 0;
+
+  try {
+    await fs.writeFile(
+      filePath,
+      `${JSON.stringify({
+        version: 1,
+        entries: {
+          stale: {
+            value: { value: 'stale' },
+            expiresAt: '2026-06-16T00:00:00.000Z'
+          }
+        }
+      })}\n`,
+      'utf8'
+    );
+
+    const cache = createDashboardSectionCache({
+      filePath,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z')
+    });
+
+    const restored = await cache.getOrLoad('stale', async () => ({ value: ++loads }));
+    const data = JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+    assert.deepEqual(restored, { value: 1 });
+    assert.equal(loads, 1);
+    assert.equal(data.version, 2);
+    assert.deepEqual(data.entries.stale.value, { value: 1 });
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('dashboard section cache prunes expired persisted entries after UTC midnight', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-section-cache-'));
   const filePath = path.join(tempDir, 'cache.json');

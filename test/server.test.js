@@ -328,6 +328,24 @@ function createFakePreloadService(overrides = {}) {
         lastError: ''
       };
     },
+    getDiagnostics() {
+      calls.push(['getDiagnostics']);
+      return {
+        salesByProject: {
+          coverage: {
+            minDate: '2026-05-01',
+            maxDate: '2026-06-03',
+            days: 3
+          },
+          tables: {
+            dailyRows: 7,
+            orderFacts: 11,
+            shiftFacts: 13
+          },
+          lastRuns: []
+        }
+      };
+    },
     getJob() {
       calls.push(['getJob']);
       return {
@@ -1798,6 +1816,68 @@ test('GET /healthz returns ok as plain text', async () => {
   assert.deepEqual(client.calls, []);
 });
 
+test('HTML responses disable intermediary caching', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response } = await fetchText(baseUrl, '/dashboards/city-analysis');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('pragma'), 'no-cache');
+    assert.equal(response.headers.get('expires'), '0');
+  });
+});
+
+test('GET /admin/diagnostics returns build, ClickHouse and preload diagnostics', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+
+      if (operation === 'diagnostics city options') {
+        return [{ city_count: 2 }];
+      }
+
+      if (operation === 'diagnostics sales preload order facts') {
+        return [{ rows: 11 }];
+      }
+
+      if (operation === 'diagnostics sales preload shift facts') {
+        return [{ rows: 13 }];
+      }
+
+      return [];
+    }
+  });
+  const preloadService = createFakePreloadService();
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const { response, text } = await fetchText(baseUrl, '/admin/diagnostics');
+      const body = JSON.parse(text);
+
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /^application\/json\b/);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(body.app.version, 'test-build');
+      assert.equal(body.clickhouse.database, 'etl');
+      assert.equal(body.clickhouse.cityOptionsCurrentMonth, 2);
+      assert.equal(body.clickhouse.salesPreloadCurrentMonth.orderFacts, 11);
+      assert.equal(body.clickhouse.salesPreloadCurrentMonth.shiftFacts, 13);
+      assert.equal(body.preload.salesByProject.tables.orderFacts, 11);
+    },
+    {
+      ...baseConfig(),
+      app: {
+        version: 'test-build',
+        startedAt: '2026-06-15T10:00:00.000Z'
+      }
+    },
+    { preloadService, now: () => new Date('2026-06-15T12:00:00.000Z') }
+  );
+});
+
 test('preload admin routes render, save schedule, and run manual refresh', async () => {
   const client = createFakeClient();
   const preloadService = createFakePreloadService();
@@ -1808,6 +1888,10 @@ test('preload admin routes render, save schedule, and run manual refresh', async
       const page = await fetchText(baseUrl, '/admin/preload');
 
       assert.equal(page.response.status, 200);
+      assert.match(page.text, /Order facts/);
+      assert.match(page.text, /11/);
+      assert.match(page.text, /Shift facts/);
+      assert.match(page.text, /13/);
       assert.match(page.text, /Предзагрузка витрин/);
 
       const messagePage = await fetchText(baseUrl, '/admin/preload?message=run-started');
@@ -1853,9 +1937,11 @@ test('preload admin routes render, save schedule, and run manual refresh', async
   assert.deepEqual(preloadService.calls, [
     ['getJob'],
     ['getOverview'],
+    ['getDiagnostics'],
     ['listRuns'],
     ['getJob'],
     ['getOverview'],
+    ['getDiagnostics'],
     ['listRuns'],
     [
       'saveSchedule',

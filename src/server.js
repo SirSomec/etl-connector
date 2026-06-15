@@ -17,7 +17,12 @@ const {
   workplaceDirectoryCachePathFromEnv
 } = require('./workplaceDirectoryCache');
 const { createPreloadService } = require('./preloadService');
+const { buildSalesByProjectPreloadQueries } = require('./preloadSalesByProject');
 const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
+const {
+  actualOrderDomainCondition,
+  actualOrderJoinsSql
+} = require('./analyticsDomainSql');
 const {
   createUserActivityStore,
   DEFAULT_USER_ACTIVITY_RETENTION_DAYS
@@ -233,6 +238,29 @@ function millisecondsUntilNextUtcDay(value) {
   return Math.max(0, nextUtcDay - current);
 }
 
+function defaultBuildInfo(env = process.env, now = new Date()) {
+  return {
+    version: env.APP_VERSION || env.GIT_SHA || env.COMMIT_SHA || 'unknown',
+    startedAt: now.toISOString()
+  };
+}
+
+function currentMonthRange(now = new Date()) {
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+
+  return {
+    from: formatDateUTC(from),
+    to: formatDateUTC(to),
+    fromDateTime: `${formatDateUTC(from)} 00:00:00`,
+    toDateTime: `${formatDateUTC(to)} 00:00:00`
+  };
+}
+
+function stripJSONEachRow(query) {
+  return String(query || '').replace(/\s*FORMAT JSONEachRow\s*$/i, '');
+}
+
 function scheduleDailyCacheCleanup({
   caches,
   logger = console,
@@ -392,6 +420,7 @@ function createApp({
   userStore = null,
   sessionManager = null,
   activityStore = null,
+  buildInfo = config && config.app ? config.app : defaultBuildInfo(),
   now = () => new Date()
 }) {
   const app = express();
@@ -422,6 +451,12 @@ function createApp({
 
   app.disable('x-powered-by');
   app.use(express.urlencoded({ extended: false }));
+  app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+  });
 
   function sanitizedPath(req) {
     return req.path || '/';
@@ -855,10 +890,66 @@ function createApp({
           error: options.error || '',
           job: preloads.getJob(SALES_PRELOAD_JOB_ID),
           overview: preloads.getOverview(),
+          diagnostics: typeof preloads.getDiagnostics === 'function' ? preloads.getDiagnostics() : null,
           runs: preloads.listRuns(SALES_PRELOAD_JOB_ID, 20),
           ...viewContext(req)
         })
       );
+  }
+
+  async function loadDiagnostics() {
+    const range = currentMonthRange(now());
+    const preloadQueries = buildSalesByProjectPreloadQueries();
+    const params = {
+      param_from: range.fromDateTime,
+      param_to: range.toDateTime
+    };
+    const [cityRows, orderRows, shiftRows] = await Promise.all([
+      client.queryJSONEachRow(
+        [
+          'SELECT uniqExact(ifNull(w.address__city, \'\')) AS city_count',
+          'FROM mg_orders AS o',
+          'LEFT JOIN mg_workplaces AS w ON o.workplace = w._id',
+          actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' }),
+          `WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}`,
+          'AND o.start >= {from:DateTime}',
+          'AND o.start < {to:DateTime}',
+          "AND ifNull(w.address__city, '') != ''",
+          'FORMAT JSONEachRow'
+        ].join('\n'),
+        params,
+        'diagnostics city options'
+      ),
+      client.queryJSONEachRow(
+        `SELECT count() AS rows FROM (${stripJSONEachRow(preloadQueries.orderFacts)}) FORMAT JSONEachRow`,
+        params,
+        'diagnostics sales preload order facts'
+      ),
+      client.queryJSONEachRow(
+        `SELECT count() AS rows FROM (${stripJSONEachRow(preloadQueries.shiftFacts)}) FORMAT JSONEachRow`,
+        params,
+        'diagnostics sales preload shift facts'
+      )
+    ]);
+
+    return {
+      app: buildInfo,
+      clickhouse: {
+        database,
+        checkedRange: {
+          from: range.from,
+          to: range.to
+        },
+        cityOptionsCurrentMonth: Number((cityRows[0] && cityRows[0].city_count) || 0),
+        salesPreloadCurrentMonth: {
+          orderFacts: Number((orderRows[0] && orderRows[0].rows) || 0),
+          shiftFacts: Number((shiftRows[0] && shiftRows[0].rows) || 0)
+        }
+      },
+      preload: preloads && typeof preloads.getDiagnostics === 'function'
+        ? preloads.getDiagnostics()
+        : null
+    };
   }
 
   async function renderNamedTable(req, res) {
@@ -1105,6 +1196,20 @@ function createApp({
           error: error && error.message
         });
       }
+    })
+  );
+
+  app.get(
+    '/admin/diagnostics',
+    requireAuth('preload-admin'),
+    asyncRoute(async (req, res) => {
+      const diagnostics = await loadDiagnostics();
+
+      recordCurrentUserActivity(req, activityEventType(req));
+      res
+        .status(200)
+        .type('json')
+        .send(JSON.stringify(diagnostics, null, 2));
     })
   );
 
@@ -1887,7 +1992,8 @@ function start(options = {}) {
       dashboardSectionCache,
       workplaceDirectoryCache,
       preloadService,
-      activityStore
+      activityStore,
+      buildInfo: config.app || defaultBuildInfo(env)
     });
   } catch (error) {
     const activityCleanup = closeResource(activityStore, 'User activity store');

@@ -426,6 +426,33 @@ LIMIT 1
     };
   }
 
+  function getSalesByProjectDiagnostics() {
+    const coverage = db.prepare(`
+SELECT
+  MIN(period_date) AS min_date,
+  MAX(period_date) AS max_date,
+  COUNT(*) AS days
+FROM sales_by_project_coverage
+`).get();
+    const daily = db.prepare('SELECT COUNT(*) AS rows FROM sales_by_project_daily').get();
+    const orderFacts = db.prepare('SELECT COUNT(*) AS rows FROM sales_by_project_order_facts').get();
+    const shiftFacts = db.prepare('SELECT COUNT(*) AS rows FROM sales_by_project_shift_facts').get();
+
+    return {
+      coverage: {
+        minDate: coverage && coverage.min_date ? coverage.min_date : '',
+        maxDate: coverage && coverage.max_date ? coverage.max_date : '',
+        days: Number(coverage && coverage.days ? coverage.days : 0)
+      },
+      tables: {
+        dailyRows: Number(daily && daily.rows ? daily.rows : 0),
+        orderFacts: Number(orderFacts && orderFacts.rows ? orderFacts.rows : 0),
+        shiftFacts: Number(shiftFacts && shiftFacts.rows ? shiftFacts.rows : 0)
+      },
+      lastRuns: listRuns(SALES_PRELOAD_JOB_ID, 5)
+    };
+  }
+
   function hasSalesByProjectCoverage(fromDate, toDate) {
     assertValidSalesByProjectRange(fromDate, toDate);
 
@@ -694,6 +721,7 @@ ORDER BY shifts DESC
     finishRun,
     listRuns,
     getSalesByProjectOverview,
+    getSalesByProjectDiagnostics,
     hasSalesByProjectCoverage,
     replaceSalesByProjectRange,
     readSalesByProjectSectionRows,

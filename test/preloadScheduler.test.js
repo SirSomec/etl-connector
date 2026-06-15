@@ -326,6 +326,10 @@ test('preload service facade delegates schedule, run and covered reads', async (
     getSalesByProjectOverview() {
       return { coveredFrom: '2026-05-01', coveredTo: '2026-06-01' };
     },
+    getSalesByProjectDiagnostics() {
+      calls.push({ method: 'getSalesByProjectDiagnostics' });
+      return { tables: { orderFacts: 1 } };
+    },
     getJob(jobId) {
       calls.push({ method: 'getJob', jobId });
       return { id: jobId };
@@ -369,6 +373,7 @@ test('preload service facade delegates schedule, run and covered reads', async (
     fromDate: '2026-05-01',
     toDate: '2026-06-01'
   });
+  const diagnostics = service.getDiagnostics();
   const coveredRows = service.readSalesByProjectSectionRows({
     section: 'summary',
     period: 'month',
@@ -386,6 +391,7 @@ test('preload service facade delegates schedule, run and covered reads', async (
 
   assert.deepEqual(saved, { id: SALES_PRELOAD_JOB_ID, enabled: false });
   assert.deepEqual(run, { status: 'success' });
+  assert.deepEqual(diagnostics, { salesByProject: { tables: { orderFacts: 1 } } });
   assert.deepEqual(coveredRows, { rows: [] });
   assert.equal(missingRows, null);
   assert.deepEqual(calls, [
@@ -405,6 +411,7 @@ test('preload service facade delegates schedule, run and covered reads', async (
         toDate: '2026-06-01'
       }
     },
+    { method: 'getSalesByProjectDiagnostics' },
     {
       method: 'hasSalesByProjectCoverage',
       fromDate: '2026-05-01',

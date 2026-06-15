@@ -22,6 +22,11 @@ function createPreloadService({ client, storePath, store = null, scheduler = nul
     getOverview() {
       return actualStore.getSalesByProjectOverview();
     },
+    getDiagnostics() {
+      return {
+        salesByProject: actualStore.getSalesByProjectDiagnostics()
+      };
+    },
     getJob(jobId = SALES_PRELOAD_JOB_ID) {
       return actualStore.getJob(jobId);
     },

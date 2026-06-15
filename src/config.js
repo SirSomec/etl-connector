@@ -62,6 +62,10 @@ function loadConfig(env = process.env) {
   }
 
   return {
+    app: {
+      version: env.APP_VERSION || env.GIT_SHA || env.COMMIT_SHA || 'unknown',
+      startedAt: new Date().toISOString()
+    },
     port: readPort(env, 'PORT', 3000),
     clickhouse: {
       host: env.CLICKHOUSE_HOST,

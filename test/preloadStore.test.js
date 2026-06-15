@@ -32,6 +32,84 @@ test('preload store initializes default sales job', async () => {
   }
 });
 
+test('preload store reports sales diagnostics for coverage and fact tables', async () => {
+  const store = createPreloadStore({
+    filePath: await tempDbPath(),
+    now: () => new Date('2026-06-15T10:00:00.000Z')
+  });
+
+  try {
+    const run = store.startRun({
+      jobId: SALES_PRELOAD_JOB_ID,
+      trigger: 'manual',
+      fromDate: '2026-06-01',
+      toDate: '2026-06-02'
+    });
+
+    store.replaceSalesByProjectRange({
+      fromDate: '2026-06-01',
+      toDate: '2026-06-02',
+      dailyRows: [
+        {
+          period_date: '2026-06-01',
+          brand: 'Brand A',
+          ordered_shifts: 5
+        }
+      ],
+      orderFacts: [
+        {
+          period_date: '2026-06-01',
+          brand: 'Brand A',
+          order_id: 'order-1',
+          workplace_id: 'workplace-1',
+          ordered_shifts: 5
+        }
+      ],
+      shiftFacts: [
+        {
+          period_date: '2026-06-01',
+          brand: 'Brand A',
+          job_id: 'job-1',
+          worker_id: 'worker-1',
+          workplace_id: 'workplace-1',
+          status: 'confirmed',
+          is_successful_confirmed_shift: 1
+        }
+      ]
+    });
+    store.finishRun(run.id, { status: 'success', rowsWritten: 3 });
+
+    assert.deepEqual(store.getSalesByProjectDiagnostics(), {
+      coverage: {
+        minDate: '2026-06-01',
+        maxDate: '2026-06-01',
+        days: 1
+      },
+      tables: {
+        dailyRows: 1,
+        orderFacts: 1,
+        shiftFacts: 1
+      },
+      lastRuns: [
+        {
+          id: run.id,
+          jobId: SALES_PRELOAD_JOB_ID,
+          trigger: 'manual',
+          status: 'success',
+          fromDate: '2026-06-01',
+          toDate: '2026-06-02',
+          startedAt: '2026-06-15T10:00:00.000Z',
+          finishedAt: '2026-06-15T10:00:00.000Z',
+          rowsWritten: 3,
+          errorMessage: ''
+        }
+      ]
+    });
+  } finally {
+    store.close();
+  }
+});
+
 test('preload store invalidates legacy sales coverage when successful confirmed flag is added', async () => {
   const filePath = await tempDbPath();
   const legacyDb = new DatabaseSync(filePath);

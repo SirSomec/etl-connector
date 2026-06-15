@@ -4261,15 +4261,28 @@ function renderPreloadManagement({
   csrfToken = '',
   job,
   overview,
+  diagnostics,
   runs = [],
   message = '',
   error = ''
 }) {
   const safeJob = job || {};
   const safeOverview = overview || {};
+  const salesDiagnostics = diagnostics && diagnostics.salesByProject ? diagnostics.salesByProject : {};
+  const preloadTables = salesDiagnostics.tables || {};
+  const preloadCoverage = salesDiagnostics.coverage || {};
   const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
   const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
   const rowsHtml = runs.map(renderPreloadRunRow).join('');
+  const diagnosticsHtml = `<div class="preload-diagnostics">
+  <h3>Состояние SQLite-витрины</h3>
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">Coverage days</div><div class="kpi-value">${escapeHtml(preloadCoverage.days || 0)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Daily rows</div><div class="kpi-value">${escapeHtml(preloadTables.dailyRows || 0)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Order facts</div><div class="kpi-value">${escapeHtml(preloadTables.orderFacts || 0)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Shift facts</div><div class="kpi-value">${escapeHtml(preloadTables.shiftFacts || 0)}</div></div>
+  </div>
+</div>`;
   const content = `<section class="section">
   <h1>Предзагрузка витрин</h1>
   <p class="technical-note">Управление локальной SQLite-витриной для дашборда Продажи по проектам.</p>
@@ -4286,6 +4299,7 @@ function renderPreloadManagement({
 </section>
 <section class="section">
   <h2>Ручной запуск</h2>
+  ${diagnosticsHtml}
   <form class="filter-bar" action="/admin/preload/run" method="post">
     ${renderHiddenCsrf(csrfToken)}
     <div class="field"><label for="preload-from">С</label><input id="preload-from" name="from" type="date" required></div>

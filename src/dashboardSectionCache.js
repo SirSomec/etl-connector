@@ -69,7 +69,8 @@ function endOfUtcDayMs(timestamp) {
 
 function createDashboardSectionCache({
   now = () => Date.now(),
-  filePath = null
+  filePath = null,
+  onPersistenceError = null
 } = {}) {
   const entries = new Map();
   let fileLoaded = false;
@@ -120,10 +121,27 @@ function createDashboardSectionCache({
 
   async function persistEntries() {
     if (!filePath) {
+      return null;
+    }
+
+    try {
+      await writeCacheFile(filePath, entries);
+      return null;
+    } catch (error) {
+      return error;
+    }
+  }
+
+  function reportPersistenceError(operation, error) {
+    if (typeof onPersistenceError !== 'function') {
       return;
     }
 
-    await writeCacheFile(filePath, entries);
+    onPersistenceError(error, {
+      cache: 'dashboard-section',
+      operation,
+      filePath
+    });
   }
 
   return {
@@ -133,7 +151,11 @@ function createDashboardSectionCache({
       const pruned = pruneExpiredEntries(timeMs(currentValue));
 
       if (pruned) {
-        await persistEntries();
+        const persistError = await persistEntries();
+
+        if (persistError) {
+          throw persistError;
+        }
       }
 
       return pruned;
@@ -148,7 +170,11 @@ function createDashboardSectionCache({
 
       if (cached && cached.value !== undefined && cached.expiresAt > current) {
         if (pruned) {
-          await persistEntries();
+          const persistError = await persistEntries();
+
+          if (persistError) {
+            reportPersistenceError('prune-expired-on-hit', persistError);
+          }
         }
 
         return cached.value;
@@ -156,14 +182,22 @@ function createDashboardSectionCache({
 
       if (cached && cached.promise) {
         if (pruned) {
-          await persistEntries();
+          const persistError = await persistEntries();
+
+          if (persistError) {
+            reportPersistenceError('prune-expired-on-pending', persistError);
+          }
         }
 
         return cached.promise;
       }
 
       if (pruned) {
-        await persistEntries();
+        const persistError = await persistEntries();
+
+        if (persistError) {
+          reportPersistenceError('prune-expired-before-load', persistError);
+        }
       }
 
       const promise = Promise.resolve()
@@ -175,7 +209,11 @@ function createDashboardSectionCache({
               expiresAt: endOfUtcDayMs(now())
             });
 
-            await persistEntries();
+            const persistError = await persistEntries();
+
+            if (persistError) {
+              reportPersistenceError('write-after-load', persistError);
+            }
 
             return value;
           },

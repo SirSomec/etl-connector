@@ -760,6 +760,35 @@ test('city analysis cache clear removes persisted entries', async () => {
   }
 });
 
+test('city analysis cache returns loaded values when file persistence fails', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'city-analysis-cache-'));
+  let loads = 0;
+  const persistenceErrors = [];
+
+  try {
+    const cache = createCityAnalysisCache({
+      filePath: tempDir,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z'),
+      onPersistenceError: (error, context) => {
+        persistenceErrors.push({ error, context });
+      }
+    });
+
+    const rows = await cache.getOrLoad('city-options', async () => [{ city: 'Москва', load: ++loads }]);
+    const cachedRows = await cache.getOrLoad('city-options', async () => [{ city: 'Казань', load: ++loads }]);
+
+    assert.deepEqual(rows, [{ city: 'Москва', load: 1 }]);
+    assert.deepEqual(cachedRows, [{ city: 'Москва', load: 1 }]);
+    assert.equal(loads, 1);
+    assert.equal(persistenceErrors.length, 1);
+    assert.equal(persistenceErrors[0].context.cache, 'city-analysis');
+    assert.equal(persistenceErrors[0].context.operation, 'write-after-load');
+    assert.ok(persistenceErrors[0].error instanceof Error);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('loadCityAnalysisDashboardSection keeps geo base summary separate from app sessions', async () => {
   const calls = [];
   const client = {

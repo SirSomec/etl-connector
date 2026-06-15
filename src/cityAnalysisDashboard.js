@@ -419,7 +419,8 @@ function endOfUtcDayMs(timestamp) {
 
 function createCityAnalysisCache({
   now = () => Date.now(),
-  filePath = null
+  filePath = null,
+  onPersistenceError = null
 } = {}) {
   const entries = new Map();
   let fileLoaded = false;
@@ -470,10 +471,27 @@ function createCityAnalysisCache({
 
   async function persistEntries() {
     if (!filePath) {
+      return null;
+    }
+
+    try {
+      await writeCityAnalysisCacheFile(filePath, entries);
+      return null;
+    } catch (error) {
+      return error;
+    }
+  }
+
+  function reportPersistenceError(operation, error) {
+    if (typeof onPersistenceError !== 'function') {
       return;
     }
 
-    await writeCityAnalysisCacheFile(filePath, entries);
+    onPersistenceError(error, {
+      cache: 'city-analysis',
+      operation,
+      filePath
+    });
   }
 
   return {
@@ -483,7 +501,11 @@ function createCityAnalysisCache({
       const pruned = pruneExpiredEntries(timeMs(currentValue));
 
       if (pruned) {
-        await persistEntries();
+        const persistError = await persistEntries();
+
+        if (persistError) {
+          throw persistError;
+        }
       }
 
       return pruned;
@@ -498,7 +520,11 @@ function createCityAnalysisCache({
 
       if (cached && cached.value !== undefined && cached.expiresAt > current) {
         if (pruned) {
-          await persistEntries();
+          const persistError = await persistEntries();
+
+          if (persistError) {
+            reportPersistenceError('prune-expired-on-hit', persistError);
+          }
         }
 
         return cached.value;
@@ -506,14 +532,22 @@ function createCityAnalysisCache({
 
       if (cached && cached.promise) {
         if (pruned) {
-          await persistEntries();
+          const persistError = await persistEntries();
+
+          if (persistError) {
+            reportPersistenceError('prune-expired-on-pending', persistError);
+          }
         }
 
         return cached.promise;
       }
 
       if (pruned) {
-        await persistEntries();
+        const persistError = await persistEntries();
+
+        if (persistError) {
+          reportPersistenceError('prune-expired-before-load', persistError);
+        }
       }
 
       const promise = Promise.resolve()
@@ -525,7 +559,11 @@ function createCityAnalysisCache({
               expiresAt: endOfUtcDayMs(now())
             });
 
-            await persistEntries();
+            const persistError = await persistEntries();
+
+            if (persistError) {
+              reportPersistenceError('write-after-load', persistError);
+            }
 
             return value;
           },
@@ -547,7 +585,11 @@ function createCityAnalysisCache({
       fileLoaded = false;
       fileLoadPromise = null;
 
-      await persistEntries();
+      const persistError = await persistEntries();
+
+      if (persistError) {
+        throw persistError;
+      }
     },
     async invalidate(key) {
       await loadFileEntries();
@@ -555,7 +597,11 @@ function createCityAnalysisCache({
       const deleted = entries.delete(key);
 
       if (deleted) {
-        await persistEntries();
+        const persistError = await persistEntries();
+
+        if (persistError) {
+          throw persistError;
+        }
       }
 
       return deleted;

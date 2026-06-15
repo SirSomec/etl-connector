@@ -1927,12 +1927,29 @@ function start(options = {}) {
   } = options;
   const config = loadConfigFn(env);
   const client = new ClientClass(config.clickhouse);
+  const reportCachePersistenceError = (error, context = {}) => {
+    const cacheName = context.cache || 'dashboard';
+    const operation = context.operation || 'persist';
+    const filePath = context.filePath || '';
+    const message = `Cache persistence failed (${cacheName}, ${operation}${filePath ? `, ${filePath}` : ''}): ${sanitizeForResponse(error && error.message, config)}`;
+
+    if (logger && typeof logger.warn === 'function') {
+      logger.warn(message);
+      return;
+    }
+
+    if (logger && typeof logger.log === 'function') {
+      logger.log(message);
+    }
+  };
   const activeGigersCache = createWorkplaceActiveGigersCache();
   const cityAnalysisCache = createCityAnalysisCache({
-    filePath: cityAnalysisCachePathFromEnv(env)
+    filePath: cityAnalysisCachePathFromEnv(env),
+    onPersistenceError: reportCachePersistenceError
   });
   const dashboardSectionCache = createDashboardSectionCache({
-    filePath: dashboardSectionCachePathFromEnv(env)
+    filePath: dashboardSectionCachePathFromEnv(env),
+    onPersistenceError: reportCachePersistenceError
   });
   const workplaceDirectoryCache = createWorkplaceDirectoryCache({
     filePath: workplaceDirectoryCachePathFromEnv(env)

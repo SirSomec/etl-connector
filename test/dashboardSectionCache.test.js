@@ -56,6 +56,35 @@ test('dashboard section cache persists fresh values across cache recreation', as
   }
 });
 
+test('dashboard section cache returns loaded values when file persistence fails', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-section-cache-'));
+  let loads = 0;
+  const persistenceErrors = [];
+
+  try {
+    const cache = createDashboardSectionCache({
+      filePath: tempDir,
+      now: () => Date.parse('2026-06-15T10:00:00.000Z'),
+      onPersistenceError: (error, context) => {
+        persistenceErrors.push({ error, context });
+      }
+    });
+
+    const rows = await cache.getOrLoad('fresh', async () => ({ value: ++loads }));
+    const cachedRows = await cache.getOrLoad('fresh', async () => ({ value: ++loads }));
+
+    assert.deepEqual(rows, { value: 1 });
+    assert.deepEqual(cachedRows, { value: 1 });
+    assert.equal(loads, 1);
+    assert.equal(persistenceErrors.length, 1);
+    assert.equal(persistenceErrors[0].context.cache, 'dashboard-section');
+    assert.equal(persistenceErrors[0].context.operation, 'write-after-load');
+    assert.ok(persistenceErrors[0].error instanceof Error);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('dashboard section cache ignores persisted entries from older cache versions', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-section-cache-'));
   const filePath = path.join(tempDir, 'cache.json');

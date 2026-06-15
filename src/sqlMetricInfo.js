@@ -1538,11 +1538,21 @@ concentration_cells AS (
     active_users / ((111.0 * 0.01) * (111.32 * greatest(abs(cos(lat * pi() / 180)), 0.2) * 0.01)) AS density_per_km2
   FROM concentration_raw
 ),
+concentration_candidates AS (
+  SELECT
+    lon,
+    lat,
+    active_users,
+    density_per_km2
+  FROM concentration_cells
+  ORDER BY density_per_km2 DESC, active_users DESC, lat DESC, lon ASC
+  LIMIT 3000
+),
 density_scale AS (
   SELECT
-    min(density_per_km2) AS min_density_per_km2,
+    quantileExact(0.5)(density_per_km2) AS p50_density_per_km2,
     greatest(ifNull(quantileExact(0.95)(density_per_km2), 0), 0.000001) AS p95_density_per_km2
-  FROM concentration_cells
+  FROM concentration_candidates
 )
 SELECT
   lon,
@@ -1550,12 +1560,14 @@ SELECT
   active_users,
   density_per_km2,
   if(
-    p95_density_per_km2 > min_density_per_km2,
-    least(1.0, greatest(0.0, (density_per_km2 - min_density_per_km2) / (p95_density_per_km2 - min_density_per_km2))),
+    p95_density_per_km2 > p50_density_per_km2,
+    least(1.0, greatest(0.0, (density_per_km2 - p50_density_per_km2) / (p95_density_per_km2 - p50_density_per_km2))),
     if(density_per_km2 > 0, 1.0, 0.0)
   ) AS intensity
-FROM concentration_cells
+FROM concentration_candidates
 CROSS JOIN density_scale
+WHERE p95_density_per_km2 <= p50_density_per_km2
+  OR density_per_km2 > p50_density_per_km2
 ORDER BY density_per_km2 DESC, active_users DESC, lat DESC, lon ASC
 LIMIT 3000
 FORMAT JSONEachRow`;

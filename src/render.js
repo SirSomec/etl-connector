@@ -8851,7 +8851,8 @@ function heatmapWorkerConcentrationRows(rows) {
       row.lat <= 90 &&
       row.lon >= -180 &&
       row.lon <= 180 &&
-      row.activeUsers > 0
+      row.activeUsers > 0 &&
+      row.intensity > 0
     ));
 }
 
@@ -8927,7 +8928,8 @@ function renderHeatmapLeafletScript() {
     var context = canvas.getContext('2d');
 
     canvas.style.pointerEvents = 'none';
-    canvas.style.opacity = '0.72';
+    canvas.style.opacity = '0.9';
+    canvas.style.zIndex = '450';
 
     function redraw() {
       var size = map.getSize();
@@ -8936,17 +8938,24 @@ function renderHeatmapLeafletScript() {
       L.DomUtil.setPosition(canvas, topLeft);
       canvas.width = size.x;
       canvas.height = size.y;
+      canvas.style.width = size.x + 'px';
+      canvas.style.height = size.y + 'px';
       context.clearRect(0, 0, size.x, size.y);
       context.globalCompositeOperation = 'source-over';
 
       concentration.forEach(function (cell) {
         var point = map.latLngToContainerPoint([cell.lat, cell.lon]);
-        var intensity = Math.max(0.08, Math.min(1, Number(cell.intensity) || 0));
-        var radius = Math.max(36, Math.min(130, 34 + intensity * 96));
+        var intensity = Math.max(0, Math.min(1, Number(cell.intensity) || 0));
+        if (intensity <= 0) {
+          return;
+        }
+        var radius = Math.max(32, Math.min(128, 32 + intensity * 96));
+        var coreAlpha = 0.36 + intensity * 0.44;
+        var midAlpha = 0.16 + intensity * 0.26;
         var gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
 
-        gradient.addColorStop(0, workerConcentrationColor(intensity, 0.62));
-        gradient.addColorStop(0.46, workerConcentrationColor(intensity, 0.28));
+        gradient.addColorStop(0, workerConcentrationColor(intensity, coreAlpha));
+        gradient.addColorStop(0.46, workerConcentrationColor(intensity, midAlpha));
         gradient.addColorStop(1, workerConcentrationColor(intensity, 0));
         context.fillStyle = gradient;
         context.beginPath();
@@ -8955,7 +8964,7 @@ function renderHeatmapLeafletScript() {
       });
     }
 
-    map.on('move zoom resize zoomend moveend', redraw);
+    map.on('zoomstart zoom zoomend viewreset move resize moveend', redraw);
     root.dataset.workerConcentrationLayer = 'on';
     redraw();
   }

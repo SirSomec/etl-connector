@@ -3272,7 +3272,8 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
     ],
     workerConcentration: [
       { lon: 37.62, lat: 55.75, activeUsers: 12, intensity: 0.8 },
-      { lon: 49.12, lat: 55.79, activeUsers: 5, intensity: 0.3 }
+      { lon: 49.12, lat: 55.79, activeUsers: 5, intensity: 0.3 },
+      { lon: 30.3, lat: 59.9, activeUsers: 999, intensity: 0 }
     ]
   };
   const html = renderHeatmapDashboardSection({
@@ -3288,8 +3289,16 @@ test('renderHeatmapDashboardSection renders Leaflet map, legend, KPI, and escape
   assert.match(html, /data-worker-concentration="/);
   assert.match(html, /&quot;activeUsers&quot;:12/);
   assert.match(html, /&quot;intensity&quot;:0\.8/);
+  assert.doesNotMatch(html, /&quot;activeUsers&quot;:999/);
   assert.match(html, /workerConcentrationLayer/);
   assert.match(html, /drawWorkerConcentrationLayer/);
+  assert.match(html, /if \(intensity <= 0\) \{/);
+  assert.match(html, /canvas\.style\.opacity = '0\.9';/);
+  assert.match(html, /canvas\.style\.zIndex = '450';/);
+  assert.match(html, /var radius = Math\.max\(32, Math\.min\(128, 32 \+ intensity \* 96\)\);/);
+  assert.match(html, /var coreAlpha = 0\.36 \+ intensity \* 0\.44;/);
+  assert.match(html, /var midAlpha = 0\.16 \+ intensity \* 0\.26;/);
+  assert.match(html, /map\.on\('zoomstart zoom zoomend viewreset move resize moveend', redraw\);/);
   assert.ok(
     html.indexOf('map.fitBounds(bounds') < html.indexOf('drawWorkerConcentrationLayer(map, root, workerConcentration);')
   );

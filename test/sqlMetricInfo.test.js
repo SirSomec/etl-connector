@@ -240,10 +240,13 @@ test('heatmap worker concentration metric documents the 30 day current-date laye
   assert.match(info.sql, /uniqExact\(user_id\) AS active_users/);
   assert.match(info.sql, /status IN \('ready', 'booked', 'worked'\)/);
   assert.match(info.sql, /density_per_km2/);
-  assert.match(info.sql, /min\(density_per_km2\) AS min_density_per_km2/);
+  assert.match(info.sql, /concentration_candidates/);
+  assert.match(info.sql, /quantileExact\(0\.5\)\(density_per_km2\) AS p50_density_per_km2/);
   assert.match(info.sql, /quantileExact\(0\.95\)\(density_per_km2\)/);
-  assert.match(info.sql, /\(density_per_km2 - min_density_per_km2\) \/ \(p95_density_per_km2 - min_density_per_km2\)/);
+  assert.match(info.sql, /density_per_km2 > p50_density_per_km2/);
+  assert.match(info.sql, /\(density_per_km2 - p50_density_per_km2\) \/ \(p95_density_per_km2 - p50_density_per_km2\)/);
   assert.match(info.sql, /AS intensity/);
+  assert.doesNotMatch(info.sql, /min_density_per_km2/);
   assert.doesNotMatch(info.sql, /active_users \/ max_active_users/);
 });
 

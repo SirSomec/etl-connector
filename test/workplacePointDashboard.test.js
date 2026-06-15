@@ -1256,8 +1256,11 @@ test('loadWorkplacePointDashboard constrains point metrics to actual orders and 
   assert.equal(summaryCall.query.includes('j.piecework'), false);
   assert.equal(summaryCall.query.includes('CROSS JOIN shift_summary AS ss'), false);
   assert.equal(summaryCall.query.includes('CROSS JOIN booked_workers AS bw'), false);
-  assert.equal(summaryCall.query.includes('LEFT JOIN shift_summary AS ss ON 1 = 1'), true);
-  assert.equal(summaryCall.query.includes('LEFT JOIN booked_workers AS bw ON 1 = 1'), true);
+  assert.equal(summaryCall.query.includes('LEFT JOIN shift_summary AS ss ON 1 = 1'), false);
+  assert.equal(summaryCall.query.includes('LEFT JOIN booked_workers AS bw ON 1 = 1'), false);
+  assert.equal(summaryCall.query.includes('1 AS aggregate_join_key'), true);
+  assert.equal(summaryCall.query.includes('LEFT JOIN shift_summary AS ss ON os.aggregate_join_key = ss.aggregate_join_key'), true);
+  assert.equal(summaryCall.query.includes('LEFT JOIN booked_workers AS bw ON os.aggregate_join_key = bw.aggregate_join_key'), true);
 });
 
 test('loadWorkplacePointDashboardSection loads and caches summary, charts, and radius independently', async () => {

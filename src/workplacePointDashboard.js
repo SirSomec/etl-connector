@@ -883,6 +883,7 @@ function dropEventsCte() {
 function bookedWorkersCte() {
   return `booked_workers AS (
     SELECT
+      1 AS aggregate_join_key,
       uniqExact(ifNull(h.worker, '')) AS unique_booked_workers
     FROM mg_job_history AS h
     INNER JOIN shift_facts AS sf ON h.job = sf.job_id
@@ -898,6 +899,7 @@ function summaryQuery(whereSql) {
   ${bookedWorkersCte()},
   order_summary AS (
     SELECT
+      1 AS aggregate_join_key,
       sum(amount) AS ordered_shifts,
       sumIf(amount, toDate(order_start) < {current_date:Date}) AS sla_ordered_shifts,
       sumIf(amount, toDate(order_start) >= {current_date:Date}) AS forecast_sla_ordered_shifts,
@@ -906,6 +908,7 @@ function summaryQuery(whereSql) {
   ),
   shift_summary AS (
     SELECT
+      1 AS aggregate_join_key,
       countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
       countIf(is_successful_confirmed_shift = 1 AND toDate(start) < {current_date:Date}) AS sla_completed_shifts,
       countIf(ifNull(status, '') IN ${FORECAST_SLA_ACTIVE_STATUSES_SQL} AND toDate(start) >= {current_date:Date}) AS forecast_sla_active_shifts,
@@ -932,8 +935,8 @@ function summaryQuery(whereSql) {
     ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
     ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
   FROM order_summary AS os
-  LEFT JOIN shift_summary AS ss ON 1 = 1
-  LEFT JOIN booked_workers AS bw ON 1 = 1
+  LEFT JOIN shift_summary AS ss ON os.aggregate_join_key = ss.aggregate_join_key
+  LEFT JOIN booked_workers AS bw ON os.aggregate_join_key = bw.aggregate_join_key
   FORMAT JSONEachRow`;
 }
 

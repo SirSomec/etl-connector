@@ -10,7 +10,7 @@
 - Контрагент определяется через рабочее место заказа: `mg_orders.workplace -> mg_workplaces._id -> mg_contractors._id`.
 - Смены в `shift_facts`, деталях дня и истории связываются с уже отфильтрованными заказами через `mg_jobs.source = filtered_orders.order_id`.
 - Успешные `confirmed` используют общее правило исключения прогулов: для сделки признак берется из `mg_orders.pieceworks`, и нулевая фактическая клиентская оплата не считается успешным выполнением.
-- Агрегатные summary CTE соединяются обычным `LEFT JOIN ... ON 1 = 1`; `CROSS JOIN` оставлен только в радиусной гео-логике.
+- Агрегатные summary CTE соединяются обычным `LEFT JOIN` по явной колонке-константе `aggregate_join_key`; `CROSS JOIN` оставлен только в радиусной гео-логике.
 
 ## Фильтры
 
@@ -174,6 +174,7 @@ drop_events AS (
 ),
 booked_workers AS (
   SELECT
+    1 AS aggregate_join_key,
     uniqExact(ifNull(h.worker, '')) AS unique_booked_workers
   FROM mg_job_history AS h
   INNER JOIN shift_facts AS sf ON h.job = sf.job_id
@@ -188,12 +189,14 @@ booked_workers AS (
 WITH <common_cte>,
 order_summary AS (
   SELECT
+    1 AS aggregate_join_key,
     sum(amount) AS ordered_shifts,
     countDistinct(period) AS active_days
   FROM filtered_orders
 ),
 shift_summary AS (
   SELECT
+    1 AS aggregate_join_key,
     countIf(is_successful_confirmed_shift = 1) AS completed_shifts,
     uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_completed_workers,
     uniqExactIf(
@@ -214,8 +217,8 @@ SELECT
   ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
   ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
 FROM order_summary AS os
-LEFT JOIN shift_summary AS ss ON 1 = 1
-LEFT JOIN booked_workers AS bw ON 1 = 1
+LEFT JOIN shift_summary AS ss ON os.aggregate_join_key = ss.aggregate_join_key
+LEFT JOIN booked_workers AS bw ON os.aggregate_join_key = bw.aggregate_join_key
 FORMAT JSONEachRow
 ```
 

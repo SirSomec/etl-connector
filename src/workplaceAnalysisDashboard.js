@@ -835,25 +835,26 @@ function uniqueWorkplaceIds(rows) {
 }
 
 async function loadActiveGigers5kmByWorkplace(client, workplaceIds, activeGigersCache) {
-  if (!activeGigersCache || workplaceIds.length === 0) {
+  if (workplaceIds.length === 0) {
     return new Map();
   }
 
-  let cached;
+  let values = new Map();
+  let staleWorkplaceIds = workplaceIds;
 
-  try {
-    cached = await activeGigersCache.readFresh(workplaceIds);
-  } catch (_) {
-    cached = {
-      values: new Map(),
-      staleWorkplaceIds: workplaceIds
-    };
+  if (activeGigersCache && typeof activeGigersCache.readFresh === 'function') {
+    try {
+      const cached = await activeGigersCache.readFresh(workplaceIds);
+
+      values = new Map(cached.values || []);
+      staleWorkplaceIds = (cached.staleWorkplaceIds || []).filter((workplaceId) =>
+        workplaceIds.includes(workplaceId)
+      );
+    } catch (_) {
+      values = new Map();
+      staleWorkplaceIds = workplaceIds;
+    }
   }
-
-  const values = new Map(cached.values || []);
-  const staleWorkplaceIds = (cached.staleWorkplaceIds || []).filter((workplaceId) =>
-    workplaceIds.includes(workplaceId)
-  );
 
   if (staleWorkplaceIds.length === 0) {
     return values;
@@ -877,10 +878,12 @@ async function loadActiveGigers5kmByWorkplace(client, workplaceIds, activeGigers
     values.set(workplaceId, value);
   }
 
-  try {
-    await activeGigersCache.writeValues(refreshedValues);
-  } catch (_) {
-    // The dashboard can still render the freshly calculated value if local cache write fails.
+  if (activeGigersCache && typeof activeGigersCache.writeValues === 'function') {
+    try {
+      await activeGigersCache.writeValues(refreshedValues);
+    } catch (_) {
+      // The dashboard can still render the freshly calculated value if local cache write fails.
+    }
   }
 
   return values;

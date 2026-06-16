@@ -778,34 +778,43 @@ function filterOptionsQuery(filters) {
 
   return {
     params,
-    query: `${[
-      `SELECT
-    'profession' AS filter,
-    if(ifNull(p.caption, '') = '', o.spec, p.caption) AS value
-  FROM mg_orders AS o
-  ${orderDimensionJoinsSql()}
-  WHERE ${whereSql}
-  GROUP BY value
-  HAVING value != ''`,
-      `SELECT
-    'orderType' AS filter,
-    ifNull(o.type, '') AS value
-  FROM mg_orders AS o
-  ${orderDimensionJoinsSql()}
-  WHERE ${whereSql}
-  GROUP BY value
-  HAVING value != ''`,
-      `SELECT
-    'jobStatus' AS filter,
-    ifNull(j.status, '') AS value
-  FROM mg_orders AS o
-  INNER JOIN mg_jobs AS j ON j.source = o._id
-  ${orderDimensionJoinsSql()}
-  WHERE ${whereSql}
-    AND j.deleted = 0
-  GROUP BY value
-  HAVING value != ''`
-    ].join('\n  UNION ALL\n  ')}
+    query: `WITH filtered_orders AS (
+    SELECT
+      o._id AS order_id,
+      if(ifNull(p.caption, '') = '', o.spec, p.caption) AS profession_value,
+      ifNull(o.type, '') AS order_type_value
+    FROM mg_orders AS o
+    ${orderDimensionJoinsSql()}
+    WHERE ${whereSql}
+  ),
+  order_filter_options AS (
+    SELECT
+      tupleElement(option, 1) AS filter,
+      tupleElement(option, 2) AS value
+    FROM filtered_orders
+    ARRAY JOIN [
+      tuple('profession', profession_value),
+      tuple('orderType', order_type_value)
+    ] AS option
+    WHERE value != ''
+    GROUP BY filter, value
+  ),
+  job_status_options AS (
+    SELECT
+      'jobStatus' AS filter,
+      ifNull(j.status, '') AS value
+    FROM mg_jobs AS j
+    INNER JOIN (
+      SELECT DISTINCT order_id
+      FROM filtered_orders
+    ) AS fo ON fo.order_id = j.source
+    WHERE ifNull(j.deleted, 0) = 0
+    GROUP BY value
+    HAVING value != ''
+  )
+  SELECT filter, value FROM order_filter_options
+  UNION ALL
+  SELECT filter, value FROM job_status_options
   ORDER BY filter, value
   FORMAT JSONEachRow`
   };
@@ -1634,11 +1643,17 @@ async function loadWorkplacePointDashboardShell(client, input = {}, now = new Da
   }
 
   const filterOptionsRequest = filterOptionsQuery(filters);
-  const filterOptionRows = await client.queryJSONEachRow(
-    filterOptionsRequest.query,
-    filterOptionsRequest.params,
-    'workplace point filter options'
-  );
+  let filterOptionRows = [];
+
+  try {
+    filterOptionRows = await client.queryJSONEachRow(
+      filterOptionsRequest.query,
+      filterOptionsRequest.params,
+      'workplace point filter options'
+    );
+  } catch (_) {
+    filterOptionRows = [];
+  }
   const filterOptions = filterOptionsFromRows(filterOptionRows);
 
   filters = restrictFiltersToOptions(filters, filterOptions);

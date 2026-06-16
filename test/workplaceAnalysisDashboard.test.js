@@ -668,6 +668,10 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
         ];
       }
 
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [];
+      }
+
       throw new Error(`Unexpected operation: ${operation}`);
     }
   };
@@ -702,11 +706,12 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(dashboard.points[0].totalOrderedShifts, 9);
   assert.equal(dashboard.points[0].slaPercent, 55.55555555555556);
   assert.equal(dashboard.points[0].heatmapDays.length, 3);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.equal(calls[0].operation, 'workplace analysis filter options');
   assert.equal(calls[1].operation, 'workplace analysis total workplaces');
   assert.equal(calls[2].operation, 'workplace analysis top workplaces');
   assert.equal(calls[3].operation, 'workplace analysis daily orders');
+  assert.equal(calls[4].operation, 'workplace analysis active gigers 5km');
   assert.equal(calls[1].query.includes('countDistinct(o.workplace)'), true);
   assert.equal(calls[3].query.includes('WITH top_workplaces'), false);
   assert.equal(calls[3].query.includes('INNER JOIN top_workplaces AS tw'), false);
@@ -729,11 +734,14 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
   assert.equal(calls[3].query.includes('toDate(o.start) >= {current_date:Date}'), true);
   assert.equal(calls[3].query.includes("ifNull(forecast_job.status, '') IN ('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')"), true);
   assert.equal(calls[3].query.includes('forecast_sla_active_shifts'), true);
+  assert.equal(calls[4].params.param_workplace_ids, "['wp1']");
   assert.deepEqual(dashboard.filterOptions.client, ['Бренд', 'Бренд 2']);
   assert.deepEqual(dashboard.filterOptions.city, ['Москва']);
   assert.deepEqual(dashboard.filterOptions.jobStatus, ['confirmed', 'failed']);
 
-  for (const call of calls) {
+  const orderDomainCalls = calls.filter((call) => call.operation !== 'workplace analysis active gigers 5km');
+
+  for (const call of orderDomainCalls) {
     assert.equal(call.params.param_from, '2026-06-01 00:00:00');
     assert.equal(call.params.param_to, '2026-06-04 00:00:00');
     assert.equal(call.query.includes(maliciousSearch), false);
@@ -742,7 +750,7 @@ test('loadWorkplaceAnalysisDashboard queries top workplaces and daily orders wit
     assert.equal(call.query.includes('ifNull(o.is_hidden, 0) = 0'), true);
   }
 
-  for (const call of calls.slice(1)) {
+  for (const call of orderDomainCalls.slice(1)) {
     assert.equal(call.params.param_clients, "['Бренд','Бренд 2']");
     assert.equal(call.params.param_cities, "['Москва']");
     assert.equal(call.params.param_regions, "['Москва']");
@@ -860,6 +868,10 @@ test('loadWorkplaceAnalysisDashboardSection loads and caches points independentl
         ];
       }
 
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [];
+      }
+
       throw new Error(`Unexpected operation: ${operation}`);
     }
   };
@@ -894,7 +906,8 @@ test('loadWorkplaceAnalysisDashboardSection loads and caches points independentl
   assert.deepEqual(calls.map((call) => call.operation), [
     'workplace analysis total workplaces',
     'workplace analysis top workplaces',
-    'workplace analysis daily orders'
+    'workplace analysis daily orders',
+    'workplace analysis active gigers 5km'
   ]);
 
   timestamp = Date.parse('2026-06-16T00:00:00.000Z');
@@ -911,9 +924,11 @@ test('loadWorkplaceAnalysisDashboardSection loads and caches points independentl
     'workplace analysis total workplaces',
     'workplace analysis top workplaces',
     'workplace analysis daily orders',
+    'workplace analysis active gigers 5km',
     'workplace analysis total workplaces',
     'workplace analysis top workplaces',
-    'workplace analysis daily orders'
+    'workplace analysis daily orders',
+    'workplace analysis active gigers 5km'
   ]);
 });
 
@@ -1214,6 +1229,10 @@ test('loadWorkplaceAnalysisDashboard keeps pinned workplaces above filtered and 
         ];
       }
 
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [];
+      }
+
       throw new Error(`Unexpected operation: ${operation}`);
     }
   };
@@ -1461,6 +1480,68 @@ test('loadWorkplaceAnalysisDashboard adds cached active gigers and refreshes sta
   assert.equal(activeCall.query.includes('greatCircleDistance'), true);
 });
 
+test('loadWorkplaceAnalysisDashboard loads active gigers directly when cache is disabled', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis filter options') {
+        return [];
+      }
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 2 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Point 1',
+            total_ordered_shifts: 9,
+            active_days: 2
+          },
+          {
+            workplace_id: 'wp2',
+            workplace_title: 'Point 2',
+            total_ordered_shifts: 8,
+            active_days: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [];
+      }
+
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [
+          { workplace_id: 'wp1', active_gigers_5km: 4 },
+          { workplace_id: 'wp2', active_gigers_5km: 7 }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboard(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-01'
+    },
+    new Date('2026-06-15T12:00:00.000Z'),
+    { activeGigersCache: null }
+  );
+  const activeCall = calls.find((call) => call.operation === 'workplace analysis active gigers 5km');
+
+  assert.equal(dashboard.points[0].activeGigers5km, 4);
+  assert.equal(dashboard.points[1].activeGigers5km, 7);
+  assert.equal(activeCall.params.param_workplace_ids, "['wp1','wp2']");
+});
+
 test('loadWorkplaceAnalysisDashboard applies SLA and stability sort before pagination', async () => {
   const scenarios = [
     {
@@ -1551,7 +1632,9 @@ test('loadWorkplaceAnalysisDashboard applies metric range filters before paginat
     },
     new Date('2026-06-15T12:00:00.000Z')
   );
-  const filteredCalls = calls.filter((call) => call.operation !== 'workplace analysis filter options');
+  const filteredCalls = calls.filter((call) =>
+    !['workplace analysis filter options', 'workplace analysis active gigers 5km'].includes(call.operation)
+  );
 
   assert.equal(dashboard.filters.slaFrom, 50);
   assert.equal(dashboard.filters.slaTo, 95);
@@ -1681,6 +1764,10 @@ test('loadWorkplaceAnalysisDashboard uses total count for pagination', async () 
 
       if (operation === 'workplace analysis daily orders') {
         return dailyRows;
+      }
+
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [];
       }
 
       throw new Error(`Unexpected operation: ${operation}`);

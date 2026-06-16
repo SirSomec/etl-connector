@@ -572,6 +572,13 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
     assert.equal(call.params.param_job_statuses, "['confirmed']");
   }
 
+  const filterOptionsCall = calls.find((call) => call.operation === 'workplace point filter options');
+  assert.equal((filterOptionsCall.query.match(/FROM mg_orders AS o/g) || []).length, 1);
+  assert.equal(filterOptionsCall.query.includes('WITH filtered_orders AS'), true);
+  assert.equal(filterOptionsCall.query.includes('ARRAY JOIN'), true);
+  assert.equal(filterOptionsCall.query.includes('SELECT DISTINCT order_id'), true);
+  assert.equal(filterOptionsCall.query.includes('INNER JOIN mg_jobs AS j ON j.source = o._id'), false);
+
   for (const operation of ['workplace point summary', 'workplace point daily']) {
     const query = calls.find((call) => call.operation === operation).query;
 
@@ -1152,6 +1159,44 @@ test('loadWorkplacePointDashboardShell loads metadata and filters only', async (
   assert.equal(dashboard.summary.orderedShifts, 0);
   assert.deepEqual(dashboard.dailyRows, []);
   assert.deepEqual(dashboard.professionRows, []);
+});
+
+test('loadWorkplacePointDashboardShell renders metadata when filter options fail', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point metadata') {
+        return [{ workplace_id: 'wp1', workplace_title: 'Point 1', client_id: '' }];
+      }
+
+      if (operation === 'workplace point filter options') {
+        throw new Error('socket hang up');
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplacePointDashboardShell(
+    client,
+    {
+      workplaceId: 'wp1',
+      from: '2026-06-01',
+      to: '2026-06-30',
+      profession: 'picker'
+    },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'workplace point metadata',
+    'workplace point filter options'
+  ]);
+  assert.equal(dashboard.point.title, 'Point 1');
+  assert.deepEqual(dashboard.filterOptions.profession, []);
+  assert.deepEqual(dashboard.filters.profession, []);
 });
 
 test('loadWorkplacePointDashboardShell uses directory cache metadata before live metadata', async () => {

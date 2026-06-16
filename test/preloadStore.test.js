@@ -70,6 +70,87 @@ test('preload store saves independent schedule windows per job', async () => {
   }
 });
 
+test('preload store registers dashboard preload requests and increments hits', async () => {
+  const store = createPreloadStore({
+    filePath: await tempDbPath(),
+    now: () => new Date('2026-06-16T10:00:00.000Z')
+  });
+
+  try {
+    const first = store.registerDashboardPreloadRequest({
+      jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+      dashboardId: 'workplace-analysis',
+      section: 'points',
+      cacheKey: 'points-default',
+      input: { from: '2026-06-01', to: '2026-06-30', section: 'points' }
+    });
+    const second = store.registerDashboardPreloadRequest({
+      jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+      dashboardId: 'workplace-analysis',
+      section: 'points',
+      cacheKey: 'points-default',
+      input: { from: '2026-06-02', to: '2026-06-30', section: 'points' }
+    });
+    const requests = store.listDashboardPreloadRequests(WORKPLACE_ANALYSIS_PRELOAD_JOB_ID, 10);
+
+    assert.equal(first.hitCount, 1);
+    assert.equal(second.hitCount, 2);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].cacheKey, 'points-default');
+    assert.equal(requests[0].section, 'points');
+    assert.deepEqual(requests[0].input, { from: '2026-06-02', to: '2026-06-30', section: 'points' });
+  } finally {
+    store.close();
+  }
+});
+
+test('preload store reads dashboard preload results only when range is covered', async () => {
+  const store = createPreloadStore({
+    filePath: await tempDbPath(),
+    now: () => new Date('2026-06-16T10:00:00.000Z')
+  });
+
+  try {
+    store.saveDashboardPreloadResult({
+      jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+      dashboardId: 'workplace-analysis',
+      section: 'attention',
+      cacheKey: 'attention-default',
+      fromDate: '2026-05-02',
+      toDate: '2026-08-01',
+      payload: {
+        attentionPoints: [{ workplaceId: 'wp1', free7d: 3 }],
+        dataSource: 'clickhouse'
+      }
+    });
+
+    const covered = store.readDashboardPreloadResult({
+      jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+      section: 'attention',
+      cacheKey: 'attention-default',
+      fromDate: '2026-06-01',
+      toDate: '2026-06-08'
+    });
+    const uncovered = store.readDashboardPreloadResult({
+      jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+      section: 'attention',
+      cacheKey: 'attention-default',
+      fromDate: '2026-04-01',
+      toDate: '2026-06-08'
+    });
+
+    assert.deepEqual(covered.payload, {
+      attentionPoints: [{ workplaceId: 'wp1', free7d: 3 }],
+      dataSource: 'clickhouse'
+    });
+    assert.equal(covered.fromDate, '2026-05-02');
+    assert.equal(covered.toDate, '2026-08-01');
+    assert.equal(uncovered, null);
+  } finally {
+    store.close();
+  }
+});
+
 test('preload store reports sales diagnostics for coverage and fact tables', async () => {
   const store = createPreloadStore({
     filePath: await tempDbPath(),

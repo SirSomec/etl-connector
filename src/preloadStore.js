@@ -76,6 +76,15 @@ function assertValidSalesByProjectRange(fromDate, toDate) {
   }
 }
 
+function assertValidDashboardPreloadRange(fromDate, toDate) {
+  const fromTime = parseDateOnly(fromDate).getTime();
+  const toTime = parseDateOnly(toDate).getTime();
+
+  if (fromTime > toTime) {
+    throw new Error(`Invalid dashboard preload range: ${fromDate}..${toDate}`);
+  }
+}
+
 function assertDateInRange(periodDate, fromDate, toDate, sourceName) {
   const dateTime = parseDateOnly(periodDate).getTime();
   const fromTime = parseDateOnly(fromDate).getTime();
@@ -218,6 +227,50 @@ function refreshDayValue(value) {
   return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
 
+function parseJsonObject(value, fallback) {
+  try {
+    return JSON.parse(String(value || ''));
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function normalizeDashboardPreloadRequest(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    jobId: row.job_id,
+    dashboardId: row.dashboard_id,
+    section: row.section,
+    cacheKey: row.cache_key,
+    input: parseJsonObject(row.input_json, {}),
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    hitCount: Number(row.hit_count || 0)
+  };
+}
+
+function normalizeDashboardPreloadResult(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    jobId: row.job_id,
+    dashboardId: row.dashboard_id,
+    section: row.section,
+    cacheKey: row.cache_key,
+    fromDate: row.from_date,
+    toDate: row.to_date,
+    payload: parseJsonObject(row.payload_json, null),
+    refreshedAt: row.refreshed_at,
+    sourceFrom: row.source_from,
+    sourceTo: row.source_to
+  };
+}
+
 function seedPreloadJob(db, now, { id, title }) {
   const timestamp = toIsoString(now);
 
@@ -281,6 +334,32 @@ CREATE TABLE IF NOT EXISTS preload_runs (
   error_message TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS preload_dashboard_requests (
+  job_id TEXT NOT NULL,
+  dashboard_id TEXT NOT NULL,
+  section TEXT NOT NULL,
+  cache_key TEXT NOT NULL,
+  input_json TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (job_id, section, cache_key)
+);
+
+CREATE TABLE IF NOT EXISTS preload_dashboard_results (
+  job_id TEXT NOT NULL,
+  dashboard_id TEXT NOT NULL,
+  section TEXT NOT NULL,
+  cache_key TEXT NOT NULL,
+  from_date TEXT NOT NULL,
+  to_date TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  refreshed_at TEXT NOT NULL,
+  source_from TEXT NOT NULL,
+  source_to TEXT NOT NULL,
+  PRIMARY KEY (job_id, section, cache_key)
+);
+
 -- Daily rows are rollup/cache metadata; exact dashboard distinct reads use fact tables.
 CREATE TABLE IF NOT EXISTS sales_by_project_daily (
   period_date TEXT NOT NULL,
@@ -338,6 +417,8 @@ CREATE TABLE IF NOT EXISTS sales_by_project_coverage (
 CREATE INDEX IF NOT EXISTS idx_sales_daily_period_brand ON sales_by_project_daily (period_date, brand);
 CREATE INDEX IF NOT EXISTS idx_sales_daily_status ON sales_by_project_daily (period_date, status);
 CREATE INDEX IF NOT EXISTS idx_preload_runs_job_id ON preload_runs (job_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_preload_dashboard_requests_job ON preload_dashboard_requests (job_id, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_preload_dashboard_results_lookup ON preload_dashboard_results (job_id, section, cache_key, source_from, source_to);
 CREATE INDEX IF NOT EXISTS idx_sales_order_facts_period_brand ON sales_by_project_order_facts (period_date, brand);
 CREATE INDEX IF NOT EXISTS idx_sales_shift_facts_period_brand ON sales_by_project_shift_facts (period_date, brand);
 CREATE INDEX IF NOT EXISTS idx_sales_shift_facts_status ON sales_by_project_shift_facts (period_date, status);
@@ -463,6 +544,110 @@ WHERE job_id = ?
 ORDER BY id DESC
 LIMIT ?
 `).all(jobId, limit).map(normalizeRun);
+  }
+
+  function registerDashboardPreloadRequest({
+    jobId,
+    dashboardId,
+    section,
+    cacheKey,
+    input = {}
+  }) {
+    const timestamp = toIsoString(now);
+    const inputJson = JSON.stringify(input || {});
+
+    db.prepare(`
+INSERT INTO preload_dashboard_requests (
+  job_id,
+  dashboard_id,
+  section,
+  cache_key,
+  input_json,
+  first_seen_at,
+  last_seen_at,
+  hit_count
+) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+ON CONFLICT(job_id, section, cache_key) DO UPDATE SET
+  dashboard_id = excluded.dashboard_id,
+  input_json = excluded.input_json,
+  last_seen_at = excluded.last_seen_at,
+  hit_count = preload_dashboard_requests.hit_count + 1
+`).run(jobId, dashboardId, section, cacheKey, inputJson, timestamp, timestamp);
+
+    return normalizeDashboardPreloadRequest(db.prepare(`
+SELECT *
+FROM preload_dashboard_requests
+WHERE job_id = ? AND section = ? AND cache_key = ?
+`).get(jobId, section, cacheKey));
+  }
+
+  function listDashboardPreloadRequests(jobId, limit = 100) {
+    return db.prepare(`
+SELECT *
+FROM preload_dashboard_requests
+WHERE job_id = ?
+ORDER BY last_seen_at DESC, hit_count DESC, cache_key ASC
+LIMIT ?
+`).all(jobId, limit).map(normalizeDashboardPreloadRequest);
+  }
+
+  function saveDashboardPreloadResult({
+    jobId,
+    dashboardId,
+    section,
+    cacheKey,
+    fromDate,
+    toDate,
+    payload
+  }) {
+    assertValidDashboardPreloadRange(fromDate, toDate);
+
+    const timestamp = toIsoString(now);
+    const payloadJson = JSON.stringify(payload || {});
+
+    db.prepare(`
+INSERT INTO preload_dashboard_results (
+  job_id,
+  dashboard_id,
+  section,
+  cache_key,
+  from_date,
+  to_date,
+  payload_json,
+  refreshed_at,
+  source_from,
+  source_to
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(job_id, section, cache_key) DO UPDATE SET
+  dashboard_id = excluded.dashboard_id,
+  from_date = excluded.from_date,
+  to_date = excluded.to_date,
+  payload_json = excluded.payload_json,
+  refreshed_at = excluded.refreshed_at,
+  source_from = excluded.source_from,
+  source_to = excluded.source_to
+`).run(jobId, dashboardId, section, cacheKey, fromDate, toDate, payloadJson, timestamp, fromDate, toDate);
+
+    return normalizeDashboardPreloadResult(db.prepare(`
+SELECT *
+FROM preload_dashboard_results
+WHERE job_id = ? AND section = ? AND cache_key = ?
+`).get(jobId, section, cacheKey));
+  }
+
+  function readDashboardPreloadResult({ jobId, section, cacheKey, fromDate, toDate }) {
+    assertValidDashboardPreloadRange(fromDate, toDate);
+
+    return normalizeDashboardPreloadResult(db.prepare(`
+SELECT *
+FROM preload_dashboard_results
+WHERE job_id = ?
+  AND section = ?
+  AND cache_key = ?
+  AND source_from <= ?
+  AND source_to >= ?
+LIMIT 1
+`).get(jobId, section, cacheKey, fromDate, toDate));
   }
 
   function getSalesByProjectOverview() {
@@ -783,6 +968,10 @@ ORDER BY shifts DESC
     startRun,
     finishRun,
     listRuns,
+    registerDashboardPreloadRequest,
+    listDashboardPreloadRequests,
+    saveDashboardPreloadResult,
+    readDashboardPreloadResult,
     getSalesByProjectOverview,
     getSalesByProjectDiagnostics,
     hasSalesByProjectCoverage,

@@ -1018,6 +1018,7 @@ test('loadWorkplaceAnalysisDashboardSection reads attention from preload when av
 test('loadWorkplaceAnalysisDashboardSection registers request and falls back to ClickHouse on preload miss', async () => {
   const calls = [];
   const registerCalls = [];
+  const saveCalls = [];
   const client = {
     async queryJSONEachRow(query, params, operation) {
       calls.push({ query, params, operation });
@@ -1064,6 +1065,9 @@ test('loadWorkplaceAnalysisDashboardSection registers request and falls back to 
     },
     readWorkplaceAnalysisSection() {
       return null;
+    },
+    saveWorkplaceAnalysisSection(input) {
+      saveCalls.push(input);
     }
   };
 
@@ -1086,6 +1090,12 @@ test('loadWorkplaceAnalysisDashboardSection registers request and falls back to 
   assert.equal(registerCalls.length, 1);
   assert.equal(registerCalls[0].fromDate, '2026-06-01');
   assert.equal(registerCalls[0].toDate, '2026-06-04');
+  assert.equal(saveCalls.length, 1);
+  assert.equal(saveCalls[0].section, 'points');
+  assert.equal(saveCalls[0].cacheKey, registerCalls[0].cacheKey);
+  assert.equal(saveCalls[0].fromDate, '2026-06-01');
+  assert.equal(saveCalls[0].toDate, '2026-06-04');
+  assert.equal(saveCalls[0].payload.points.length, 1);
 });
 
 test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing statuses and 15km base', async () => {

@@ -61,6 +61,14 @@ function defaultWorkplaceAnalysisRequests() {
   }));
 }
 
+function preloadRequestsWithDefaultSections(requests) {
+  const knownRequests = Array.isArray(requests) ? requests : [];
+  const knownSections = new Set(knownRequests.map((request) => request && request.section).filter(Boolean));
+  const missingDefaults = defaultWorkplaceAnalysisRequests().filter((request) => !knownSections.has(request.section));
+
+  return [...knownRequests, ...missingDefaults];
+}
+
 async function refreshWorkplaceAnalysisPreload({
   client,
   store,
@@ -81,7 +89,7 @@ async function refreshWorkplaceAnalysisPreload({
   const knownRequests = typeof store.listDashboardPreloadRequests === 'function'
     ? store.listDashboardPreloadRequests(WORKPLACE_ANALYSIS_PRELOAD_JOB_ID, 200)
     : [];
-  const requests = knownRequests.length > 0 ? knownRequests : defaultWorkplaceAnalysisRequests();
+  const requests = preloadRequestsWithDefaultSections(knownRequests);
   let rowsWritten = 0;
 
   for (const request of requests) {

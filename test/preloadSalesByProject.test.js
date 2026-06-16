@@ -76,8 +76,8 @@ test('sales preload query builders use parameterized ClickHouse ranges', () => {
 
   assert.equal(queries.orderFacts.includes('FROM mg_orders AS o'), true);
   assert.equal(queries.orderFacts.includes('actual_orders AS ('), true);
-  assert.equal(queries.orderFacts.includes('{from:DateTime}'), true);
-  assert.equal(queries.orderFacts.includes('{to:DateTime}'), true);
+  assert.equal(queries.orderFacts.includes('{from_date:Date}'), true);
+  assert.equal(queries.orderFacts.includes('{to_date:Date}'), true);
   assert.equal(queries.orderFacts.includes("ifNull(o._id, '') != ''"), false);
   assert.equal(queries.shiftFacts.includes('FROM mg_jobs AS j'), true);
   assert.equal(queries.shiftFacts.includes('actual_orders AS ('), true);
@@ -109,6 +109,17 @@ test('sales preload query builders calculate period dates in Moscow timezone', (
   assert.match(queries.shiftFacts, /toString\(toDate\(shift_start, 'Europe\/Moscow'\)\) AS period_date/);
 });
 
+test('sales preload filters source rows by the same Moscow period date used for rollups', () => {
+  const queries = buildSalesByProjectPreloadQueries();
+
+  assert.match(queries.orderFacts, /toDate\(o\.start, 'Europe\/Moscow'\) >= \{from_date:Date\}/);
+  assert.match(queries.orderFacts, /toDate\(o\.start, 'Europe\/Moscow'\) < \{to_date:Date\}/);
+  assert.match(queries.shiftFacts, /toDate\(j\.start, 'Europe\/Moscow'\) >= \{from_date:Date\}/);
+  assert.match(queries.shiftFacts, /toDate\(j\.start, 'Europe\/Moscow'\) < \{to_date:Date\}/);
+  assert.doesNotMatch(queries.orderFacts, /o\.start >= \{from:DateTime\}/);
+  assert.doesNotMatch(queries.shiftFacts, /j\.start >= \{from:DateTime\}/);
+});
+
 test('refreshSalesByProjectPreload loads ClickHouse rows and writes sqlite range', async () => {
   const calls = [];
   const client = createSalesClient(calls);
@@ -133,6 +144,10 @@ test('refreshSalesByProjectPreload loads ClickHouse rows and writes sqlite range
     const orderCall = findCall(calls, 'preload sales by project order facts');
     const shiftCall = findCall(calls, 'preload sales by project shift facts');
 
+    assert.equal(orderCall.params.param_from_date, '2026-05-01');
+    assert.equal(orderCall.params.param_to_date, '2026-05-02');
+    assert.equal(shiftCall.params.param_from_date, '2026-05-01');
+    assert.equal(shiftCall.params.param_to_date, '2026-05-02');
     assert.equal(orderCall.params.param_from, '2026-05-01 00:00:00');
     assert.equal(orderCall.params.param_to, '2026-05-02 00:00:00');
     assert.equal(shiftCall.params.param_from, '2026-05-01 00:00:00');

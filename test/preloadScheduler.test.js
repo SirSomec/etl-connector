@@ -544,6 +544,10 @@ test('preload service facade delegates generic workplace analysis methods', asyn
       calls.push({ method: 'registerDashboardPreloadRequest', input });
       return input;
     },
+    saveDashboardPreloadResult(input) {
+      calls.push({ method: 'saveDashboardPreloadResult', input });
+      return input;
+    },
     readDashboardPreloadResult(input) {
       calls.push({ method: 'readDashboardPreloadResult', input });
       return { payload: { points: [{ workplaceId: 'wp1' }] } };
@@ -592,6 +596,13 @@ test('preload service facade delegates generic workplace analysis methods', asyn
     fromDate: '2026-06-01',
     toDate: '2026-07-01'
   });
+  service.saveWorkplaceAnalysisSection({
+    section: 'points',
+    cacheKey: 'points-key',
+    fromDate: '2026-06-01',
+    toDate: '2026-07-01',
+    payload: { points: [{ workplaceId: 'wp2' }] }
+  });
 
   assert.deepEqual(payload, { points: [{ workplaceId: 'wp1' }] });
   assert.deepEqual(calls.filter((call) => call.method === 'saveJobSchedule'), [
@@ -629,6 +640,15 @@ test('preload service facade delegates generic workplace analysis methods', asyn
     calls.some((call) =>
       call.method === 'readDashboardPreloadResult' &&
       call.input.jobId === WORKPLACE_ANALYSIS_PRELOAD_JOB_ID
+    ),
+    true
+  );
+  assert.equal(
+    calls.some((call) =>
+      call.method === 'saveDashboardPreloadResult' &&
+      call.input.jobId === WORKPLACE_ANALYSIS_PRELOAD_JOB_ID &&
+      call.input.dashboardId === 'workplace-analysis' &&
+      call.input.payload.points[0].workplaceId === 'wp2'
     ),
     true
   );

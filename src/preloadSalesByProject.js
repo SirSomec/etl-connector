@@ -10,6 +10,8 @@ function toDateTimeParam(dateOnly) {
 
 function preloadParams(fromDate, toDate) {
   return {
+    param_from_date: fromDate,
+    param_to_date: toDate,
     param_from: toDateTimeParam(fromDate),
     param_to: toDateTimeParam(toDate)
   };
@@ -35,7 +37,10 @@ function actualOrdersCte({ includeDateFilter = false } = {}) {
   const where = [actualOrderDomainCondition('o', 'c', 'ct')];
 
   if (includeDateFilter) {
-    where.push('o.start >= {from:DateTime}', 'o.start < {to:DateTime}');
+    where.push(
+      "toDate(o.start, 'Europe/Moscow') >= {from_date:Date}",
+      "toDate(o.start, 'Europe/Moscow') < {to_date:Date}"
+    );
   }
 
   return `actual_orders AS (
@@ -95,8 +100,8 @@ shift_facts AS (
   INNER JOIN actual_orders AS ao ON j.source = ao.order_id
   WHERE ifNull(j._id, '') != ''
     AND ifNull(j.deleted, 0) = 0
-    AND j.start >= {from:DateTime}
-    AND j.start < {to:DateTime}
+    AND toDate(j.start, 'Europe/Moscow') >= {from_date:Date}
+    AND toDate(j.start, 'Europe/Moscow') < {to_date:Date}
 ),
 history_ranked AS (
   SELECT

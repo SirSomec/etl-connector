@@ -2033,6 +2033,24 @@ function readWorkplaceAnalysisPreload(preloadService, { section, cacheKey, range
   }
 }
 
+function saveWorkplaceAnalysisPreload(preloadService, { section, cacheKey, range, payload }) {
+  if (!preloadService || typeof preloadService.saveWorkplaceAnalysisSection !== 'function') {
+    return;
+  }
+
+  try {
+    preloadService.saveWorkplaceAnalysisSection({
+      section,
+      cacheKey,
+      fromDate: range.fromDate,
+      toDate: range.toDate,
+      payload
+    });
+  } catch (_) {
+    // Preload writes are opportunistic; the dashboard must keep serving fresh ClickHouse data.
+  }
+}
+
 function orderRowsByWorkplaceIds(rows, workplaceIds) {
   const rowsByWorkplace = new Map();
 
@@ -2204,6 +2222,13 @@ async function loadWorkplaceAnalysisDashboardSection(
       () => loadWorkplaceAttentionDashboard(client, filters)
     );
 
+    saveWorkplaceAnalysisPreload(options.preloadService, {
+      section,
+      cacheKey,
+      range,
+      payload: dashboard
+    });
+
     return withDataSource(dashboard, 'clickhouse');
   }
 
@@ -2230,6 +2255,13 @@ async function loadWorkplaceAnalysisDashboardSection(
     cacheKey,
     () => loadWorkplaceAnalysisPointsDashboard(client, filters, options)
   );
+
+  saveWorkplaceAnalysisPreload(options.preloadService, {
+    section,
+    cacheKey,
+    range,
+    payload: dashboard
+  });
 
   return withDataSource(dashboard, 'clickhouse');
 }

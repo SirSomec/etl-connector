@@ -124,6 +124,21 @@ function createPreloadService({
 
       return result ? result.payload : null;
     },
+    saveWorkplaceAnalysisSection(input) {
+      if (typeof actualStore.saveDashboardPreloadResult !== 'function') {
+        return null;
+      }
+
+      return actualStore.saveDashboardPreloadResult({
+        jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+        dashboardId: 'workplace-analysis',
+        section: input.section,
+        cacheKey: input.cacheKey,
+        fromDate: input.fromDate,
+        toDate: input.toDate,
+        payload: input.payload
+      });
+    },
     close() {
       if (closePromise) {
         return closePromise;

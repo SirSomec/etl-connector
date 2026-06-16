@@ -770,6 +770,68 @@ test('GET /dashboards/workplace-analysis/section renders at least ten point card
   });
 });
 
+test('GET /dashboards/workplace-analysis/section reloads active gigers without cache', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 1 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Point 1',
+            client_title: 'Brand',
+            city: 'Moscow',
+            total_ordered_shifts: 10,
+            active_days: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [{ workplace_id: 'wp1', order_date: '2026-06-01', ordered_shifts: 10 }];
+      }
+
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [{ workplace_id: 'wp1', active_gigers_5km: 6 }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  });
+  const path = '/dashboards/workplace-analysis/section?section=points&from=2026-06-01&to=2026-06-01&limit=12';
+
+  await withServer(client, async (baseUrl) => {
+    const first = await fetchText(baseUrl, path);
+    const second = await fetchText(baseUrl, path);
+
+    assert.equal(first.response.status, 200);
+    assert.match(first.text, /Гигеры 5 км/);
+    assert.match(first.text, /data-giger-detail-trigger/);
+    assert.match(first.text, />6<\/button>/);
+    assert.equal(second.response.status, 200);
+  });
+
+  const calls = client.calls.filter((call) => call[0] === 'queryJSONEachRow');
+
+  assert.deepEqual(calls.map((call) => call[1]), [
+    'workplace analysis total workplaces',
+    'workplace analysis top workplaces',
+    'workplace analysis daily orders',
+    'workplace analysis active gigers 5km',
+    'workplace analysis total workplaces',
+    'workplace analysis top workplaces',
+    'workplace analysis daily orders',
+    'workplace analysis active gigers 5km'
+  ]);
+  assert.equal(calls[3][2].param_workplace_ids, "['wp1']");
+  assert.equal(calls[7][2].param_workplace_ids, "['wp1']");
+});
+
 test('GET /dashboards/workplace-analysis/section renders attention fragment', async () => {
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {

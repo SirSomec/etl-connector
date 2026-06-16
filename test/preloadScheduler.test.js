@@ -5,8 +5,10 @@ const {
   createPreloadScheduler,
   scheduledRangeForJob
 } = require('../src/preloadScheduler');
-const { SALES_PRELOAD_JOB_ID } = require('../src/preloadStore');
-const { WORKPLACE_ANALYSIS_PRELOAD_JOB_ID } = require('../src/preloadStore');
+const {
+  SALES_PRELOAD_JOB_ID,
+  WORKPLACE_ANALYSIS_PRELOAD_JOB_ID
+} = require('../src/preloadStore');
 const { createPreloadService } = require('../src/preloadService');
 
 test('scheduledRangeForJob returns last refresh days as exclusive range', () => {
@@ -501,6 +503,123 @@ test('preload service facade delegates schedule, run and covered reads', async (
     { method: 'scheduler.stop' },
     { method: 'store.close' }
   ]);
+});
+
+test('preload service facade delegates generic workplace analysis methods', async () => {
+  const calls = [];
+  const store = {
+    listJobs() {
+      calls.push({ method: 'listJobs' });
+      return [{ id: SALES_PRELOAD_JOB_ID }, { id: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID }];
+    },
+    getSalesByProjectOverview() {
+      return {};
+    },
+    getSalesByProjectDiagnostics() {
+      return {};
+    },
+    getJob(jobId) {
+      return { id: jobId };
+    },
+    listRuns() {
+      return [];
+    },
+    saveJobSchedule(jobId, input) {
+      calls.push({ method: 'saveJobSchedule', jobId, input });
+      return { id: jobId, ...input };
+    },
+    registerDashboardPreloadRequest(input) {
+      calls.push({ method: 'registerDashboardPreloadRequest', input });
+      return input;
+    },
+    readDashboardPreloadResult(input) {
+      calls.push({ method: 'readDashboardPreloadResult', input });
+      return { payload: { points: [{ workplaceId: 'wp1' }] } };
+    },
+    close() {}
+  };
+  const scheduler = {
+    reschedule() {
+      calls.push({ method: 'reschedule' });
+    },
+    runNow(input) {
+      calls.push({ method: 'runNow', input });
+      return Promise.resolve({ status: 'success', rowsWritten: 2 });
+    },
+    stop() {},
+    drain() {
+      return Promise.resolve([]);
+    }
+  };
+  const service = createPreloadService({ client: {}, store, scheduler });
+
+  assert.deepEqual(service.listJobs().map((job) => job.id), [
+    SALES_PRELOAD_JOB_ID,
+    WORKPLACE_ANALYSIS_PRELOAD_JOB_ID
+  ]);
+  service.saveSchedule({
+    jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+    enabled: true,
+    scheduleTime: '04:00',
+    refreshPastDays: 45,
+    refreshFutureDays: 45
+  });
+  await service.runJob({
+    jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+    fromDate: '2026-05-02',
+    toDate: '2026-08-01'
+  });
+  service.registerWorkplaceAnalysisRequest({
+    section: 'points',
+    cacheKey: 'points-key',
+    input: { from: '2026-06-01', to: '2026-06-30' }
+  });
+  const payload = service.readWorkplaceAnalysisSection({
+    section: 'points',
+    cacheKey: 'points-key',
+    fromDate: '2026-06-01',
+    toDate: '2026-07-01'
+  });
+
+  assert.deepEqual(payload, { points: [{ workplaceId: 'wp1' }] });
+  assert.deepEqual(calls.filter((call) => call.method === 'saveJobSchedule'), [
+    {
+      method: 'saveJobSchedule',
+      jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+      input: {
+        enabled: true,
+        scheduleTime: '04:00',
+        refreshPastDays: 45,
+        refreshFutureDays: 45
+      }
+    }
+  ]);
+  assert.deepEqual(calls.filter((call) => call.method === 'runNow'), [
+    {
+      method: 'runNow',
+      input: {
+        jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+        trigger: 'manual',
+        fromDate: '2026-05-02',
+        toDate: '2026-08-01'
+      }
+    }
+  ]);
+  assert.equal(
+    calls.some((call) =>
+      call.method === 'registerDashboardPreloadRequest' &&
+      call.input.jobId === WORKPLACE_ANALYSIS_PRELOAD_JOB_ID &&
+      call.input.dashboardId === 'workplace-analysis'
+    ),
+    true
+  );
+  assert.equal(
+    calls.some((call) =>
+      call.method === 'readDashboardPreloadResult' &&
+      call.input.jobId === WORKPLACE_ANALYSIS_PRELOAD_JOB_ID
+    ),
+    true
+  );
 });
 
 test('preload service close waits for active scheduler run before closing store', async () => {

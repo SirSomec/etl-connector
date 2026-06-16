@@ -4255,26 +4255,47 @@ function renderPreloadRunRow(run) {
   </tr>`;
 }
 
-function renderPreloadManagement({
-  database,
-  currentUser,
-  csrfToken = '',
+function normalizePreloadJobPanels({
+  jobs,
   job,
   overview,
   diagnostics,
-  runs = [],
-  message = '',
-  error = ''
+  runs = []
 }) {
-  const safeJob = job || {};
-  const safeOverview = overview || {};
+  if (Array.isArray(jobs) && jobs.length > 0) {
+    return jobs.map((panel) => ({
+      job: panel && panel.job ? panel.job : {},
+      overview: panel && panel.overview ? panel.overview : {},
+      diagnostics: panel && Object.prototype.hasOwnProperty.call(panel, 'diagnostics')
+        ? panel.diagnostics
+        : diagnostics,
+      runs: Array.isArray(panel && panel.runs) ? panel.runs : []
+    }));
+  }
+
+  return [{
+    job: job || {},
+    overview: overview || {},
+    diagnostics,
+    runs: Array.isArray(runs) ? runs : []
+  }];
+}
+
+function safeHtmlId(value) {
+  return String(value || 'preload').replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+function renderPreloadDiagnostics(diagnostics, jobId) {
   const salesDiagnostics = diagnostics && diagnostics.salesByProject ? diagnostics.salesByProject : {};
+
+  if (jobId !== 'sales-by-project' && !diagnostics) {
+    return '';
+  }
+
   const preloadTables = salesDiagnostics.tables || {};
   const preloadCoverage = salesDiagnostics.coverage || {};
-  const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
-  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
-  const rowsHtml = runs.map(renderPreloadRunRow).join('');
-  const diagnosticsHtml = `<div class="preload-diagnostics">
+
+  return `<div class="preload-diagnostics">
   <h3>Состояние SQLite-витрины</h3>
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-label">Coverage days</div><div class="kpi-value">${escapeHtml(preloadCoverage.days || 0)}</div></div>
@@ -4283,51 +4304,107 @@ function renderPreloadManagement({
     <div class="kpi-card"><div class="kpi-label">Shift facts</div><div class="kpi-value">${escapeHtml(preloadTables.shiftFacts || 0)}</div></div>
   </div>
 </div>`;
-  const content = `<section class="section">
-  <h1>Предзагрузка витрин</h1>
-  <p class="technical-note">Управление локальной SQLite-витриной для дашборда Продажи по проектам.</p>
-</section>
-<section class="section">
-  ${messageHtml}
-  ${errorHtml}
+}
+
+function preloadScheduleWindowValue(value, fallback = 45) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return value;
+  }
+
+  return Math.max(45, numericValue);
+}
+
+function renderPreloadJobPanel(panel, csrfToken) {
+  const safeJob = panel.job || {};
+  const safeOverview = panel.overview || {};
+  const jobId = safeJob.id || 'sales-by-project';
+  const title = safeJob.title || jobId;
+  const htmlId = safeHtmlId(jobId);
+  const rows = Array.isArray(panel.runs) ? panel.runs : [];
+  const rowsHtml = rows.map(renderPreloadRunRow).join('');
+  const refreshPastDays = preloadScheduleWindowValue(safeJob.refreshPastDays ?? safeJob.refreshDays);
+  const refreshFutureDays = preloadScheduleWindowValue(safeJob.refreshFutureDays);
+  const diagnosticsHtml = renderPreloadDiagnostics(panel.diagnostics, jobId);
+
+  return `<section class="section">
+  <h2>${escapeHtml(title)}</h2>
   <div class="kpi-grid">
-    <div class="kpi-card"><div class="kpi-label">Витрина</div><div class="kpi-value">${escapeHtml(safeJob.id || 'sales-by-project')}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Витрина</div><div class="kpi-value">${escapeHtml(jobId)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Покрытие</div><div class="kpi-value">${escapeHtml(safeOverview.coveredFrom || '-')} - ${escapeHtml(safeOverview.coveredTo || '-')}</div></div>
     <div class="kpi-card"><div class="kpi-label">Последний успех</div><div class="kpi-value">${escapeHtml(safeOverview.lastSuccessAt || '-')}</div></div>
     <div class="kpi-card"><div class="kpi-label">Последняя ошибка</div><div class="kpi-value">${escapeHtml(safeOverview.lastError || '-')}</div></div>
   </div>
 </section>
 <section class="section">
-  <h2>Ручной запуск</h2>
+  <h2>Ручной запуск: ${escapeHtml(title)}</h2>
   ${diagnosticsHtml}
   <form class="filter-bar" action="/admin/preload/run" method="post">
     ${renderHiddenCsrf(csrfToken)}
-    <div class="field"><label for="preload-from">С</label><input id="preload-from" name="from" type="date" required></div>
-    <div class="field"><label for="preload-to">По</label><input id="preload-to" name="to" type="date" required></div>
+    <input type="hidden" name="jobId" value="${escapeHtml(jobId)}">
+    <div class="field"><label for="${escapeHtml(htmlId)}-preload-from">С</label><input id="${escapeHtml(htmlId)}-preload-from" name="from" type="date" required></div>
+    <div class="field"><label for="${escapeHtml(htmlId)}-preload-to">По</label><input id="${escapeHtml(htmlId)}-preload-to" name="to" type="date" required></div>
     <button type="submit">Запустить</button>
   </form>
 </section>
 <section class="section">
-  <h2>Кеши дашбордов</h2>
-  <p class="technical-note">Удаляет файловый и in-memory кеш дашборда Анализ городов. SQLite-витрина, пользователи и журнал активности не затрагиваются.</p>
-  <form class="filter-bar" action="/admin/preload/cache/city-analysis/clear" method="post">
-    ${renderHiddenCsrf(csrfToken)}
-    <button class="danger-button" type="submit">Удалить кеш анализа городов</button>
-  </form>
-</section>
-<section class="section">
-  <h2>Расписание</h2>
+  <h2>Расписание: ${escapeHtml(title)}</h2>
   <form class="filter-bar" action="/admin/preload/schedule" method="post">
     ${renderHiddenCsrf(csrfToken)}
+    <input type="hidden" name="jobId" value="${escapeHtml(jobId)}">
     <label class="checkbox-label"><input name="enabled" type="checkbox" value="1"${renderCheckedAttribute(safeJob.enabled)}> Включено</label>
-    <div class="field"><label for="schedule-time">Время</label><input id="schedule-time" name="scheduleTime" type="time" value="${escapeHtml(safeJob.scheduleTime || '03:00')}" required></div>
-    <div class="field"><label for="refresh-days">Обновлять дней</label><input id="refresh-days" name="refreshDays" type="number" min="1" max="366" value="${escapeHtml(safeJob.refreshDays || 45)}" required></div>
+    <div class="field"><label for="${escapeHtml(htmlId)}-schedule-time">Время</label><input id="${escapeHtml(htmlId)}-schedule-time" name="scheduleTime" type="time" value="${escapeHtml(safeJob.scheduleTime || '03:00')}" required></div>
+    <div class="field"><label for="${escapeHtml(htmlId)}-refresh-past-days">Назад, дней</label><input id="${escapeHtml(htmlId)}-refresh-past-days" name="refreshPastDays" type="number" min="45" max="366" value="${escapeHtml(refreshPastDays)}" required></div>
+    <div class="field"><label for="${escapeHtml(htmlId)}-refresh-future-days">Вперед, дней</label><input id="${escapeHtml(htmlId)}-refresh-future-days" name="refreshFutureDays" type="number" min="45" max="366" value="${escapeHtml(refreshFutureDays)}" required></div>
     <button type="submit">Сохранить</button>
   </form>
 </section>
 <section class="section">
-  <h2>История запусков</h2>
+  <h2>История запусков: ${escapeHtml(title)}</h2>
   <div class="table-scroll"><table><thead><tr><th>ID</th><th>Тип</th><th>Статус</th><th>Период</th><th>Старт</th><th>Финиш</th><th>Строк</th><th>Ошибка</th></tr></thead><tbody>${rowsHtml || '<tr><td colspan="8">Запусков пока нет.</td></tr>'}</tbody></table></div>
+</section>`;
+}
+
+function renderPreloadManagement({
+  database,
+  currentUser,
+  csrfToken = '',
+  jobs,
+  job,
+  overview,
+  diagnostics,
+  runs = [],
+  message = '',
+  error = ''
+}) {
+  const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+  const panels = normalizePreloadJobPanels({
+    jobs,
+    job,
+    overview,
+    diagnostics,
+    runs
+  });
+  const jobPanelsHtml = panels.map((panel) => renderPreloadJobPanel(panel, csrfToken)).join('');
+  const content = `<section class="section">
+  <h1>Предзагрузка витрин</h1>
+  <p class="technical-note">Управление локальными предрасчитанными данными для дашбордов. Ручной запуск обновляет выбранный период, расписание поддерживает отдельные окна назад и вперед.</p>
+</section>
+${messageHtml || errorHtml ? `<section class="section">${messageHtml}${errorHtml}</section>` : ''}
+${jobPanelsHtml}
+<section class="section">
+  <h2>Кеши дашбордов</h2>
+  <p class="technical-note">Удаляет файловый и in-memory кеш дашборда Анализ городов. SQLite-витрины, пользователи и журнал активности не затрагиваются.</p>
+  <form class="filter-bar" action="/admin/preload/cache/city-analysis/clear" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <button class="danger-button" type="submit">Удалить кеш анализа городов</button>
+  </form>
 </section>`;
 
   return layout({

@@ -19,13 +19,25 @@ test('scheduledRangeForJob returns last refresh days as exclusive range', () => 
 
   assert.deepEqual(range, {
     fromDate: '2026-04-20',
-    toDate: '2026-06-05'
+    toDate: '2026-07-20'
   });
 });
 
 test('scheduledRangeForJob returns past and future exclusive range', () => {
   const range = scheduledRangeForJob(
     { refreshPastDays: 45, refreshFutureDays: 45 },
+    new Date('2026-06-16T12:00:00.000Z')
+  );
+
+  assert.deepEqual(range, {
+    fromDate: '2026-05-02',
+    toDate: '2026-08-01'
+  });
+});
+
+test('scheduledRangeForJob enforces at least 45 days backward and forward', () => {
+  const range = scheduledRangeForJob(
+    { refreshPastDays: 7, refreshFutureDays: 3 },
     new Date('2026-06-16T12:00:00.000Z')
   );
 

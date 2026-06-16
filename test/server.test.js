@@ -317,10 +317,34 @@ function createFakeClient(overrides = {}) {
 
 function createFakePreloadService(overrides = {}) {
   const calls = [];
+  const jobs = [
+    {
+      id: 'sales-by-project',
+      title: 'Продажи по проектам',
+      enabled: true,
+      scheduleTime: '03:00',
+      timezone: 'Europe/Moscow',
+      refreshPastDays: 45,
+      refreshFutureDays: 45
+    },
+    {
+      id: 'workplace-analysis',
+      title: 'Анализ точек',
+      enabled: false,
+      scheduleTime: '04:00',
+      timezone: 'Europe/Moscow',
+      refreshPastDays: 45,
+      refreshFutureDays: 45
+    }
+  ];
   const service = {
     calls,
-    getOverview() {
-      calls.push(['getOverview']);
+    listJobs() {
+      calls.push(['listJobs']);
+      return jobs;
+    },
+    getOverview(jobId) {
+      calls.push(['getOverview', jobId]);
       return {
         coveredFrom: '2026-05-01',
         coveredTo: '2026-06-04',
@@ -346,23 +370,21 @@ function createFakePreloadService(overrides = {}) {
         }
       };
     },
-    getJob() {
-      calls.push(['getJob']);
-      return {
-        id: 'sales-by-project',
-        enabled: true,
-        scheduleTime: '03:00',
-        timezone: 'Europe/Moscow',
-        refreshDays: 45
-      };
+    getJob(jobId = 'sales-by-project') {
+      calls.push(['getJob', jobId]);
+      return jobs.find((job) => job.id === jobId) || null;
     },
-    listRuns() {
-      calls.push(['listRuns']);
+    listRuns(jobId, limit) {
+      calls.push(['listRuns', jobId, limit]);
       return [];
     },
     saveSchedule(input) {
       calls.push(['saveSchedule', input]);
       return { id: 'sales-by-project', ...input };
+    },
+    async runJob(input) {
+      calls.push(['runJob', input]);
+      return { status: 'success', rowsWritten: 1 };
     },
     async runSalesByProject(input) {
       calls.push(['runSalesByProject', input]);
@@ -768,6 +790,62 @@ test('GET /dashboards/workplace-analysis/section renders at least ten point card
     assert.equal(countOccurrences(text, '<div class="heatmap" aria-label='), 12);
     assert.doesNotMatch(text, /empty-state/);
   });
+});
+
+test('GET /dashboards/workplace-analysis/section can render points from preload service without ClickHouse calls', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params]);
+      throw new Error(`Unexpected ClickHouse call: ${operation}`);
+    }
+  });
+  const preloadService = createFakePreloadService({
+    registerWorkplaceAnalysisRequest(input) {
+      this.calls.push(['registerWorkplaceAnalysisRequest', input]);
+    },
+    readWorkplaceAnalysisSection(input) {
+      this.calls.push(['readWorkplaceAnalysisSection', input]);
+      return {
+        filters: {
+          from: '2026-06-01',
+          to: '2026-06-03'
+        },
+        currentDate: '2026-06-15',
+        points: [],
+        pagination: {
+          page: 1,
+          totalPages: 1,
+          totalWorkplaces: 0,
+          hasPrevious: false,
+          hasNext: false
+        }
+      };
+    }
+  });
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const { response, text } = await fetchText(
+        baseUrl,
+        '/dashboards/workplace-analysis/section?section=points&from=2026-06-01&to=2026-06-03&limit=12'
+      );
+
+      assert.equal(response.status, 200);
+      assert.match(text, /Нет точек с заказами за выбранный период/);
+    },
+    baseConfig(),
+    { preloadService }
+  );
+
+  assert.deepEqual(preloadService.calls.map((call) => call[0]), [
+    'registerWorkplaceAnalysisRequest',
+    'readWorkplaceAnalysisSection'
+  ]);
+  assert.equal(preloadService.calls[1][1].section, 'points');
+  assert.equal(preloadService.calls[1][1].fromDate, '2026-06-01');
+  assert.equal(preloadService.calls[1][1].toDate, '2026-06-04');
+  assert.deepEqual(client.calls, []);
 });
 
 test('GET /dashboards/workplace-analysis/section reloads active gigers without cache', async () => {
@@ -1973,6 +2051,8 @@ test('preload admin routes render, save schedule, and run manual refresh', async
       assert.match(page.text, /Shift facts/);
       assert.match(page.text, /13/);
       assert.match(page.text, /Предзагрузка витрин/);
+      assert.match(page.text, /sales-by-project/);
+      assert.match(page.text, /workplace-analysis/);
 
       const messagePage = await fetchText(baseUrl, '/admin/preload?message=run-started');
 
@@ -1986,9 +2066,11 @@ test('preload admin routes render, save schedule, and run manual refresh', async
           'content-type': 'application/x-www-form-urlencoded'
         },
         body: formBody({
+          jobId: 'workplace-analysis',
           enabled: '1',
           scheduleTime: '04:30',
-          refreshDays: '60'
+          refreshPastDays: '60',
+          refreshFutureDays: '45'
         })
       });
 
@@ -2002,6 +2084,7 @@ test('preload admin routes render, save schedule, and run manual refresh', async
           'content-type': 'application/x-www-form-urlencoded'
         },
         body: formBody({
+          jobId: 'workplace-analysis',
           from: '2026-05-01',
           to: '2026-05-31'
         })
@@ -2033,33 +2116,42 @@ test('preload admin routes render, save schedule, and run manual refresh', async
 
   assert.deepEqual(cityAnalysisCache.calls, [['clear']]);
   assert.deepEqual(preloadService.calls, [
-    ['getJob'],
-    ['getOverview'],
     ['getDiagnostics'],
-    ['listRuns'],
-    ['getJob'],
-    ['getOverview'],
+    ['listJobs'],
+    ['getOverview', 'sales-by-project'],
+    ['listRuns', 'sales-by-project', 20],
+    ['getOverview', 'workplace-analysis'],
+    ['listRuns', 'workplace-analysis', 20],
     ['getDiagnostics'],
-    ['listRuns'],
+    ['listJobs'],
+    ['getOverview', 'sales-by-project'],
+    ['listRuns', 'sales-by-project', 20],
+    ['getOverview', 'workplace-analysis'],
+    ['listRuns', 'workplace-analysis', 20],
     [
       'saveSchedule',
       {
+        jobId: 'workplace-analysis',
         enabled: true,
         scheduleTime: '04:30',
-        refreshDays: 60
+        refreshPastDays: 60,
+        refreshFutureDays: 45
       }
     ],
     [
-      'runSalesByProject',
+      'runJob',
       {
+        jobId: 'workplace-analysis',
         fromDate: '2026-05-01',
         toDate: '2026-06-01'
       }
     ],
-    ['getJob'],
-    ['getOverview'],
     ['getDiagnostics'],
-    ['listRuns']
+    ['listJobs'],
+    ['getOverview', 'sales-by-project'],
+    ['listRuns', 'sales-by-project', 20],
+    ['getOverview', 'workplace-analysis'],
+    ['listRuns', 'workplace-analysis', 20]
   ]);
 });
 
@@ -2067,9 +2159,12 @@ test('POST /admin/preload/schedule rejects invalid schedule settings', async () 
   const invalidCases = [
     { scheduleTime: 'bad', refreshDays: '60' },
     { scheduleTime: '24:00', refreshDays: '60' },
+    { scheduleTime: '04:30', refreshDays: '44' },
     { scheduleTime: '04:30', refreshDays: '0' },
     { scheduleTime: '04:30', refreshDays: '0.5' },
-    { scheduleTime: '04:30', refreshDays: '999999' }
+    { scheduleTime: '04:30', refreshDays: '999999' },
+    { scheduleTime: '04:30', refreshPastDays: '44', refreshFutureDays: '45' },
+    { scheduleTime: '04:30', refreshPastDays: '45', refreshFutureDays: '44' }
   ];
 
   for (const invalidCase of invalidCases) {
@@ -2106,8 +2201,8 @@ test('POST /admin/preload/run redirects when refresh is already running', async 
   const client = createFakeClient();
   const preloadService = createFakePreloadService();
 
-  preloadService.runSalesByProject = async (input) => {
-    preloadService.calls.push(['runSalesByProject', input]);
+  preloadService.runJob = async (input) => {
+    preloadService.calls.push(['runJob', input]);
     return { status: 'already-running' };
   };
 
@@ -2135,8 +2230,9 @@ test('POST /admin/preload/run redirects when refresh is already running', async 
 
   assert.deepEqual(preloadService.calls, [
     [
-      'runSalesByProject',
+      'runJob',
       {
+        jobId: 'sales-by-project',
         fromDate: '2026-05-01',
         toDate: '2026-06-01'
       }

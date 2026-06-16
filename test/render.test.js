@@ -159,6 +159,51 @@ test('renderPreloadManagement renders schedule, manual run, and history', () => 
   assert.match(html, /class="nav-link active" href="\/admin\/preload"/);
 });
 
+test('renderPreloadManagement renders multiple preload jobs with independent forms', () => {
+  const html = renderPreloadManagement({
+    database: 'etl',
+    csrfToken: 'csrf-token',
+    currentUser: { role: 'admin', permissions: ['preload-admin'] },
+    jobs: [
+      {
+        job: {
+          id: 'sales-by-project',
+          title: 'Продажи по проектам',
+          enabled: true,
+          scheduleTime: '03:00',
+          refreshPastDays: 45,
+          refreshFutureDays: 45
+        },
+        overview: { coveredFrom: '2026-05-01', coveredTo: '2026-06-01' },
+        runs: []
+      },
+      {
+        job: {
+          id: 'workplace-analysis',
+          title: 'Анализ точек',
+          enabled: false,
+          scheduleTime: '04:00',
+          refreshPastDays: 60,
+          refreshFutureDays: 30
+        },
+        overview: { coveredFrom: '2026-05-02', coveredTo: '2026-08-01' },
+        runs: []
+      }
+    ]
+  });
+
+  assert.match(html, /sales-by-project/);
+  assert.match(html, /workplace-analysis/);
+  assert.match(html, /value="sales-by-project"/);
+  assert.match(html, /value="workplace-analysis"/);
+  assert.match(html, /name="refreshPastDays"/);
+  assert.match(html, /name="refreshFutureDays"/);
+  assert.match(html, /name="refreshPastDays" type="number" min="45"/);
+  assert.match(html, /name="refreshFutureDays" type="number" min="45"/);
+  assert.match(html, /value="60"/);
+  assert.doesNotMatch(html, /value="30"/);
+});
+
 test('renderPreloadManagement escapes hostile values', () => {
   const hostile = `<script>alert("x")</script>&'`;
   const html = renderPreloadManagement({

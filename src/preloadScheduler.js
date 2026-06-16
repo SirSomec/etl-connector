@@ -1,6 +1,7 @@
 const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
 
 const MOSCOW_UTC_OFFSET_HOURS = 3;
+const MIN_SCHEDULE_REFRESH_DAYS = 45;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function formatDateUTC(date) {
@@ -20,8 +21,14 @@ function addDaysUTC(date, days) {
 
 function scheduledRangeForJob(job, now = new Date()) {
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const pastDays = Math.max(1, Number(job.refreshPastDays ?? job.refreshDays) || 45);
-  const futureDays = Math.max(0, Number(job.refreshFutureDays) || 0);
+  const pastDays = Math.max(
+    MIN_SCHEDULE_REFRESH_DAYS,
+    Number(job.refreshPastDays ?? job.refreshDays) || MIN_SCHEDULE_REFRESH_DAYS
+  );
+  const futureDays = Math.max(
+    MIN_SCHEDULE_REFRESH_DAYS,
+    Number(job.refreshFutureDays) || MIN_SCHEDULE_REFRESH_DAYS
+  );
   const toDate = formatDateUTC(addDaysUTC(today, futureDays + 1));
   const fromDate = formatDateUTC(addDaysUTC(today, -pastDays));
 

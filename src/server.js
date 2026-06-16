@@ -362,7 +362,7 @@ function parseRefreshDaysFromBody(value) {
 
   const refreshDays = Number(text);
 
-  if (!Number.isInteger(refreshDays) || refreshDays < 1 || refreshDays > 366) {
+  if (!Number.isInteger(refreshDays) || refreshDays < 45 || refreshDays > 366) {
     throw createScheduleSettingsError();
   }
 
@@ -813,12 +813,34 @@ function createApp({
   }
 
   function preloadScheduleFromBody(body) {
+    const safeBody = body || {};
     const enabledValue = body && body.enabled;
+    const hasWindowFields = Object.prototype.hasOwnProperty.call(safeBody, 'refreshPastDays')
+      || Object.prototype.hasOwnProperty.call(safeBody, 'refreshFutureDays');
+    const input = {
+      jobId: String(safeBody.jobId || SALES_PRELOAD_JOB_ID),
+      enabled: enabledValue === '1' || enabledValue === 'on' || enabledValue === 'true',
+      scheduleTime: parseScheduleTimeFromBody(safeBody.scheduleTime)
+    };
+
+    if (hasWindowFields) {
+      input.refreshPastDays = parseRefreshDaysFromBody(
+        Object.prototype.hasOwnProperty.call(safeBody, 'refreshPastDays')
+          ? safeBody.refreshPastDays
+          : safeBody.refreshDays
+      );
+      input.refreshFutureDays = parseRefreshDaysFromBody(
+        Object.prototype.hasOwnProperty.call(safeBody, 'refreshFutureDays')
+          ? safeBody.refreshFutureDays
+          : (safeBody.refreshDays || '45')
+      );
+
+      return input;
+    }
 
     return {
-      enabled: enabledValue === '1' || enabledValue === 'on' || enabledValue === 'true',
-      scheduleTime: parseScheduleTimeFromBody(body && body.scheduleTime),
-      refreshDays: parseRefreshDaysFromBody(body && body.refreshDays)
+      ...input,
+      refreshDays: parseRefreshDaysFromBody(safeBody.refreshDays)
     };
   }
 
@@ -874,6 +896,23 @@ function createApp({
       recordCurrentUserActivity(req, activityEventType(req));
     }
 
+    const diagnostics = typeof preloads.getDiagnostics === 'function' ? preloads.getDiagnostics() : null;
+    const jobs = typeof preloads.listJobs === 'function'
+      ? preloads.listJobs()
+      : [preloads.getJob(SALES_PRELOAD_JOB_ID)].filter(Boolean);
+    const jobPanels = jobs
+      .filter(Boolean)
+      .map((job) => {
+        const jobId = job.id || SALES_PRELOAD_JOB_ID;
+
+        return {
+          job,
+          overview: typeof preloads.getOverview === 'function' ? preloads.getOverview(jobId) : {},
+          diagnostics: jobId === SALES_PRELOAD_JOB_ID ? diagnostics : null,
+          runs: typeof preloads.listRuns === 'function' ? preloads.listRuns(jobId, 20) : []
+        };
+      });
+
     res
       .status(statusCode)
       .type('html')
@@ -882,10 +921,7 @@ function createApp({
           database,
           message: options.message || '',
           error: options.error || '',
-          job: preloads.getJob(SALES_PRELOAD_JOB_ID),
-          overview: preloads.getOverview(),
-          diagnostics: typeof preloads.getDiagnostics === 'function' ? preloads.getDiagnostics() : null,
-          runs: preloads.listRuns(SALES_PRELOAD_JOB_ID, 20),
+          jobs: jobPanels,
           ...viewContext(req)
         })
       );
@@ -1251,7 +1287,11 @@ function createApp({
         return;
       }
 
-      const result = await preloads.runSalesByProject(normalizeManualPreloadRange(req.body));
+      const jobId = String((req.body && req.body.jobId) || SALES_PRELOAD_JOB_ID);
+      const range = normalizeManualPreloadRange(req.body);
+      const result = typeof preloads.runJob === 'function'
+        ? await preloads.runJob({ jobId, ...range })
+        : await preloads.runSalesByProject(range);
       const message = result && (result.status === 'already-running' || result.alreadyRunning)
         ? 'already-running'
         : 'run-started';
@@ -1615,7 +1655,8 @@ function createApp({
           new Date(),
           {
             activeGigersCache,
-            cache: dashboardSectionCache
+            cache: dashboardSectionCache,
+            preloadService: preloads
           }
         );
 
@@ -1970,6 +2011,7 @@ function start(options = {}) {
     preloadService = createPreloadServiceFn({
       client,
       storePath: config.preload.storePath,
+      activeGigersCache,
       sanitizeError: (error) => sanitizeForResponse(error && error.message, config)
     });
   } catch (error) {

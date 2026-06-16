@@ -932,6 +932,162 @@ test('loadWorkplaceAnalysisDashboardSection loads and caches points independentl
   ]);
 });
 
+test('loadWorkplaceAnalysisDashboardSection reads points from preload when available', async () => {
+  const readCalls = [];
+  const registerCalls = [];
+  const client = {
+    async queryJSONEachRow() {
+      throw new Error('ClickHouse should not be queried on preload hit');
+    }
+  };
+  const preloadService = {
+    registerWorkplaceAnalysisRequest(input) {
+      registerCalls.push(input);
+    },
+    readWorkplaceAnalysisSection(input) {
+      readCalls.push(input);
+      return {
+        filters: {
+          from: '2026-06-01',
+          to: '2026-06-03',
+          toExclusiveDateTime: '2026-06-04 00:00:00'
+        },
+        points: [{ workplaceId: 'wp1', totalOrderedShifts: 9 }],
+        pagination: { totalWorkplaces: 1 }
+      };
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    { from: '2026-06-01', to: '2026-06-03', city: 'Москва' },
+    'points',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  assert.equal(dashboard.dataSource, 'preload');
+  assert.deepEqual(dashboard.points, [{ workplaceId: 'wp1', totalOrderedShifts: 9 }]);
+  assert.equal(readCalls.length, 1);
+  assert.equal(readCalls[0].section, 'points');
+  assert.equal(readCalls[0].fromDate, '2026-06-01');
+  assert.equal(readCalls[0].toDate, '2026-06-04');
+  assert.equal(readCalls[0].cacheKey.includes('"section":"points"'), true);
+  assert.equal(registerCalls.length, 1);
+  assert.equal(registerCalls[0].section, 'points');
+});
+
+test('loadWorkplaceAnalysisDashboardSection reads attention from preload when available', async () => {
+  const readCalls = [];
+  const client = {
+    async queryJSONEachRow() {
+      throw new Error('ClickHouse should not be queried on preload hit');
+    }
+  };
+  const preloadService = {
+    registerWorkplaceAnalysisRequest() {},
+    readWorkplaceAnalysisSection(input) {
+      readCalls.push(input);
+      return {
+        filters: {
+          attentionFrom: '2026-06-15',
+          attentionTo: '2026-06-22',
+          attentionToExclusiveDateTime: '2026-06-23 00:00:00'
+        },
+        attentionPoints: [{ workplaceId: 'wp1', free7d: 3 }]
+      };
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    { city: 'Москва' },
+    'attention',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  assert.equal(dashboard.dataSource, 'preload');
+  assert.deepEqual(dashboard.attentionPoints, [{ workplaceId: 'wp1', free7d: 3 }]);
+  assert.equal(readCalls.length, 1);
+  assert.equal(readCalls[0].section, 'attention');
+  assert.equal(readCalls[0].fromDate, '2026-06-15');
+  assert.equal(readCalls[0].toDate, '2026-06-23');
+});
+
+test('loadWorkplaceAnalysisDashboardSection registers request and falls back to ClickHouse on preload miss', async () => {
+  const calls = [];
+  const registerCalls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis total workplaces') {
+        return [{ total_workplaces: 1 }];
+      }
+
+      if (operation === 'workplace analysis top workplaces') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Точка',
+            client_title: 'Бренд',
+            city: 'Москва',
+            total_ordered_shifts: 9,
+            active_days: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis daily orders') {
+        return [
+          {
+            workplace_id: 'wp1',
+            order_date: '2026-06-01',
+            ordered_shifts: 9,
+            sla_ordered_shifts: 9,
+            sla_completed_shifts: 8
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis active gigers 5km') {
+        return [];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const preloadService = {
+    registerWorkplaceAnalysisRequest(input) {
+      registerCalls.push(input);
+    },
+    readWorkplaceAnalysisSection() {
+      return null;
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    { from: '2026-06-01', to: '2026-06-03' },
+    'points',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  assert.equal(dashboard.dataSource, 'clickhouse');
+  assert.equal(dashboard.points.length, 1);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'workplace analysis total workplaces',
+    'workplace analysis top workplaces',
+    'workplace analysis daily orders',
+    'workplace analysis active gigers 5km'
+  ]);
+  assert.equal(registerCalls.length, 1);
+  assert.equal(registerCalls[0].fromDate, '2026-06-01');
+  assert.equal(registerCalls[0].toDate, '2026-06-04');
+});
+
 test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing statuses and 15km base', async () => {
   const calls = [];
   const client = {

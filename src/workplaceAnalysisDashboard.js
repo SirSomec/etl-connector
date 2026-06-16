@@ -1963,6 +1963,76 @@ function cacheKeyForWorkplaceAnalysisSection(section, filters) {
   });
 }
 
+function datePartFromDateTime(value) {
+  return String(value || '').slice(0, 10);
+}
+
+function preloadRangeForWorkplaceAnalysisSection(section, filters) {
+  if (section === 'attention') {
+    return {
+      fromDate: filters.attentionFrom,
+      toDate: datePartFromDateTime(filters.attentionToExclusiveDateTime)
+    };
+  }
+
+  return {
+    fromDate: filters.from,
+    toDate: datePartFromDateTime(filters.toExclusiveDateTime)
+  };
+}
+
+function withDataSource(dashboard, dataSource) {
+  return {
+    ...dashboard,
+    dataSource
+  };
+}
+
+function registerWorkplaceAnalysisPreloadRequest(preloadService, { section, cacheKey, filters, input, range }) {
+  if (!preloadService || typeof preloadService.registerWorkplaceAnalysisRequest !== 'function') {
+    return;
+  }
+
+  try {
+    preloadService.registerWorkplaceAnalysisRequest({
+      section,
+      cacheKey,
+      input: {
+        ...input,
+        from: filters.from,
+        to: filters.to
+      },
+      fromDate: range.fromDate,
+      toDate: range.toDate
+    });
+  } catch (_) {
+    // Preload registration is opportunistic; the dashboard must keep the ClickHouse fallback.
+  }
+}
+
+function readWorkplaceAnalysisPreload(preloadService, { section, cacheKey, range }) {
+  if (!preloadService || typeof preloadService.readWorkplaceAnalysisSection !== 'function') {
+    return null;
+  }
+
+  try {
+    const result = preloadService.readWorkplaceAnalysisSection({
+      section,
+      cacheKey,
+      fromDate: range.fromDate,
+      toDate: range.toDate
+    });
+
+    if (!result) {
+      return null;
+    }
+
+    return result.payload || result;
+  } catch (_) {
+    return null;
+  }
+}
+
 function orderRowsByWorkplaceIds(rows, workplaceIds) {
   const rowsByWorkplace = new Map();
 
@@ -2111,21 +2181,57 @@ async function loadWorkplaceAnalysisDashboardSection(
 
   if (section === 'attention') {
     const filters = normalizeWorkplaceAttentionFilters(input, now);
+    const cacheKey = cacheKeyForWorkplaceAnalysisSection(section, filters);
+    const range = preloadRangeForWorkplaceAnalysisSection(section, filters);
 
-    return readThroughCache(
+    registerWorkplaceAnalysisPreloadRequest(options.preloadService, {
+      section,
+      cacheKey,
+      filters,
+      input,
+      range
+    });
+
+    const preloaded = readWorkplaceAnalysisPreload(options.preloadService, { section, cacheKey, range });
+
+    if (preloaded) {
+      return withDataSource(preloaded, 'preload');
+    }
+
+    const dashboard = await readThroughCache(
       options.cache,
-      cacheKeyForWorkplaceAnalysisSection(section, filters),
+      cacheKey,
       () => loadWorkplaceAttentionDashboard(client, filters)
     );
+
+    return withDataSource(dashboard, 'clickhouse');
   }
 
   const filters = normalizeWorkplaceAnalysisFilters(input, now);
+  const cacheKey = cacheKeyForWorkplaceAnalysisSection(section, filters);
+  const range = preloadRangeForWorkplaceAnalysisSection(section, filters);
 
-  return readThroughCache(
+  registerWorkplaceAnalysisPreloadRequest(options.preloadService, {
+    section,
+    cacheKey,
+    filters,
+    input,
+    range
+  });
+
+  const preloaded = readWorkplaceAnalysisPreload(options.preloadService, { section, cacheKey, range });
+
+  if (preloaded) {
+    return withDataSource(preloaded, 'preload');
+  }
+
+  const dashboard = await readThroughCache(
     options.cache,
-    cacheKeyForWorkplaceAnalysisSection(section, filters),
+    cacheKey,
     () => loadWorkplaceAnalysisPointsDashboard(client, filters, options)
   );
+
+  return withDataSource(dashboard, 'clickhouse');
 }
 
 async function loadWorkplaceAnalysisDashboard(client, input = {}, now = new Date(), options = {}) {
@@ -2141,6 +2247,7 @@ async function loadWorkplaceAnalysisDashboard(client, input = {}, now = new Date
 module.exports = {
   WORKPLACE_ANALYSIS_SECTIONS,
   buildDateKeys,
+  cacheKeyForWorkplaceAnalysisSection,
   heatmapLevel,
   loadActiveGigers5kmByWorkplace,
   loadWorkplaceAnalysisGigerDetails,

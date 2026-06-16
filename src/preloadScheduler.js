@@ -20,8 +20,10 @@ function addDaysUTC(date, days) {
 
 function scheduledRangeForJob(job, now = new Date()) {
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const toDate = formatDateUTC(addDaysUTC(today, 1));
-  const fromDate = formatDateUTC(addDaysUTC(today, -Math.max(1, Number(job.refreshDays) || 45)));
+  const pastDays = Math.max(1, Number(job.refreshPastDays ?? job.refreshDays) || 45);
+  const futureDays = Math.max(0, Number(job.refreshFutureDays) || 0);
+  const toDate = formatDateUTC(addDaysUTC(today, futureDays + 1));
+  const fromDate = formatDateUTC(addDaysUTC(today, -pastDays));
 
   return { fromDate, toDate };
 }
@@ -84,7 +86,7 @@ function createPreloadScheduler({
   clearTimeoutFn = clearTimeout
 }) {
   const runningByJob = new Map();
-  let timer = null;
+  const timersByJob = new Map();
   let stopped = false;
 
   async function runNow({ jobId, trigger, fromDate, toDate }) {
@@ -122,43 +124,57 @@ function createPreloadScheduler({
     return runPromise;
   }
 
-  function clearTimer() {
-    if (timer) {
+  function clearTimers() {
+    for (const timer of timersByJob.values()) {
       clearTimeoutFn(timer);
-      timer = null;
     }
+    timersByJob.clear();
+  }
+
+  function schedulableJobs() {
+    if (typeof store.listJobs === 'function') {
+      return store.listJobs();
+    }
+
+    const job = store.getJob(SALES_PRELOAD_JOB_ID);
+
+    return job ? [job] : [];
   }
 
   function reschedule() {
     stopped = false;
-    clearTimer();
+    clearTimers();
 
-    const job = store.getJob(SALES_PRELOAD_JOB_ID);
+    const jobs = schedulableJobs().filter((job) => job && job.enabled);
 
-    if (!job || !job.enabled) {
+    if (jobs.length === 0) {
       return;
     }
 
-    timer = setTimeoutFn(async () => {
-      timer = null;
+    for (const job of jobs) {
+      const timer = setTimeoutFn(async () => {
+        timersByJob.delete(job.id);
 
-      try {
-        await runNow({
-          jobId: SALES_PRELOAD_JOB_ID,
-          trigger: 'schedule',
-          ...scheduledRangeForJob(job, now())
-        });
-      } finally {
-        if (!stopped) {
-          reschedule();
+        try {
+          await runNow({
+            jobId: job.id,
+            trigger: 'schedule',
+            ...scheduledRangeForJob(job, now())
+          });
+        } finally {
+          if (!stopped) {
+            reschedule();
+          }
         }
-      }
-    }, nextDelayForJob(job, now()));
+      }, nextDelayForJob(job, now()));
+
+      timersByJob.set(job.id, timer);
+    }
   }
 
   function stop() {
     stopped = true;
-    clearTimer();
+    clearTimers();
   }
 
   function drain() {

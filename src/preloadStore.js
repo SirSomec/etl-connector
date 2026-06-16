@@ -3,7 +3,9 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
 const SALES_PRELOAD_JOB_ID = 'sales-by-project';
+const WORKPLACE_ANALYSIS_PRELOAD_JOB_ID = 'workplace-analysis';
 const DEFAULT_PRELOAD_REFRESH_DAYS = 45;
+const DEFAULT_PRELOAD_REFRESH_FUTURE_DAYS = 45;
 const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sqlite');
 const DEFAULT_PRELOAD_SCHEDULE_TIME = '03:00';
 const DEFAULT_PRELOAD_TIMEZONE = 'Europe/Moscow';
@@ -134,13 +136,22 @@ function normalizeJob(row) {
     return null;
   }
 
+  const refreshPastDays = Number.isFinite(Number(row.refresh_past_days))
+    ? Number(row.refresh_past_days)
+    : Number(row.refresh_days);
+  const refreshFutureDays = Number.isFinite(Number(row.refresh_future_days))
+    ? Number(row.refresh_future_days)
+    : DEFAULT_PRELOAD_REFRESH_FUTURE_DAYS;
+
   return {
     id: row.id,
     title: row.title,
     enabled: Boolean(row.enabled),
     scheduleTime: row.schedule_time,
     timezone: row.timezone,
-    refreshDays: row.refresh_days,
+    refreshDays: refreshPastDays,
+    refreshPastDays,
+    refreshFutureDays,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastSuccessAt: row.last_success_at || '',
@@ -201,6 +212,42 @@ function ensureColumn(db, tableName, columnName, definition) {
   return false;
 }
 
+function refreshDayValue(value) {
+  const number = Number(value);
+
+  return Number.isSafeInteger(number) && number >= 0 ? number : null;
+}
+
+function seedPreloadJob(db, now, { id, title }) {
+  const timestamp = toIsoString(now);
+
+  db.prepare(`
+INSERT OR IGNORE INTO preload_jobs (
+  id,
+  title,
+  enabled,
+  schedule_time,
+  timezone,
+  refresh_days,
+  refresh_past_days,
+  refresh_future_days,
+  created_at,
+  updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`).run(
+    id,
+    title,
+    1,
+    DEFAULT_PRELOAD_SCHEDULE_TIME,
+    DEFAULT_PRELOAD_TIMEZONE,
+    DEFAULT_PRELOAD_REFRESH_DAYS,
+    DEFAULT_PRELOAD_REFRESH_DAYS,
+    DEFAULT_PRELOAD_REFRESH_FUTURE_DAYS,
+    timestamp,
+    timestamp
+  );
+}
+
 function initializeSchema(db, now) {
   db.exec(`
 PRAGMA journal_mode = WAL;
@@ -213,6 +260,8 @@ CREATE TABLE IF NOT EXISTS preload_jobs (
   schedule_time TEXT NOT NULL,
   timezone TEXT NOT NULL,
   refresh_days INTEGER NOT NULL,
+  refresh_past_days INTEGER NOT NULL DEFAULT 45,
+  refresh_future_days INTEGER NOT NULL DEFAULT 45,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   last_success_at TEXT,
@@ -294,6 +343,10 @@ CREATE INDEX IF NOT EXISTS idx_sales_shift_facts_period_brand ON sales_by_projec
 CREATE INDEX IF NOT EXISTS idx_sales_shift_facts_status ON sales_by_project_shift_facts (period_date, status);
 `);
 
+  ensureColumn(db, 'preload_jobs', 'refresh_past_days', 'INTEGER NOT NULL DEFAULT 45');
+  ensureColumn(db, 'preload_jobs', 'refresh_future_days', 'INTEGER NOT NULL DEFAULT 45');
+  db.exec('UPDATE preload_jobs SET refresh_past_days = refresh_days WHERE refresh_days IS NOT NULL');
+
   ensureColumn(db, 'sales_by_project_daily', 'workplaces_with_orders', 'REAL NOT NULL DEFAULT 0');
   ensureColumn(db, 'sales_by_project_daily', 'worked_shifts', 'REAL NOT NULL DEFAULT 0');
   ensureColumn(db, 'sales_by_project_daily', 'unique_workers', 'REAL NOT NULL DEFAULT 0');
@@ -309,22 +362,14 @@ CREATE INDEX IF NOT EXISTS idx_sales_shift_facts_status ON sales_by_project_shif
     db.exec('DELETE FROM sales_by_project_coverage');
   }
 
-  const timestamp = toIsoString(now);
-
-  db.prepare(`
-INSERT OR IGNORE INTO preload_jobs (
-  id, title, enabled, schedule_time, timezone, refresh_days, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`).run(
-    SALES_PRELOAD_JOB_ID,
-    'Sales by project',
-    1,
-    DEFAULT_PRELOAD_SCHEDULE_TIME,
-    DEFAULT_PRELOAD_TIMEZONE,
-    DEFAULT_PRELOAD_REFRESH_DAYS,
-    timestamp,
-    timestamp
-  );
+  seedPreloadJob(db, now, {
+    id: SALES_PRELOAD_JOB_ID,
+    title: 'Sales by project'
+  });
+  seedPreloadJob(db, now, {
+    id: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+    title: 'Анализ точек'
+  });
 }
 
 function createPreloadStore({ filePath = DEFAULT_PRELOAD_STORE_PATH, now = () => new Date() } = {}) {
@@ -338,18 +383,35 @@ function createPreloadStore({ filePath = DEFAULT_PRELOAD_STORE_PATH, now = () =>
     return normalizeJob(db.prepare('SELECT * FROM preload_jobs WHERE id = ?').get(jobId));
   }
 
-  function saveJobSchedule(jobId, { enabled, scheduleTime, refreshDays }) {
+  function listJobs() {
+    return db.prepare(`
+SELECT *
+FROM preload_jobs
+ORDER BY id
+`).all().map(normalizeJob);
+  }
+
+  function saveJobSchedule(jobId, { enabled, scheduleTime, refreshDays, refreshPastDays, refreshFutureDays }) {
+    const pastDays = refreshDayValue(
+      refreshPastDays === undefined || refreshPastDays === null ? refreshDays : refreshPastDays
+    );
+    const futureDays = refreshDayValue(refreshFutureDays);
+
     db.prepare(`
 UPDATE preload_jobs
 SET enabled = COALESCE(?, enabled),
     schedule_time = COALESCE(?, schedule_time),
     refresh_days = COALESCE(?, refresh_days),
+    refresh_past_days = COALESCE(?, refresh_past_days),
+    refresh_future_days = COALESCE(?, refresh_future_days),
     updated_at = ?
 WHERE id = ?
 `).run(
       typeof enabled === 'boolean' ? Number(enabled) : null,
       scheduleTime || null,
-      Number.isFinite(Number(refreshDays)) ? Number(refreshDays) : null,
+      pastDays,
+      pastDays,
+      futureDays,
       toIsoString(now),
       jobId
     );
@@ -716,6 +778,7 @@ ORDER BY shifts DESC
 
   return {
     getJob,
+    listJobs,
     saveJobSchedule,
     startRun,
     finishRun,
@@ -731,9 +794,11 @@ ORDER BY shifts DESC
 
 module.exports = {
   DEFAULT_PRELOAD_REFRESH_DAYS,
+  DEFAULT_PRELOAD_REFRESH_FUTURE_DAYS,
   DEFAULT_PRELOAD_SCHEDULE_TIME,
   DEFAULT_PRELOAD_STORE_PATH,
   DEFAULT_PRELOAD_TIMEZONE,
   SALES_PRELOAD_JOB_ID,
+  WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
   createPreloadStore
 };

@@ -6,6 +6,7 @@ const {
   scheduledRangeForJob
 } = require('../src/preloadScheduler');
 const { SALES_PRELOAD_JOB_ID } = require('../src/preloadStore');
+const { WORKPLACE_ANALYSIS_PRELOAD_JOB_ID } = require('../src/preloadStore');
 const { createPreloadService } = require('../src/preloadService');
 
 test('scheduledRangeForJob returns last refresh days as exclusive range', () => {
@@ -17,6 +18,18 @@ test('scheduledRangeForJob returns last refresh days as exclusive range', () => 
   assert.deepEqual(range, {
     fromDate: '2026-04-20',
     toDate: '2026-06-05'
+  });
+});
+
+test('scheduledRangeForJob returns past and future exclusive range', () => {
+  const range = scheduledRangeForJob(
+    { refreshPastDays: 45, refreshFutureDays: 45 },
+    new Date('2026-06-16T12:00:00.000Z')
+  );
+
+  assert.deepEqual(range, {
+    fromDate: '2026-05-02',
+    toDate: '2026-08-01'
   });
 });
 
@@ -211,6 +224,60 @@ test('preload scheduler reschedules enabled sales job and stop clears timer', ()
   assert.equal(timeouts[0].delay >= 0, true);
   assert.equal(timeouts[1].delay >= 0, true);
   assert.deepEqual(cleared, [timeouts[0], timeouts[1]]);
+});
+
+test('preload scheduler reschedules every enabled job', () => {
+  const timeouts = [];
+  const store = {
+    startRun(input) {
+      return { id: timeouts.length, ...input };
+    },
+    finishRun(runId, input) {
+      return { id: runId, ...input };
+    },
+    listJobs() {
+      return [
+        {
+          id: SALES_PRELOAD_JOB_ID,
+          enabled: true,
+          scheduleTime: '03:00',
+          timezone: 'Europe/Moscow',
+          refreshPastDays: 45,
+          refreshFutureDays: 45
+        },
+        {
+          id: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+          enabled: true,
+          scheduleTime: '04:00',
+          timezone: 'Europe/Moscow',
+          refreshPastDays: 45,
+          refreshFutureDays: 45
+        }
+      ];
+    },
+    getJob() {
+      throw new Error('listJobs should be used when available');
+    }
+  };
+  const scheduler = createPreloadScheduler({
+    store,
+    loaders: {
+      [SALES_PRELOAD_JOB_ID]: async () => ({ rowsWritten: 1 }),
+      [WORKPLACE_ANALYSIS_PRELOAD_JOB_ID]: async () => ({ rowsWritten: 2 })
+    },
+    now: () => new Date('2026-06-16T00:00:00.000Z'),
+    setTimeoutFn(callback, delay) {
+      const timer = { callback, delay };
+      timeouts.push(timer);
+      return timer;
+    },
+    clearTimeoutFn() {}
+  });
+
+  scheduler.reschedule();
+
+  assert.equal(timeouts.length, 2);
+  assert.equal(timeouts.every((timer) => timer.delay >= 0), true);
 });
 
 test('reschedule does not schedule missing or disabled sales job', () => {

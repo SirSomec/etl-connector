@@ -8,6 +8,7 @@ const { DatabaseSync } = require('node:sqlite');
 const {
   DEFAULT_PRELOAD_REFRESH_DAYS,
   SALES_PRELOAD_JOB_ID,
+  WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
   createPreloadStore
 } = require('../src/preloadStore');
 
@@ -21,12 +22,49 @@ test('preload store initializes default sales job', async () => {
 
   try {
     const job = store.getJob(SALES_PRELOAD_JOB_ID);
+    const workplaceJob = store.getJob(WORKPLACE_ANALYSIS_PRELOAD_JOB_ID);
 
     assert.equal(job.id, SALES_PRELOAD_JOB_ID);
     assert.equal(job.enabled, true);
     assert.equal(job.scheduleTime, '03:00');
     assert.equal(job.timezone, 'Europe/Moscow');
     assert.equal(job.refreshDays, DEFAULT_PRELOAD_REFRESH_DAYS);
+    assert.equal(job.refreshPastDays, 45);
+    assert.equal(job.refreshFutureDays, 45);
+    assert.equal(workplaceJob.id, WORKPLACE_ANALYSIS_PRELOAD_JOB_ID);
+    assert.equal(workplaceJob.enabled, true);
+    assert.equal(workplaceJob.refreshPastDays, 45);
+    assert.equal(workplaceJob.refreshFutureDays, 45);
+  } finally {
+    store.close();
+  }
+});
+
+test('preload store saves independent schedule windows per job', async () => {
+  const store = createPreloadStore({
+    filePath: await tempDbPath(),
+    now: () => new Date('2026-06-16T10:00:00.000Z')
+  });
+
+  try {
+    const saved = store.saveJobSchedule(WORKPLACE_ANALYSIS_PRELOAD_JOB_ID, {
+      enabled: false,
+      scheduleTime: '04:30',
+      refreshPastDays: 60,
+      refreshFutureDays: 30
+    });
+    const salesJob = store.getJob(SALES_PRELOAD_JOB_ID);
+
+    assert.equal(saved.id, WORKPLACE_ANALYSIS_PRELOAD_JOB_ID);
+    assert.equal(saved.enabled, false);
+    assert.equal(saved.scheduleTime, '04:30');
+    assert.equal(saved.refreshDays, 60);
+    assert.equal(saved.refreshPastDays, 60);
+    assert.equal(saved.refreshFutureDays, 30);
+    assert.equal(salesJob.enabled, true);
+    assert.equal(salesJob.scheduleTime, '03:00');
+    assert.equal(salesJob.refreshPastDays, 45);
+    assert.equal(salesJob.refreshFutureDays, 45);
   } finally {
     store.close();
   }

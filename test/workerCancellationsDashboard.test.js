@@ -628,14 +628,14 @@ test('loadWorkerCancellationsDashboardSection queries workers with safe params a
   assert.equal(workersCall.query.includes("h.initiator = 'worker'"), true);
   assert.equal(workersCall.query.includes("h.status = 'cancelled'"), true);
   assert.equal(workersCall.query.includes('coalesce(h.createdAt, h.updatedAt) AS event_at'), true);
-  assert.equal(workersCall.query.includes('is_worker_cancelled'), true);
-  assert.equal(workersCall.query.includes('is_worker_cancelled_24h'), true);
-  assert.equal(workersCall.query.includes('is_post_start_cancelled'), true);
-  assert.equal(workersCall.query.includes('event_at >= sf.start'), true);
-  assert.equal(workersCall.query.includes('event_at < sf.start'), true);
+  assert.equal(workersCall.query.includes('AS worker_cancellations'), true);
+  assert.equal(workersCall.query.includes('AS worker_cancellations_24h'), true);
+  assert.equal(workersCall.query.includes('AS post_start_cancellations'), true);
+  assert.equal(workersCall.query.includes('event_at >= ce.start'), true);
+  assert.equal(workersCall.query.includes('event_at < ce.start'), true);
   assert.equal(workersCall.query.includes('INTERVAL 24 HOUR'), true);
   assert.equal(workersCall.query.includes("status = 'failed'"), true);
-  assert.equal(workersCall.query.includes('LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job'), true);
+  assert.equal(workersCall.query.includes('LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job'), false);
   assert.equal(workersCall.query.includes('AS is_successful_confirmed_shift'), true);
   assert.equal(workersCall.query.includes('uniqExactIf(sf.job, is_successful_confirmed_shift = 1) AS confirmed_shifts'), true);
   assert.equal(workersCall.query.includes('LEFT JOIN worker_cancel_events AS worker_event'), false);
@@ -680,6 +680,57 @@ test('loadWorkerCancellationsDashboardSection constrains cancellation metrics to
 
   assert.equal(workersCall.query.includes('toString(o.pieceworks)'), true);
   assert.equal(workersCall.query.includes('j.piecework'), false);
+});
+
+test('loadWorkerCancellationsDashboardSection limits cancellation history joins to cancelled shifts', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations total workers': [{ total_workers: '0' }],
+    'worker cancellations workers': []
+  });
+
+  await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31'
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const workersCall = calls.find((call) => call.operation === 'worker cancellations workers');
+
+  assert.equal(workersCall.query.includes('cancelled_shift_facts AS'), true);
+  assert.equal(workersCall.query.includes("WHERE status = 'cancelled'"), true);
+  assert.equal(
+    workersCall.query.includes('INNER JOIN cancelled_shift_facts AS csf ON h.job = csf.job'),
+    true
+  );
+  assert.equal(workersCall.query.includes('FROM shift_facts AS sf\n    LEFT JOIN cancellation_events AS ce'), false);
+});
+
+test('loadWorkerCancellationsDashboardSection aggregates cancellation metrics by worker before final join', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations total workers': [{ total_workers: '0' }],
+    'worker cancellations workers': []
+  });
+
+  await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31'
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  const workersCall = calls.find((call) => call.operation === 'worker cancellations workers');
+
+  assert.equal(workersCall.query.includes('base_worker_metrics AS'), true);
+  assert.equal(workersCall.query.includes('cancellation_worker_metrics AS'), true);
+  assert.equal(workersCall.query.includes('LEFT JOIN cancellation_worker_metrics AS cwm'), true);
+  assert.equal(workersCall.query.includes('LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job'), false);
 });
 
 test('loadWorkerCancellationsDashboardSection filters search and numeric ranges before pagination', async () => {

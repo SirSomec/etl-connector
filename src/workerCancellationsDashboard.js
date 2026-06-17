@@ -527,51 +527,57 @@ function workerCancellationMetricsCtes() {
       AND ifNull(j.deleted, 0) = 0
       AND ${actualOrderDomainCondition('o', 'c', 'ct')}
   ),
+  cancelled_shift_facts AS (
+    SELECT
+      job,
+      worker_id,
+      start
+    FROM shift_facts
+    WHERE status = 'cancelled'
+  ),
   cancellation_events AS (
     SELECT
       h.job AS job,
+      csf.worker_id AS worker_id,
       h.initiator = 'worker' AS is_worker_event,
-      coalesce(h.createdAt, h.updatedAt) AS event_at
+      coalesce(h.createdAt, h.updatedAt) AS event_at,
+      csf.start AS start
     FROM mg_job_history AS h
-    INNER JOIN shift_facts AS sf ON h.job = sf.job
+    INNER JOIN cancelled_shift_facts AS csf ON h.job = csf.job
     WHERE h.status = 'cancelled'
   ),
-  cancellation_flags AS (
-    SELECT
-      sf.job AS job,
-      max(if(ce.is_worker_event, 1, 0)) AS is_worker_cancelled,
-      max(if(
-        ce.is_worker_event
-          AND ce.event_at >= sf.start - INTERVAL 24 HOUR
-          AND ce.event_at < sf.start,
-        1,
-        0
-      )) AS is_worker_cancelled_24h,
-      max(if(ce.event_at >= sf.start, 1, 0)) AS is_post_start_cancelled
-    FROM shift_facts AS sf
-    LEFT JOIN cancellation_events AS ce ON ce.job = sf.job
-    GROUP BY sf.job
-  ),
-  worker_metrics AS (
+  base_worker_metrics AS (
     SELECT
       sf.worker_id AS worker_id,
       uniqExactIf(sf.job, is_successful_confirmed_shift = 1) AS confirmed_shifts,
-      uniqExactIf(
-        sf.job,
-        status = 'cancelled' AND ifNull(cf.is_worker_cancelled, 0) = 1
-      ) AS worker_cancellations,
-      uniqExactIf(
-        sf.job,
-        status = 'cancelled' AND ifNull(cf.is_worker_cancelled_24h, 0) = 1
-      ) AS worker_cancellations_24h,
-      uniqExactIf(
-        sf.job,
-        status = 'cancelled' AND ifNull(cf.is_post_start_cancelled, 0) = 1
-      ) AS post_start_cancellations,
       uniqExactIf(sf.job, status = 'failed') AS failed_shifts
     FROM shift_facts AS sf
-    LEFT JOIN cancellation_flags AS cf ON cf.job = sf.job
     GROUP BY sf.worker_id
+  ),
+  cancellation_worker_metrics AS (
+    SELECT
+      ce.worker_id AS worker_id,
+      uniqExactIf(ce.job, ce.is_worker_event) AS worker_cancellations,
+      uniqExactIf(
+        ce.job,
+        ce.is_worker_event
+          AND ce.event_at >= ce.start - INTERVAL 24 HOUR
+          AND ce.event_at < ce.start
+      ) AS worker_cancellations_24h,
+      uniqExactIf(ce.job, ce.event_at >= ce.start) AS post_start_cancellations
+    FROM cancellation_events AS ce
+    GROUP BY ce.worker_id
+  ),
+  worker_metrics AS (
+    SELECT
+      bwm.worker_id AS worker_id,
+      bwm.confirmed_shifts AS confirmed_shifts,
+      ifNull(cwm.worker_cancellations, 0) AS worker_cancellations,
+      ifNull(cwm.worker_cancellations_24h, 0) AS worker_cancellations_24h,
+      ifNull(cwm.post_start_cancellations, 0) AS post_start_cancellations,
+      bwm.failed_shifts AS failed_shifts
+    FROM base_worker_metrics AS bwm
+    LEFT JOIN cancellation_worker_metrics AS cwm ON cwm.worker_id = bwm.worker_id
   )`;
 }
 
@@ -689,30 +695,37 @@ function workerCancellationDetailsQuery(metric) {
       AND ifNull(j.deleted, 0) = 0
       AND ${actualOrderDomainCondition('o', 'actual_client', 'actual_contractor')}
   ),
+  cancelled_shift_facts AS (
+    SELECT
+      job,
+      start
+    FROM shift_facts
+    WHERE status = 'cancelled'
+  ),
   cancellation_events AS (
     SELECT
       h.job AS job,
       h.initiator = 'worker' AS is_worker_event,
-      coalesce(h.createdAt, h.updatedAt) AS event_at
+      coalesce(h.createdAt, h.updatedAt) AS event_at,
+      csf.start AS start
     FROM mg_job_history AS h
-    INNER JOIN shift_facts AS sf ON h.job = sf.job
+    INNER JOIN cancelled_shift_facts AS csf ON h.job = csf.job
     WHERE h.status = 'cancelled'
   ),
   cancellation_flags AS (
     SELECT
-      sf.job AS job,
+      ce.job AS job,
       max(if(ce.is_worker_event, 1, 0)) AS is_worker_cancelled,
       max(if(
         ce.is_worker_event
-          AND ce.event_at >= sf.start - INTERVAL 24 HOUR
-          AND ce.event_at < sf.start,
+          AND ce.event_at >= ce.start - INTERVAL 24 HOUR
+          AND ce.event_at < ce.start,
         1,
         0
       )) AS is_worker_cancelled_24h,
-      max(if(ce.event_at >= sf.start, 1, 0)) AS is_post_start_cancelled
-    FROM shift_facts AS sf
-    LEFT JOIN cancellation_events AS ce ON ce.job = sf.job
-    GROUP BY sf.job
+      max(if(ce.event_at >= ce.start, 1, 0)) AS is_post_start_cancelled
+    FROM cancellation_events AS ce
+    GROUP BY ce.job
   ),
   booking_events AS (
     SELECT

@@ -2983,6 +2983,11 @@ test('renderCityAnalysisDashboard renders progressive city fragments for selecte
     }
   });
 
+  assert.match(html, /class="city-dashboard-tabs"/);
+  assert.match(html, /role="tablist" aria-label="Разделы анализа городов"/);
+  assert.match(html, /class="city-dashboard-panel city-dashboard-panel-ranking"/);
+  assert.match(html, /class="city-dashboard-panel city-dashboard-panel-city"/);
+  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/city-analysis\/section\?section=city-ranking&amp;from=2026-05-01&amp;to=2026-05-31/);
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/city-analysis\/section\?section=summary-demand&amp;from=2026-05-01&amp;to=2026-05-31&amp;city=/);
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/city-analysis\/section\?section=summary-base&amp;from=2026-05-01/);
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/city-analysis\/section\?section=composition&amp;from=2026-05-01/);

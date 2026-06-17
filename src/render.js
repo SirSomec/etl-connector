@@ -1462,6 +1462,70 @@ function layout({
       margin-top: 10px;
     }
 
+    .city-dashboard-tabs {
+      display: block;
+    }
+
+    .city-dashboard-tab-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .city-dashboard-tab-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .city-dashboard-tab {
+      display: inline-flex;
+      min-height: 38px;
+      align-items: center;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: 6px 6px 0 0;
+      background: #eef2f6;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .city-dashboard-tab:hover {
+      color: var(--link);
+      outline: none;
+    }
+
+    #city-dashboard-tab-ranking:focus-visible ~ .city-dashboard-tab-list label[for="city-dashboard-tab-ranking"],
+    #city-dashboard-tab-city:focus-visible ~ .city-dashboard-tab-list label[for="city-dashboard-tab-city"] {
+      color: var(--link);
+      outline: 2px solid var(--link);
+      outline-offset: 2px;
+    }
+
+    .city-dashboard-panels {
+      display: block;
+    }
+
+    .city-dashboard-panel {
+      display: none;
+    }
+
+    #city-dashboard-tab-ranking:checked ~ .city-dashboard-tab-list label[for="city-dashboard-tab-ranking"],
+    #city-dashboard-tab-city:checked ~ .city-dashboard-tab-list label[for="city-dashboard-tab-city"] {
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    #city-dashboard-tab-ranking:checked ~ .city-dashboard-panels .city-dashboard-panel-ranking,
+    #city-dashboard-tab-city:checked ~ .city-dashboard-panels .city-dashboard-panel-city {
+      display: block;
+    }
+
     .attention-table {
       width: 100%;
       min-width: 0;
@@ -8232,28 +8296,33 @@ function renderCityRankingSection(dashboard, currentUser) {
 </section>`;
 }
 
+function renderCityRankingProgressiveSection(filters) {
+  const rankingFilters = {
+    from: filters.from,
+    to: filters.to
+  };
+
+  return `<div data-dashboard-fragment-url="${escapeHtml(cityAnalysisSectionUrl(rankingFilters, 'city-ranking'))}">
+  <section class="section">
+    <h2>Рейтинг актуальных городов с заказами</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>`;
+}
+
 function renderCityProgressiveSections(dashboard) {
   const filters = dashboard.filters || {};
   const context = dashboard.context || {};
   const hasCity =
     typeof context.hasCity === 'boolean' ? context.hasCity : String(filters.city || '') !== '';
 
-  const rankingSection = `<div data-dashboard-fragment-url="${escapeHtml(cityAnalysisSectionUrl(filters, 'city-ranking'))}">
-  <section class="section">
-    <h2>Рейтинг актуальных городов с заказами</h2>
-    <p class="loading">Загружается</p>
-  </section>
-</div>`;
-
   if (!hasCity) {
-    return `${rankingSection}
-<section class="section">
+    return `<section class="section">
   <p class="empty">Выберите город для анализа.</p>
 </section>`;
   }
 
-  return `${rankingSection}
-<section class="section" data-city-analysis-progressive>
+  return `<section class="section" data-city-analysis-progressive>
   <h2>Баланс спроса и базы</h2>
   <div class="kpi-grid">
     ${renderCityLoadingKpiCard({ label: 'Заказ', section: 'summary-demand', filters })}
@@ -8938,23 +9007,30 @@ function renderCityAnalysisResultSections(dashboard, currentUser) {
   return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition, currentUser)}${renderCityDynamics(dashboard.dynamics, currentUser, filters)}`;
 }
 
-function renderCityAnalysisDashboard({
-  database,
-  dashboard,
-  progressive = false,
-  currentUser,
-  csrfToken
-}) {
-  const filters = dashboard.filters || {};
-  const context = dashboard.context || {};
-  const summary = dashboard.summary || {};
-  const period = context.periodLabel || `${rangeFilterValue(filters.from)} - ${rangeFilterValue(filters.to)}`;
-  const content = `<section class="section">
-  <h1>Анализ городов</h1>
-  <p class="technical-note">Период: ${escapeHtml(period)} · логика базы: пользователи с последней локацией в радиусе 15 км от точек города.</p>
-</section>
-<section class="section">
+function renderCityRankingPeriodForm(filters) {
+  return `<section class="section">
   <form class="filter-bar" action="/dashboards/city-analysis" method="get">
+    <input type="hidden" name="tab" value="ranking">
+    <div class="field">
+      <label for="cityRankingFrom">С</label>
+      <input id="cityRankingFrom" name="from" type="date" value="${escapeHtml(rangeFilterValue(filters.from))}">
+    </div>
+    <div class="field">
+      <label for="cityRankingTo">По</label>
+      <input id="cityRankingTo" name="to" type="date" value="${escapeHtml(rangeFilterValue(filters.to))}">
+    </div>
+    <button type="submit">Применить</button>
+  </form>
+</section>`;
+}
+
+function renderCityAnalysisFilterSection(dashboard, currentUser, progressive) {
+  const filters = dashboard.filters || {};
+  const summary = dashboard.summary || {};
+
+  return `<section class="section">
+  <form class="filter-bar" action="/dashboards/city-analysis" method="get">
+    <input type="hidden" name="tab" value="city">
     <div class="field">
       <label for="city">Город</label>
       <select id="city" name="city">${renderCityOptions(dashboard, filters.city)}</select>
@@ -9022,8 +9098,54 @@ function renderCityAnalysisDashboard({
   </form>
   ${renderMetricPanelHead('Баланс спроса и базы', 'city-analysis.summary', currentUser)}
   ${progressive ? '' : renderCityKpiCards(summary, currentUser, filters)}
+</section>`;
+}
+
+function renderCityDashboardTabs(dashboard, currentUser, progressive) {
+  const filters = dashboard.filters || {};
+  const activeTab = String(filters.city || '') === '' ? 'ranking' : 'city';
+  const rankingContent = progressive
+    ? renderCityRankingProgressiveSection(filters)
+    : renderCityRankingSection(dashboard, currentUser);
+  const cityContent = progressive
+    ? renderCityProgressiveSections(dashboard)
+    : renderCityAnalysisResultSections(dashboard, currentUser);
+
+  return `<div class="city-dashboard-tabs">
+  <input class="city-dashboard-tab-input" id="city-dashboard-tab-ranking" type="radio" name="cityDashboardTab"${activeTab === 'ranking' ? ' checked' : ''}>
+  <input class="city-dashboard-tab-input" id="city-dashboard-tab-city" type="radio" name="cityDashboardTab"${activeTab === 'city' ? ' checked' : ''}>
+  <div class="city-dashboard-tab-list" role="tablist" aria-label="Разделы анализа городов">
+    <label class="city-dashboard-tab" for="city-dashboard-tab-ranking" role="tab">Рейтинг городов</label>
+    <label class="city-dashboard-tab" for="city-dashboard-tab-city" role="tab">Анализ города</label>
+  </div>
+  <div class="city-dashboard-panels">
+    <div class="city-dashboard-panel city-dashboard-panel-ranking">
+      ${renderCityRankingPeriodForm(filters)}
+      ${rankingContent}
+    </div>
+    <div class="city-dashboard-panel city-dashboard-panel-city">
+      ${renderCityAnalysisFilterSection(dashboard, currentUser, progressive)}
+      ${cityContent}
+    </div>
+  </div>
+</div>`;
+}
+
+function renderCityAnalysisDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
+  const filters = dashboard.filters || {};
+  const context = dashboard.context || {};
+  const period = context.periodLabel || `${rangeFilterValue(filters.from)} - ${rangeFilterValue(filters.to)}`;
+  const content = `<section class="section">
+  <h1>Анализ городов</h1>
+  <p class="technical-note">Период: ${escapeHtml(period)} · логика базы: пользователи с последней локацией в радиусе 15 км от точек города.</p>
 </section>
-${progressive ? renderCityProgressiveSections(dashboard) : renderCityAnalysisResultSections(dashboard, currentUser)}
+${renderCityDashboardTabs(dashboard, currentUser, progressive)}
 ${renderGigerListModal()}`;
 
   return layout({

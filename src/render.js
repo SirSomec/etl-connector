@@ -3541,16 +3541,66 @@ function renderDashboardProgressiveScript() {
     rowNode.appendChild(cell);
   }
 
-  function cityRankingRender(root) {
-    var body = root.querySelector('[data-city-ranking-body]');
+  function cityRankingCurrentRows(root) {
     var brandSelect = root.querySelector('[data-city-ranking-brand]');
-    var meta = root.querySelector('[data-city-ranking-meta]');
-    var empty = root.querySelector('[data-city-ranking-empty]');
     var rows = root.__cityRankingRows || [];
     var sortKey = root.getAttribute('data-city-ranking-sort-key') || 'orderedShifts';
     var direction = root.getAttribute('data-city-ranking-sort-direction') || 'desc';
     var brand = brandSelect ? brandSelect.value : '';
-    var aggregated = cityRankingSortRows(cityRankingAggregate(rows, brand), sortKey, direction);
+
+    return cityRankingSortRows(cityRankingAggregate(rows, brand), sortKey, direction);
+  }
+
+  function cityRankingEscapeWorkbookCell(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function cityRankingExportWorkbook(root) {
+    var rows = cityRankingCurrentRows(root);
+    var headers = ['Город', 'Заказ', 'Точки с заказами', 'Бренды', 'SLA'];
+    var workbookRows = rows.map(function (row) {
+      return [
+        row.city,
+        cityRankingFormatNumber(row.orderedShifts),
+        cityRankingFormatNumber(row.workplaceCount),
+        cityRankingFormatNumber(row.brandCount),
+        cityRankingFormatNumber(row.slaPercent, 1) + '%'
+      ];
+    });
+    var html = '<!doctype html><html><head><meta charset="utf-8"></head><body><table><thead><tr>' +
+      headers.map(function (header) {
+        return '<th>' + cityRankingEscapeWorkbookCell(header) + '</th>';
+      }).join('') +
+      '</tr></thead><tbody>' +
+      workbookRows.map(function (row) {
+        return '<tr>' + row.map(function (cell) {
+          return '<td>' + cityRankingEscapeWorkbookCell(cell) + '</td>';
+        }).join('') + '</tr>';
+      }).join('') +
+      '</tbody></table></body></html>';
+    var blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    var link = document.createElement('a');
+    var url = URL.createObjectURL(blob);
+
+    link.href = url;
+    link.download = 'city-ranking.xls';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function cityRankingRender(root) {
+    var body = root.querySelector('[data-city-ranking-body]');
+    var meta = root.querySelector('[data-city-ranking-meta]');
+    var empty = root.querySelector('[data-city-ranking-empty]');
+    var sortKey = root.getAttribute('data-city-ranking-sort-key') || 'orderedShifts';
+    var direction = root.getAttribute('data-city-ranking-sort-direction') || 'desc';
+    var aggregated = cityRankingCurrentRows(root);
 
     if (!body) {
       return;
@@ -3622,6 +3672,12 @@ function renderDashboardProgressiveScript() {
       root.querySelectorAll('[data-city-ranking-brand]').forEach(function (select) {
         select.addEventListener('change', function () {
           cityRankingRender(root);
+        });
+      });
+
+      root.querySelectorAll('[data-city-ranking-export]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          cityRankingExportWorkbook(root);
         });
       });
 
@@ -8276,6 +8332,7 @@ function renderCityRankingSection(dashboard, currentUser) {
       <label for="cityRankingBrand">Бренд</label>
       <select id="cityRankingBrand" data-city-ranking-brand>${renderCityRankingBrandOptions(brands)}</select>
     </div>
+    <button class="secondary-button" type="button" data-city-ranking-export>Выгрузить в Excel</button>
     <div class="city-ranking-meta" data-city-ranking-meta>Городов: ${escapeHtml(formatNumber(rows.length))}</div>
   </div>
   <div class="table-wrap">

@@ -3052,6 +3052,8 @@ test('renderCityAnalysisDashboardSection renders city ranking data for local fil
   assert.match(html, /data-city-ranking-table/);
   assert.match(html, /data-city-ranking-json=/);
   assert.match(html, /data-city-ranking-brand/);
+  assert.match(html, /data-city-ranking-export/);
+  assert.match(html, />Выгрузить в Excel</);
   assert.match(html, /data-city-ranking-sort="orderedShifts"/);
   assert.match(html, /data-city-ranking-sort="workplaceCount"/);
   assert.match(html, /data-city-ranking-sort="brandCount"/);
@@ -3060,6 +3062,7 @@ test('renderCityAnalysisDashboardSection renders city ranking data for local fil
   assert.match(html, /Москва&lt;script&gt;/);
   assert.doesNotMatch(html, /<script>/);
   assert.doesNotMatch(html, /href="[^"]*sort=/);
+  assert.doesNotMatch(html, /\/dashboards\/city-analysis\/section[^"]*export=/);
 });
 
 test('renderCityAnalysisDashboardSection renders requested fragment without full layout', () => {

@@ -18,6 +18,7 @@ const FILTER_OPTION_KEYS = ['client', 'profession', 'orderType', 'jobStatus', 'c
 const CITY_ANALYSIS_CACHE_VERSION = 2;
 const DEFAULT_CITY_ANALYSIS_CACHE_PATH = path.join(process.cwd(), 'data', 'city-analysis-cache.json');
 const CITY_ANALYSIS_SECTION_NAMES = [
+  'city-ranking',
   'summary-demand',
   'summary-base',
   'summary-app',
@@ -305,6 +306,83 @@ function dynamicRows(rows) {
   }));
 }
 
+function cityRankingRows(rows) {
+  return rows.map((row) => ({
+    city: String(row.city || ''),
+    brand: String(row.brand || ''),
+    orderedShifts: numberValue(row.ordered_shifts),
+    workplaceCount: numberValue(row.workplace_count),
+    orderCount: numberValue(row.order_count),
+    coveredShifts: numberValue(row.covered_shifts)
+  }));
+}
+
+function aggregateCityRankingRows(rows) {
+  const byCity = new Map();
+
+  for (const row of rows) {
+    const city = cleanText(row.city);
+
+    if (city === '') {
+      continue;
+    }
+
+    if (!byCity.has(city)) {
+      byCity.set(city, {
+        city,
+        orderedShifts: 0,
+        workplaceCount: 0,
+        brandCount: 0,
+        orderCount: 0,
+        coveredShifts: 0,
+        brands: new Set()
+      });
+    }
+
+    const aggregate = byCity.get(city);
+    const brand = cleanText(row.brand);
+
+    aggregate.orderedShifts += numberValue(row.orderedShifts);
+    aggregate.workplaceCount += numberValue(row.workplaceCount);
+    aggregate.orderCount += numberValue(row.orderCount);
+    aggregate.coveredShifts += numberValue(row.coveredShifts);
+
+    if (brand !== '') {
+      aggregate.brands.add(brand);
+    }
+  }
+
+  return Array.from(byCity.values())
+    .map((row) => ({
+      city: row.city,
+      orderedShifts: row.orderedShifts,
+      workplaceCount: row.workplaceCount,
+      brandCount: row.brands.size,
+      orderCount: row.orderCount,
+      coveredShifts: row.coveredShifts,
+      slaPercent: percent(row.coveredShifts, row.orderedShifts)
+    }))
+    .sort((left, right) => right.orderedShifts - left.orderedShifts || left.city.localeCompare(right.city, 'ru'));
+}
+
+function cityRankingBrands(rows) {
+  const brands = [];
+  const seen = new Set();
+
+  for (const row of rows) {
+    const brand = cleanText(row.brand);
+
+    if (brand === '' || seen.has(brand)) {
+      continue;
+    }
+
+    seen.add(brand);
+    brands.push(brand);
+  }
+
+  return brands.sort((left, right) => left.localeCompare(right, 'ru'));
+}
+
 function mergeCityAnalysisRows(filters, datasets) {
   const hasCity = filters.city !== '';
   const summaryRow = hasCity ? (datasets.summaryRows || [])[0] || {} : {};
@@ -313,6 +391,7 @@ function mergeCityAnalysisRows(filters, datasets) {
   const professionRows = hasCity ? datasets.professionRows || [] : [];
   const rateBucketRows = hasCity ? datasets.rateRows || [] : [];
   const dynamics = hasCity ? datasets.dynamicRows || [] : [];
+  const rankingRows = cityRankingRows(datasets.cityRankingRows || []);
 
   return {
     filters,
@@ -348,7 +427,12 @@ function mergeCityAnalysisRows(filters, datasets) {
       professions: compositionRows(professionRows),
       rateBuckets: rateRows(rateBucketRows)
     },
-    dynamics: dynamicRows(dynamics)
+    dynamics: dynamicRows(dynamics),
+    cityRanking: {
+      rows: rankingRows,
+      brands: cityRankingBrands(rankingRows),
+      summaryRows: aggregateCityRankingRows(rankingRows)
+    }
   };
 }
 
@@ -916,6 +1000,7 @@ function filteredOrdersCte(whereSql, name = 'filtered_orders') {
     SELECT
       o._id AS order_id,
       o.workplace AS workplace_id,
+      ifNull(w.address__city, '') AS city,
       toString(toDate(o.start)) AS period,
       ifNull(o.amount, 0) AS amount,
       ifNull(o.salary_per_hour, 0) AS salary_per_hour,
@@ -1230,6 +1315,41 @@ function dynamicsQuery(whereSql) {
   FORMAT JSONEachRow`;
 }
 
+function cityRankingQuery(whereSql) {
+  return `WITH ${filteredOrdersCte(whereSql)},
+  order_sla AS (
+    SELECT
+      fo.order_id AS order_id,
+      least(
+        toFloat64(countDistinctIf(
+          job._id,
+          ifNull(job.deleted, 0) = 0
+          AND (
+            ifNull(job.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')
+            OR ${successfulConfirmedShiftFlagExpression('job', { pieceworkExpression: 'fo.pieceworks' })}
+          )
+        )),
+        any(fo.amount)
+      ) AS covered_shifts
+    FROM filtered_orders AS fo
+    LEFT JOIN mg_jobs AS job ON job.source = fo.order_id
+    GROUP BY fo.order_id
+  )
+  SELECT
+    city,
+    brand,
+    sum(amount) AS ordered_shifts,
+    uniqExact(workplace_id) AS workplace_count,
+    uniqExact(order_id) AS order_count,
+    sum(ifNull(order_sla.covered_shifts, 0)) AS covered_shifts
+  FROM filtered_orders
+  LEFT JOIN order_sla ON order_sla.order_id = filtered_orders.order_id
+  GROUP BY city, brand
+  HAVING city != ''
+  ORDER BY ordered_shifts DESC, city, brand
+  FORMAT JSONEachRow`;
+}
+
 const CITY_GIGER_METRICS = {
   'total-located-users': { label: 'Общая база', condition: '1 = 1' },
   'ready-located-users': { label: 'Активная база', condition: 'located.is_ready_base = 1' },
@@ -1492,6 +1612,7 @@ function cityAnalysisEmptyDatasets(overrides = {}) {
     professionRows: [],
     rateRows: [],
     dynamicRows: [],
+    cityRankingRows: [],
     ...overrides
   };
 }
@@ -1579,13 +1700,22 @@ async function loadCityAnalysisDashboardSection(client, input = {}, section, now
   assertCityAnalysisSection(section);
 
   const filters = normalizeCityAnalysisFilters(input, now);
+  const rankingFilters = section === 'city-ranking' ? { ...filterOptionsBaseFilters(filters), city: '' } : filters;
 
-  if (filters.city === '') {
+  if (filters.city === '' && section !== 'city-ranking') {
     return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets());
   }
 
-  const { params, whereSql, active30dWhereSql } = paramsAndWhere(filters);
+  const { params, whereSql, active30dWhereSql } = paramsAndWhere(rankingFilters);
   const cache = options.cache;
+
+  if (section === 'city-ranking') {
+    const cityRankingRows = await readThroughCache(cache, cacheKeyForFilters(section, rankingFilters), () =>
+      client.queryJSONEachRow(cityRankingQuery(whereSql), params, 'city analysis city ranking')
+    );
+
+    return mergeCityAnalysisRows(filters, cityAnalysisEmptyDatasets({ cityRankingRows }));
+  }
 
   if (section === 'summary-demand') {
     const summaryRows = await readThroughCache(cache, cacheKeyForFilters(section, filters), () =>

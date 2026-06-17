@@ -2992,6 +2992,71 @@ test('renderCityAnalysisDashboard renders progressive city fragments for selecte
   assert.doesNotMatch(html, /<div class="kpi-value">0<\/div>/);
 });
 
+test('renderCityAnalysisDashboardSection renders city ranking data for local filtering and sorting', () => {
+  const html = renderCityAnalysisDashboardSection({
+    section: 'city-ranking',
+    dashboard: {
+      filters: {
+        from: '2026-06-01',
+        to: '2026-06-03'
+      },
+      cityRanking: {
+        brands: ['Brand A', 'Brand <bad>'],
+        rows: [
+          {
+            city: 'Москва<script>',
+            brand: 'Brand A',
+            orderedShifts: 10,
+            workplaceCount: 2,
+            orderCount: 3,
+            coveredShifts: 8
+          },
+          {
+            city: 'Казань',
+            brand: 'Brand <bad>',
+            orderedShifts: 4,
+            workplaceCount: 1,
+            orderCount: 1,
+            coveredShifts: 4
+          }
+        ],
+        summaryRows: [
+          {
+            city: 'Москва<script>',
+            orderedShifts: 10,
+            workplaceCount: 2,
+            brandCount: 1,
+            orderCount: 3,
+            coveredShifts: 8,
+            slaPercent: 80
+          },
+          {
+            city: 'Казань',
+            orderedShifts: 4,
+            workplaceCount: 1,
+            brandCount: 1,
+            orderCount: 1,
+            coveredShifts: 4,
+            slaPercent: 100
+          }
+        ]
+      }
+    }
+  });
+
+  assert.match(html, /data-city-ranking-table/);
+  assert.match(html, /data-city-ranking-json=/);
+  assert.match(html, /data-city-ranking-brand/);
+  assert.match(html, /data-city-ranking-sort="orderedShifts"/);
+  assert.match(html, /data-city-ranking-sort="workplaceCount"/);
+  assert.match(html, /data-city-ranking-sort="brandCount"/);
+  assert.match(html, /data-city-ranking-sort="slaPercent"/);
+  assert.match(html, /Brand &lt;bad&gt;/);
+  assert.match(html, /Москва&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.doesNotMatch(html, /href="[^"]*sort=/);
+});
+
 test('renderCityAnalysisDashboardSection renders requested fragment without full layout', () => {
   const dashboard = {
     filters: { city: 'Москва', from: '2026-05-01', to: '2026-05-31' },

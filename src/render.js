@@ -1393,14 +1393,35 @@ function layout({
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      border: 0;
+      padding: 0;
+      background: transparent;
       color: var(--text);
+      font: inherit;
+      font-weight: 700;
       text-decoration: none;
+      cursor: pointer;
     }
 
     .sortable-header:hover,
     .sortable-header:focus {
       color: var(--link);
       outline: none;
+    }
+
+    button.sortable-header,
+    button.sortable-header:hover,
+    button.sortable-header:focus {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--text);
+      box-shadow: none;
+    }
+
+    button.sortable-header:hover,
+    button.sortable-header:focus {
+      color: var(--link);
     }
 
     .sort-indicator {
@@ -1415,6 +1436,30 @@ function layout({
     .number-cell {
       text-align: right;
       white-space: nowrap;
+    }
+
+    .city-ranking-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0 0 12px;
+    }
+
+    .city-ranking-toolbar .field {
+      min-width: 220px;
+      margin: 0;
+    }
+
+    .city-ranking-meta {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .city-ranking-empty {
+      display: none;
+      margin-top: 10px;
     }
 
     .attention-table {
@@ -3342,12 +3387,191 @@ function renderDashboardProgressiveScript() {
     });
   }
 
+  function cityRankingNumber(value) {
+    var number = Number(value || 0);
+
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function cityRankingFormatNumber(value, digits) {
+    return new Intl.NumberFormat('ru-RU', {
+      maximumFractionDigits: digits || 0,
+      minimumFractionDigits: digits || 0
+    }).format(cityRankingNumber(value));
+  }
+
+  function cityRankingAggregate(rows, brand) {
+    var byCity = new Map();
+
+    rows.forEach(function (row) {
+      var city = String(row.city || '').trim();
+      var rowBrand = String(row.brand || '').trim();
+      var aggregate;
+
+      if (!city || (brand && rowBrand !== brand)) {
+        return;
+      }
+
+      if (!byCity.has(city)) {
+        byCity.set(city, {
+          city: city,
+          orderedShifts: 0,
+          workplaceCount: 0,
+          brandCount: 0,
+          orderCount: 0,
+          coveredShifts: 0,
+          brands: new Set()
+        });
+      }
+
+      aggregate = byCity.get(city);
+      aggregate.orderedShifts += cityRankingNumber(row.orderedShifts);
+      aggregate.workplaceCount += cityRankingNumber(row.workplaceCount);
+      aggregate.orderCount += cityRankingNumber(row.orderCount);
+      aggregate.coveredShifts += cityRankingNumber(row.coveredShifts);
+
+      if (rowBrand) {
+        aggregate.brands.add(rowBrand);
+      }
+    });
+
+    return Array.from(byCity.values()).map(function (row) {
+      return {
+        city: row.city,
+        orderedShifts: row.orderedShifts,
+        workplaceCount: row.workplaceCount,
+        brandCount: row.brands.size,
+        orderCount: row.orderCount,
+        coveredShifts: row.coveredShifts,
+        slaPercent: row.orderedShifts > 0 ? (row.coveredShifts / row.orderedShifts) * 100 : 0
+      };
+    });
+  }
+
+  function cityRankingSortRows(rows, key, direction) {
+    return rows.slice().sort(function (left, right) {
+      var multiplier = direction === 'asc' ? 1 : -1;
+      var leftValue = key === 'city' ? String(left.city || '') : cityRankingNumber(left[key]);
+      var rightValue = key === 'city' ? String(right.city || '') : cityRankingNumber(right[key]);
+
+      if (key === 'city') {
+        return leftValue.localeCompare(rightValue, 'ru') * multiplier;
+      }
+
+      if (leftValue === rightValue) {
+        return String(left.city || '').localeCompare(String(right.city || ''), 'ru');
+      }
+
+      return (leftValue - rightValue) * multiplier;
+    });
+  }
+
+  function cityRankingAppendCell(rowNode, text, className) {
+    var cell = document.createElement('td');
+
+    if (className) {
+      cell.className = className;
+    }
+
+    cell.textContent = text;
+    rowNode.appendChild(cell);
+  }
+
+  function cityRankingRender(root) {
+    var body = root.querySelector('[data-city-ranking-body]');
+    var brandSelect = root.querySelector('[data-city-ranking-brand]');
+    var meta = root.querySelector('[data-city-ranking-meta]');
+    var empty = root.querySelector('[data-city-ranking-empty]');
+    var rows = root.__cityRankingRows || [];
+    var sortKey = root.getAttribute('data-city-ranking-sort-key') || 'orderedShifts';
+    var direction = root.getAttribute('data-city-ranking-sort-direction') || 'desc';
+    var brand = brandSelect ? brandSelect.value : '';
+    var aggregated = cityRankingSortRows(cityRankingAggregate(rows, brand), sortKey, direction);
+
+    if (!body) {
+      return;
+    }
+
+    body.replaceChildren();
+
+    aggregated.forEach(function (row) {
+      var rowNode = document.createElement('tr');
+
+      cityRankingAppendCell(rowNode, row.city, '');
+      cityRankingAppendCell(rowNode, cityRankingFormatNumber(row.orderedShifts), 'number-cell');
+      cityRankingAppendCell(rowNode, cityRankingFormatNumber(row.workplaceCount), 'number-cell');
+      cityRankingAppendCell(rowNode, cityRankingFormatNumber(row.brandCount), 'number-cell');
+      cityRankingAppendCell(rowNode, cityRankingFormatNumber(row.slaPercent, 1) + '%', 'number-cell');
+      body.appendChild(rowNode);
+    });
+
+    if (meta) {
+      meta.textContent = 'Городов: ' + cityRankingFormatNumber(aggregated.length);
+    }
+
+    if (empty) {
+      empty.style.display = aggregated.length === 0 ? 'block' : 'none';
+    }
+
+    root.querySelectorAll('[data-city-ranking-sort]').forEach(function (button) {
+      var buttonKey = button.getAttribute('data-city-ranking-sort');
+      var indicator = button.querySelector('.sort-indicator');
+      var active = buttonKey === sortKey;
+
+      button.setAttribute('aria-sort', active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+
+      if (indicator) {
+        indicator.textContent = active ? (direction === 'asc' ? '↑' : '↓') : '↕';
+      }
+    });
+  }
+
+  function initCityRankingTables(scope) {
+    (scope || document).querySelectorAll('[data-city-ranking-table]').forEach(function (root) {
+      if (root.getAttribute('data-city-ranking-ready') === '1') {
+        return;
+      }
+
+      try {
+        root.__cityRankingRows = JSON.parse(root.getAttribute('data-city-ranking-json') || '[]');
+      } catch (_) {
+        root.__cityRankingRows = [];
+      }
+
+      root.setAttribute('data-city-ranking-ready', '1');
+      root.setAttribute('data-city-ranking-sort-key', root.getAttribute('data-city-ranking-sort-key') || 'orderedShifts');
+      root.setAttribute('data-city-ranking-sort-direction', root.getAttribute('data-city-ranking-sort-direction') || 'desc');
+
+      root.querySelectorAll('[data-city-ranking-sort]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var key = button.getAttribute('data-city-ranking-sort');
+          var currentKey = root.getAttribute('data-city-ranking-sort-key') || 'orderedShifts';
+          var currentDirection = root.getAttribute('data-city-ranking-sort-direction') || 'desc';
+          var nextDirection = key === currentKey && currentDirection === 'desc' ? 'asc' : 'desc';
+
+          root.setAttribute('data-city-ranking-sort-key', key);
+          root.setAttribute('data-city-ranking-sort-direction', nextDirection);
+          cityRankingRender(root);
+        });
+      });
+
+      root.querySelectorAll('[data-city-ranking-brand]').forEach(function (select) {
+        select.addEventListener('change', function () {
+          cityRankingRender(root);
+        });
+      });
+
+      cityRankingRender(root);
+    });
+  }
+
   function replaceWithHtml(root, html) {
     var template = document.createElement('template');
 
     template.innerHTML = html;
     root.replaceWith(template.content);
     hydrateSalesMiniTrends();
+    initCityRankingTables(document);
 
     if (typeof window.initHeatmapLeafletMaps === 'function') {
       window.initHeatmapLeafletMaps();
@@ -3452,6 +3676,8 @@ function renderDashboardProgressiveScript() {
         renderError(section, message);
       });
   });
+
+  initCityRankingTables(document);
 })();
 </script>`;
 }
@@ -7935,19 +8161,99 @@ function renderCityLoadingKpiCard({ label, section, filters }) {
   });
 }
 
+function safeJsonAttribute(value) {
+  return escapeHtml(JSON.stringify(value));
+}
+
+function renderCityRankingBrandOptions(brands = []) {
+  return ['<option value="">Все бренды</option>']
+    .concat(
+      brands.map((brand) => `<option value="${escapeHtml(brand)}">${escapeHtml(brand)}</option>`)
+    )
+    .join('');
+}
+
+function renderCityRankingSortButton(key, label, activeKey = 'orderedShifts', direction = 'desc') {
+  const active = key === activeKey;
+  const indicator = active ? (direction === 'asc' ? '↑' : '↓') : '↕';
+
+  return `<button class="sortable-header" type="button" data-city-ranking-sort="${escapeHtml(key)}" aria-sort="${active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><span>${escapeHtml(label)}</span><span class="sort-indicator">${escapeHtml(indicator)}</span></button>`;
+}
+
+function renderCityRankingTableRows(rows = []) {
+  if (rows.length === 0) {
+    return '';
+  }
+
+  return rows
+    .map(
+      (row) => `<tr>
+  <td>${escapeHtml(row.city)}</td>
+  <td class="number-cell">${escapeHtml(formatNumber(row.orderedShifts))}</td>
+  <td class="number-cell">${escapeHtml(formatNumber(row.workplaceCount))}</td>
+  <td class="number-cell">${escapeHtml(formatNumber(row.brandCount))}</td>
+  <td class="number-cell">${escapeHtml(formatPercent(row.slaPercent))}</td>
+</tr>`
+    )
+    .join('');
+}
+
+function renderCityRankingSection(dashboard, currentUser) {
+  const ranking = dashboard.cityRanking || {};
+  const rows = Array.isArray(ranking.summaryRows) ? ranking.summaryRows : [];
+  const rawRows = Array.isArray(ranking.rows) ? ranking.rows : [];
+  const brands = Array.isArray(ranking.brands) ? ranking.brands : [];
+  const emptyStyle = rows.length === 0 ? ' style="display:block"' : '';
+
+  return `<section class="section" data-city-ranking-table data-city-ranking-json="${safeJsonAttribute(rawRows)}">
+  ${renderMetricPanelHead('Рейтинг актуальных городов с заказами', 'city-analysis.city-ranking', currentUser)}
+  <div class="city-ranking-toolbar">
+    <div class="field">
+      <label for="cityRankingBrand">Бренд</label>
+      <select id="cityRankingBrand" data-city-ranking-brand>${renderCityRankingBrandOptions(brands)}</select>
+    </div>
+    <div class="city-ranking-meta" data-city-ranking-meta>Городов: ${escapeHtml(formatNumber(rows.length))}</div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>${renderCityRankingSortButton('city', 'Город', 'orderedShifts')}</th>
+          <th>${renderCityRankingSortButton('orderedShifts', 'Заказ', 'orderedShifts')}</th>
+          <th>${renderCityRankingSortButton('workplaceCount', 'Точки с заказами', 'orderedShifts')}</th>
+          <th>${renderCityRankingSortButton('brandCount', 'Бренды', 'orderedShifts')}</th>
+          <th>${renderCityRankingSortButton('slaPercent', 'SLA', 'orderedShifts')}</th>
+        </tr>
+      </thead>
+      <tbody data-city-ranking-body>${renderCityRankingTableRows(rows)}</tbody>
+    </table>
+  </div>
+  <p class="empty city-ranking-empty"${emptyStyle} data-city-ranking-empty>Нет городов с заказами за выбранный период.</p>
+</section>`;
+}
+
 function renderCityProgressiveSections(dashboard) {
   const filters = dashboard.filters || {};
   const context = dashboard.context || {};
   const hasCity =
     typeof context.hasCity === 'boolean' ? context.hasCity : String(filters.city || '') !== '';
 
+  const rankingSection = `<div data-dashboard-fragment-url="${escapeHtml(cityAnalysisSectionUrl(filters, 'city-ranking'))}">
+  <section class="section">
+    <h2>Рейтинг актуальных городов с заказами</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>`;
+
   if (!hasCity) {
-    return `<section class="section">
+    return `${rankingSection}
+<section class="section">
   <p class="empty">Выберите город для анализа.</p>
 </section>`;
   }
 
-  return `<section class="section" data-city-analysis-progressive>
+  return `${rankingSection}
+<section class="section" data-city-analysis-progressive>
   <h2>Баланс спроса и базы</h2>
   <div class="kpi-grid">
     ${renderCityLoadingKpiCard({ label: 'Заказ', section: 'summary-demand', filters })}
@@ -7975,6 +8281,10 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
   const summary = dashboard.summary || {};
   const context = dashboard.context || {};
   const filters = dashboard.filters || {};
+
+  if (section === 'city-ranking') {
+    return renderCityRankingSection(dashboard, currentUser);
+  }
 
   if (section === 'summary-demand') {
     return [

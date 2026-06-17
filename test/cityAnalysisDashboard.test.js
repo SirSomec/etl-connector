@@ -413,6 +413,89 @@ test('loadCityAnalysisDashboard returns city options and skips heavy queries wit
   assert.equal(calls[0].query.includes('FROM mg_orders AS o'), false);
 });
 
+test('mergeCityAnalysisRows maps city ranking raw rows and aggregates all brands by city', () => {
+  const filters = normalizeCityAnalysisFilters(
+    { from: '2026-06-01', to: '2026-06-03' },
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+  const dashboard = mergeCityAnalysisRows(filters, {
+    cityRankingRows: [
+      {
+        city: 'Москва',
+        brand: 'Brand A',
+        ordered_shifts: 10,
+        workplace_count: 2,
+        order_count: 3,
+        covered_shifts: 8
+      },
+      {
+        city: 'Москва',
+        brand: 'Brand B',
+        ordered_shifts: 5,
+        workplace_count: 1,
+        order_count: 1,
+        covered_shifts: 2
+      },
+      {
+        city: 'Казань',
+        brand: 'Brand A',
+        ordered_shifts: 4,
+        workplace_count: 1,
+        order_count: 1,
+        covered_shifts: 4
+      }
+    ]
+  });
+
+  assert.deepEqual(dashboard.cityRanking.brands, ['Brand A', 'Brand B']);
+  assert.deepEqual(dashboard.cityRanking.rows, [
+    {
+      city: 'Москва',
+      brand: 'Brand A',
+      orderedShifts: 10,
+      workplaceCount: 2,
+      orderCount: 3,
+      coveredShifts: 8
+    },
+    {
+      city: 'Москва',
+      brand: 'Brand B',
+      orderedShifts: 5,
+      workplaceCount: 1,
+      orderCount: 1,
+      coveredShifts: 2
+    },
+    {
+      city: 'Казань',
+      brand: 'Brand A',
+      orderedShifts: 4,
+      workplaceCount: 1,
+      orderCount: 1,
+      coveredShifts: 4
+    }
+  ]);
+  assert.deepEqual(dashboard.cityRanking.summaryRows, [
+    {
+      city: 'Москва',
+      orderedShifts: 15,
+      workplaceCount: 3,
+      brandCount: 2,
+      orderCount: 4,
+      coveredShifts: 10,
+      slaPercent: 66.66666666666666
+    },
+    {
+      city: 'Казань',
+      orderedShifts: 4,
+      workplaceCount: 1,
+      brandCount: 1,
+      orderCount: 1,
+      coveredShifts: 4,
+      slaPercent: 100
+    }
+  ]);
+});
+
 test('loadCityAnalysisDashboardShell keeps selected city page light', async () => {
   const calls = [];
   const client = {
@@ -627,6 +710,63 @@ test('loadCityAnalysisDashboardSection keeps cached fragments until the end of t
   assert.deepEqual(calls.map((call) => call.operation), [
     'city analysis summary demand',
     'city analysis summary demand'
+  ]);
+});
+
+test('loadCityAnalysisDashboardSection loads city ranking without selected city', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'city analysis city ranking') {
+        return [
+          {
+            city: 'Москва',
+            brand: 'Brand A',
+            ordered_shifts: 10,
+            workplace_count: 2,
+            order_count: 3,
+            covered_shifts: 8
+          }
+        ];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadCityAnalysisDashboardSection(
+    client,
+    { from: '2026-06-01', to: '2026-06-03', client: 'Brand B', profession: 'Курьер' },
+    'city-ranking',
+    new Date('2026-06-15T12:00:00.000Z')
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].operation, 'city analysis city ranking');
+  assert.deepEqual(calls[0].params, {
+    param_from: '2026-06-01 00:00:00',
+    param_to: '2026-06-04 00:00:00',
+    param_active_30d_from: '2026-05-17 00:00:00',
+    param_active_30d_to: '2026-06-16 00:00:00'
+  });
+  assert.match(calls[0].query, /GROUP BY\s+city,\s+brand/s);
+  assert.match(calls[0].query, /FROM mg_orders AS o/);
+  assert.match(calls[0].query, /LEFT JOIN mg_jobs AS job ON job\.source = fo\.order_id/);
+  assert.match(calls[0].query, /least\(\s*toFloat64\(countDistinctIf\(/);
+  assert.equal(calls[0].query.includes('{clients:Array(String)}'), false);
+  assert.equal(calls[0].query.includes('{professions:Array(String)}'), false);
+  assert.deepEqual(dashboard.cityRanking.summaryRows, [
+    {
+      city: 'Москва',
+      orderedShifts: 10,
+      workplaceCount: 2,
+      brandCount: 1,
+      orderCount: 3,
+      coveredShifts: 8,
+      slaPercent: 80
+    }
   ]);
 });
 

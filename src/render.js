@@ -6516,6 +6516,7 @@ function workerCancellationsPageHref(filters, overrides = {}) {
   addDashboardQueryParam(params, 'sort', nextFilters.sort);
   addDashboardQueryParam(params, 'direction', nextFilters.direction);
   addDashboardQueryParam(params, 'search', nextFilters.search);
+  addDashboardQueryParam(params, 'client', nextFilters.client);
 
   for (const column of WORKER_CANCELLATION_NUMERIC_COLUMNS) {
     addDashboardQueryParam(params, `${column.key}From`, nextFilters[`${column.key}From`]);
@@ -6542,6 +6543,7 @@ function workerCancellationsDetailUrl(filters, row, metric) {
   addDashboardQueryParam(params, 'to', filters.to);
   addDashboardQueryParam(params, 'workerId', row.workerId);
   addDashboardQueryParam(params, 'metric', metric);
+  addDashboardQueryParam(params, 'client', filters.client);
 
   return `/dashboards/worker-cancellations/details?${params.toString()}`;
 }
@@ -7157,6 +7159,12 @@ function renderWorkerCancellationsDashboard({
       <label for="search">Поиск</label>
       <input id="search" name="search" type="search" value="${escapeHtml(filters.search || '')}" placeholder="ФИО, телефон, worker/user id, город">
     </div>
+    ${renderMultiSelectField({
+      id: 'client',
+      label: 'Бренд',
+      options: filterOptions(dashboard, 'client'),
+      selected: filters.client
+    })}
     ${renderWorkerCancellationRangeFilters(filters)}
     <div class="field">
       <label for="pageSize">Строк</label>

@@ -1651,8 +1651,12 @@ test('GET /dashboards/worker-cancellations renders dashboard shell without heavy
   const workerCalls = client.calls.filter(
     (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('worker cancellations')
   );
+  const heavyWorkerCalls = workerCalls.filter(
+    (call) => call[1] !== 'worker cancellations filter options'
+  );
 
-  assert.equal(workerCalls.length, 0);
+  assert.deepEqual(workerCalls.map((call) => call[1]), ['worker cancellations filter options']);
+  assert.equal(heavyWorkerCalls.length, 0);
 });
 
 test('GET /dashboards/worker-cancellations/section reloads workers fragment without cache', async () => {

@@ -437,7 +437,11 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
         page: 2,
         pageSize: 200,
         sort: 'workerCancellations24h',
-        direction: 'desc'
+        direction: 'desc',
+        client: ['Brand A']
+      },
+      filterOptions: {
+        client: ['Brand A', 'Brand B']
       }
     }
   });
@@ -448,6 +452,9 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
   assert.match(html, /<form class="filter-bar" action="\/dashboards\/worker-cancellations" method="get">/);
   assert.match(html, /<input id="from" name="from" type="date" value="2026-05-01">/);
   assert.match(html, /<input id="to" name="to" type="date" value="2026-05-31">/);
+  assert.match(html, /data-multi-filter/);
+  assert.match(html, /<input type="checkbox" name="client" value="Brand A" checked data-multi-filter-checkbox>/);
+  assert.match(html, /<input type="checkbox" name="client" value="Brand B" data-multi-filter-checkbox>/);
   assert.match(html, /<option value="200" selected>200<\/option>/);
   assert.match(html, /data-worker-cancellation-modal/);
   assert.match(html, /document\.addEventListener\('click', function \(event\)/);
@@ -455,7 +462,7 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
   assert.match(html, /Период по плановому старту смены/);
   assert.match(
     html,
-    /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers&amp;from=2026-05-01&amp;to=2026-05-31&amp;page=2&amp;pageSize=200&amp;sort=workerCancellations24h&amp;direction=desc"/
+    /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers&amp;from=2026-05-01&amp;to=2026-05-31&amp;page=2&amp;pageSize=200&amp;sort=workerCancellations24h&amp;direction=desc&amp;client=Brand\+A"/
   );
   assert.match(html, /Загружается/);
   assert.match(html, /document\.querySelectorAll\('\[data-dashboard-fragment-url\]/);
@@ -503,7 +510,8 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
         page: 1,
         pageSize: 50,
         sort: 'workerCancellations',
-        direction: 'asc'
+        direction: 'asc',
+        client: ['Brand A']
       },
       rows: [
         {
@@ -539,20 +547,20 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
   assert.match(html, /Провалы \/ failed/);
   assert.match(
     html,
-    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=fullName&amp;direction=asc"/
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=fullName&amp;direction=asc&amp;client=Brand\+A"/
   );
   assert.match(
     html,
-    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc"/
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc&amp;client=Brand\+A"/
   );
   assert.match(html, /<td class="phone-cell">\+79990000000&lt;script&gt;x&lt;\/script&gt;<\/td>/);
   assert.match(
     html,
-    /<button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=confirmedShifts">10<\/button>/
+    /<button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=confirmedShifts&amp;client=Brand\+A">10<\/button>/
   );
   assert.match(
     html,
-    /data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=workerCancellations"/
+    /data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=workerCancellations&amp;client=Brand\+A"/
   );
   assert.match(html, /Иванов &lt;script&gt;Иван&lt;\/script&gt;/);
   assert.match(html, /Москва&lt;script&gt;bad&lt;\/script&gt;/);

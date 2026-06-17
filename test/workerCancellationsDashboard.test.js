@@ -64,7 +64,8 @@ test('normalizeWorkerCancellationFilters defaults and whitelists range, paging, 
     pageSize: 200,
     offset: 200,
     sort: 'fullName',
-    direction: 'asc'
+    direction: 'asc',
+    client: []
   });
 });
 
@@ -90,7 +91,8 @@ test('normalizeWorkerCancellationFilters falls back from invalid values to curre
     pageSize: 100,
     offset: 0,
     sort: 'workerCancellations24h',
-    direction: 'desc'
+    direction: 'desc',
+    client: []
   });
 });
 
@@ -132,6 +134,19 @@ test('normalizeWorkerCancellationFilters keeps search and valid numeric ranges o
   assert.equal(filters.workerCancellationsTo, 5);
   assert.equal(filters.failedShiftsFrom, undefined);
   assert.equal(filters.failedShiftsTo, 0);
+});
+
+test('normalizeWorkerCancellationFilters keeps unique client filters', () => {
+  const filters = normalizeWorkerCancellationFilters(
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      client: [' Brand A ', 'Brand A', '', 'Brand B']
+    },
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.deepEqual(filters.client, ['Brand A', 'Brand B']);
 });
 
 test('mergeWorkerCancellationRows maps ClickHouse rows to camelCase model and pagination', () => {
@@ -535,22 +550,31 @@ test('mergeWorkerCancellationDetails maps detail rows to popup model', () => {
   ]);
 });
 
-test('loadWorkerCancellationsDashboardShell returns empty dashboard without ClickHouse queries', async () => {
-  const { calls, client } = createDashboardClient();
+test('loadWorkerCancellationsDashboardShell returns empty dashboard with brand filter options', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations filter options': [{ filter: 'client', value: 'Brand A' }]
+  });
 
   const dashboard = await loadWorkerCancellationsDashboardShell(
     client,
     {
       from: '2026-05-01',
       to: '2026-05-31',
-      page: '3'
+      page: '3',
+      client: ['Brand A']
     },
     new Date('2026-06-03T12:00:00.000Z')
   );
 
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].operation, 'worker cancellations filter options');
+  assert.equal(calls[0].params.param_from, '2026-05-01 00:00:00');
+  assert.equal(calls[0].params.param_to, '2026-06-01 00:00:00');
+  assert.equal(calls[0].query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
   assert.equal(dashboard.filters.from, '2026-05-01');
   assert.equal(dashboard.filters.to, '2026-05-31');
+  assert.deepEqual(dashboard.filters.client, ['Brand A']);
+  assert.deepEqual(dashboard.filterOptions.client, ['Brand A']);
   assert.deepEqual(dashboard.workers, []);
   assert.deepEqual(dashboard.pagination, {
     page: 3,
@@ -646,6 +670,31 @@ test('loadWorkerCancellationsDashboardSection queries workers with safe params a
   assert.equal(workersCall.query.includes('ORDER BY full_name ASC, worker_id ASC'), true);
   assert.equal(workersCall.query.includes('ORDER BY fullName'), false);
   assert.equal(workersCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
+});
+
+test('loadWorkerCancellationsDashboardSection filters workers by selected brands', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations total workers': [{ total_workers: '1' }],
+    'worker cancellations workers': [{ worker_id: 'worker-1', full_name: 'Ivan Petrov' }]
+  });
+
+  const dashboard = await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      client: ['Brand A', 'Brand B']
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.deepEqual(dashboard.filters.client, ['Brand A', 'Brand B']);
+
+  for (const call of calls) {
+    assert.equal(call.params.param_clients, "['Brand A','Brand B']");
+    assert.equal(call.query.includes('c.title IN {clients:Array(String)}'), true);
+  }
 });
 
 test('loadWorkerCancellationsDashboardSection constrains cancellation metrics to actual orders', async () => {
@@ -825,7 +874,8 @@ test('loadWorkerCancellationsDetails queries selected metric with shift timeline
       from: '2026-05-01',
       to: '2026-05-31',
       workerId: 'worker-1',
-      metric: 'workerCancellations24h'
+      metric: 'workerCancellations24h',
+      client: ['Brand A']
     },
     new Date('2026-06-03T12:00:00.000Z')
   );
@@ -842,6 +892,7 @@ test('loadWorkerCancellationsDetails queries selected metric with shift timeline
   assert.equal(detailCall.params.param_to, '2026-06-01 00:00:00');
   assert.equal(detailCall.params.param_worker_id, 'worker-1');
   assert.equal(detailCall.params.param_limit, 500);
+  assert.equal(detailCall.params.param_clients, "['Brand A']");
   assert.equal(detailCall.query.includes('FROM mg_jobs AS j'), true);
   assert.equal(detailCall.query.includes('INNER JOIN mg_orders AS o ON o._id = j.source'), true);
   assert.equal(detailCall.query.includes('INNER JOIN mg_clients AS actual_client ON actual_client._id = o.client'), true);
@@ -851,6 +902,7 @@ test('loadWorkerCancellationsDetails queries selected metric with shift timeline
   assert.equal(detailCall.query.includes('ifNull(o.is_hidden, false) = false'), true);
   assert.equal(detailCall.query.includes('actual_client.title IS NULL OR actual_client.title NOT IN'), true);
   assert.equal(detailCall.query.includes("ifNull(actual_contractor.contract_type, ifNull(o.contract_type, '')) != 'processing'"), true);
+  assert.equal(detailCall.query.includes('actual_client.title IN {clients:Array(String)}'), true);
   assert.equal(detailCall.query.includes('j.worker = {worker_id:String}'), true);
   assert.equal(detailCall.query.includes('j.start >= {from:DateTime}'), true);
   assert.equal(detailCall.query.includes('j.start < {to:DateTime}'), true);

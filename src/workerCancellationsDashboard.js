@@ -54,6 +54,7 @@ const WORKER_CANCELLATION_NUMERIC_FILTERS = [
   { key: 'postStartCancellations', column: 'post_start_cancellations', param: 'post_start_cancellations' },
   { key: 'failedShifts', column: 'failed_shifts', param: 'failed_shifts' }
 ];
+const WORKER_CANCELLATION_FILTER_OPTION_KEYS = ['client'];
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -110,6 +111,25 @@ function cleanText(value) {
   return '';
 }
 
+function cleanValues(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const values = [];
+  const seen = new Set();
+
+  for (const rawValue of rawValues) {
+    const text = cleanText(rawValue);
+
+    if (text === '' || seen.has(text)) {
+      continue;
+    }
+
+    seen.add(text);
+    values.push(text);
+  }
+
+  return values;
+}
+
 function normalizePage(value) {
   const page = Number(cleanText(value));
 
@@ -150,10 +170,13 @@ function normalizeNonNegativeNumber(value) {
 
 function appendWorkerCancellationOptionalFilters(filters, input) {
   const search = cleanText(input.search);
+  const client = cleanValues(input.client);
 
   if (search !== '') {
     filters.search = search;
   }
+
+  filters.client = client;
 
   for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
     const fromKey = `${metric.key}From`;
@@ -349,7 +372,43 @@ function createBadRequestError(message) {
 }
 
 function emptyWorkerCancellationsDashboard(filters) {
-  return mergeWorkerCancellationRows(filters, [], []);
+  return {
+    ...mergeWorkerCancellationRows(filters, [], []),
+    filterOptions: emptyWorkerCancellationFilterOptions()
+  };
+}
+
+function emptyWorkerCancellationFilterOptions() {
+  return WORKER_CANCELLATION_FILTER_OPTION_KEYS.reduce((options, key) => {
+    options[key] = [];
+    return options;
+  }, {});
+}
+
+function workerCancellationFilterOptionsFromRows(rows = []) {
+  const options = emptyWorkerCancellationFilterOptions();
+  const seenByKey = WORKER_CANCELLATION_FILTER_OPTION_KEYS.reduce((seen, key) => {
+    seen[key] = new Set();
+    return seen;
+  }, {});
+
+  for (const row of rows) {
+    const key = String(row.filter || '');
+    const value = cleanText(row.value);
+
+    if (!Object.prototype.hasOwnProperty.call(options, key) || value === '') {
+      continue;
+    }
+
+    if (seenByKey[key].has(value)) {
+      continue;
+    }
+
+    seenByKey[key].add(value);
+    options[key].push(value);
+  }
+
+  return options;
 }
 
 function assertWorkerCancellationsSection(section) {
@@ -428,6 +487,10 @@ function cacheKeyForWorkerCancellationsSection(section, filters) {
     keyFilters.search = filters.search;
   }
 
+  if (filters.client.length > 0) {
+    keyFilters.client = filters.client;
+  }
+
   for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
     const fromKey = `${metric.key}From`;
     const toKey = `${metric.key}To`;
@@ -460,6 +523,10 @@ function paramsForFilters(filters) {
     params.param_search = filters.search;
   }
 
+  if (filters.client.length > 0) {
+    params.param_clients = serializeStringArray(filters.client);
+  }
+
   for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
     const fromKey = `${metric.key}From`;
     const toKey = `${metric.key}To`;
@@ -477,12 +544,18 @@ function paramsForFilters(filters) {
 }
 
 function paramsForDetails(detailInput) {
-  return {
+  const params = {
     param_from: detailInput.filters.fromDateTime,
     param_to: detailInput.filters.toExclusiveDateTime,
     param_worker_id: detailInput.workerId,
     param_limit: DETAIL_LIMIT
   };
+
+  if (detailInput.filters.client.length > 0) {
+    params.param_clients = serializeStringArray(detailInput.filters.client);
+  }
+
+  return params;
 }
 
 function hasWorkerCancellationMetricFilters(filters) {
@@ -511,7 +584,15 @@ function workerShiftActualOrderJoinsSql({ clientAlias = 'c', contractorAlias = '
     ${actualOrderJoinsSql('o', { clientAlias, contractorAlias })}`;
 }
 
-function workerCancellationMetricsCtes() {
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${String(value).replaceAll("'", "\\'")}'`).join(',')}]`;
+}
+
+function workerCancellationClientCondition(filters, clientAlias = 'c') {
+  return filters.client.length > 0 ? `\n      AND ${clientAlias}.title IN {clients:Array(String)}` : '';
+}
+
+function workerCancellationMetricsCtes(filters = {}) {
   return `WITH shift_facts AS (
     SELECT
       j._id AS job,
@@ -525,7 +606,7 @@ function workerCancellationMetricsCtes() {
       AND j.start < {to:DateTime}
       AND ifNull(j.worker, '') != ''
       AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}
   ),
   cancelled_shift_facts AS (
     SELECT
@@ -617,7 +698,7 @@ function workerMetricsWhereSql(filters) {
 }
 
 function workerCancellationMetricsSelect(filters = {}) {
-  return `${workerCancellationMetricsCtes()}
+  return `${workerCancellationMetricsCtes(filters)}
   SELECT
     wm.worker_id AS worker_id,
     ifNull(w.user, '') AS user_id,
@@ -634,7 +715,7 @@ function workerCancellationMetricsSelect(filters = {}) {
 
 function totalWorkersQuery(filters = {}) {
   if (hasWorkerCancellationMetricFilters(filters)) {
-    return `${workerCancellationMetricsCtes()}
+    return `${workerCancellationMetricsCtes(filters)}
   SELECT count() AS total_workers
   ${workerMetricsJoinsSql()}${workerMetricsWhereSql(filters)}
   FORMAT JSONEachRow`;
@@ -649,7 +730,7 @@ function totalWorkersQuery(filters = {}) {
       AND j.start < {to:DateTime}
       AND ifNull(j.worker, '') != ''
       AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}
     GROUP BY worker_id
   )
   SELECT
@@ -672,7 +753,7 @@ function workersQuery(filters) {
   FORMAT JSONEachRow`;
 }
 
-function workerCancellationDetailsQuery(metric) {
+function workerCancellationDetailsQuery(metric, filters = {}) {
   const metricCondition = WORKER_CANCELLATION_DETAIL_METRICS[metric].condition;
 
   return `WITH shift_facts AS (
@@ -693,7 +774,7 @@ function workerCancellationDetailsQuery(metric) {
       AND j.start < {to:DateTime}
       AND j.worker = {worker_id:String}
       AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'actual_client', 'actual_contractor')}
+      AND ${actualOrderDomainCondition('o', 'actual_client', 'actual_contractor')}${workerCancellationClientCondition(filters, 'actual_client')}
   ),
   cancelled_shift_facts AS (
     SELECT
@@ -775,6 +856,23 @@ function workerCancellationDetailsQuery(metric) {
   FORMAT JSONEachRow`;
 }
 
+function workerCancellationFilterOptionsQuery() {
+  return `SELECT
+    'client' AS filter,
+    ifNull(c.title, '') AS value
+  FROM mg_jobs AS j
+  ${workerShiftActualOrderJoinsSql()}
+  WHERE j.start >= {from:DateTime}
+    AND j.start < {to:DateTime}
+    AND ifNull(j.worker, '') != ''
+    AND ifNull(j.deleted, 0) = 0
+    AND ${actualOrderDomainCondition('o', 'c', 'ct')}
+  GROUP BY value
+  HAVING value != ''
+  ORDER BY filter, value
+  FORMAT JSONEachRow`;
+}
+
 async function loadWorkerCancellationRows(client, filters) {
   const params = paramsForFilters(filters);
   const [totalRows, workerRows] = await Promise.all([
@@ -796,7 +894,7 @@ async function loadWorkerCancellationRows(client, filters) {
 async function loadWorkerCancellationsDetails(client, input = {}, now = new Date()) {
   const detailInput = normalizeWorkerCancellationDetailInput(input, now);
   const detailRows = await client.queryJSONEachRow(
-    workerCancellationDetailsQuery(detailInput.metric),
+    workerCancellationDetailsQuery(detailInput.metric, detailInput.filters),
     paramsForDetails(detailInput),
     'worker cancellations detail shifts'
   );
@@ -806,8 +904,19 @@ async function loadWorkerCancellationsDetails(client, input = {}, now = new Date
 
 async function loadWorkerCancellationsDashboardShell(client, input = {}, now = new Date()) {
   const filters = normalizeWorkerCancellationFilters(input, now);
+  const filterOptionRows = await client.queryJSONEachRow(
+    workerCancellationFilterOptionsQuery(),
+    {
+      param_from: filters.fromDateTime,
+      param_to: filters.toExclusiveDateTime
+    },
+    'worker cancellations filter options'
+  );
 
-  return emptyWorkerCancellationsDashboard(filters);
+  return {
+    ...emptyWorkerCancellationsDashboard(filters),
+    filterOptions: workerCancellationFilterOptionsFromRows(filterOptionRows)
+  };
 }
 
 async function loadWorkerCancellationsDashboardSection(

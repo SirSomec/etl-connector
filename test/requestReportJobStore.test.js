@@ -76,3 +76,74 @@ test('request report job store reports failure and prunes completed jobs by ttl'
   assert.equal(store.pruneExpired(), 1);
   assert.equal(store.getSnapshot(job.id), null);
 });
+
+test('request report job store creates deterministic ids from random bytes', () => {
+  const store = createRequestReportJobStore({
+    randomBytes: () => Buffer.from('00112233445566778899aabbccddeeff', 'hex')
+  });
+
+  assert.equal(store.createJob().id, 'request-report-00112233445566778899aabbccddeeff');
+});
+
+test('request report job store clamps progress updates', () => {
+  const store = createRequestReportJobStore();
+  const job = store.createJob();
+
+  store.updateJob(job.id, { progress: -10 });
+  assert.equal(store.getSnapshot(job.id).progress, 0);
+
+  store.updateJob(job.id, { progress: 150 });
+  assert.equal(store.getSnapshot(job.id).progress, 100);
+});
+
+test('request report job store mutating methods return null for missing jobs', () => {
+  const store = createRequestReportJobStore();
+
+  assert.equal(store.updateJob('missing-job', { progress: 50 }), null);
+  assert.equal(store.updateJob('missing-job'), null);
+  assert.equal(store.completeJob('missing-job'), null);
+  assert.equal(store.failJob('missing-job', 'Нет задачи'), null);
+});
+
+test('request report job store accepts empty update patches', () => {
+  const store = createRequestReportJobStore();
+  const job = store.createJob();
+
+  const snapshot = store.updateJob(job.id);
+
+  assert.equal(snapshot.status, 'queued');
+  assert.equal(snapshot.progress, 0);
+  assert.equal(snapshot.detail, '');
+});
+
+test('request report job store keeps non-terminal jobs when pruning expired entries', () => {
+  let currentTime = 1_000;
+  const store = createRequestReportJobStore({
+    now: () => currentTime,
+    ttlMs: 1_000
+  });
+  const job = store.createJob();
+
+  store.updateJob(job.id, { status: 'running', progress: 50 });
+  currentTime += 10_000;
+
+  assert.equal(store.pruneExpired(), 0);
+  assert.equal(store.getSnapshot(job.id).status, 'running');
+});
+
+test('request report job store preserves detail when patch omits it', () => {
+  const store = createRequestReportJobStore();
+  const job = store.createJob();
+
+  store.updateJob(job.id, {
+    status: 'running',
+    progress: 25,
+    detail: 'Батч 1 из 4'
+  });
+  store.updateJob(job.id, { progress: 50 });
+
+  const snapshot = store.getSnapshot(job.id);
+
+  assert.equal(snapshot.progress, 50);
+  assert.equal(snapshot.detail, 'Батч 1 из 4');
+});

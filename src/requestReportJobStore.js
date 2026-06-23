@@ -79,10 +79,10 @@ function createRequestReportJobStore({
   }
 
   function getJob(id) {
-    return jobs.get(String(id || '')) || null;
+    return jobs.get(String(id ?? '')) || null;
   }
 
-  function updateJob(id, patch) {
+  function updateJob(id, patch = {}) {
     const job = getJob(id);
 
     if (!job) {
@@ -95,10 +95,10 @@ function createRequestReportJobStore({
       job.startedAt = job.createdAt;
     }
 
-    job.status = patch.status || job.status;
+    job.status = patch.status ?? job.status;
     job.progress = clampProgress(patch.progress ?? job.progress);
-    job.stage = String(patch.stage || job.stage || '');
-    job.detail = String(patch.detail || '');
+    job.stage = String(patch.stage ?? job.stage ?? '');
+    job.detail = String(patch.detail ?? job.detail ?? '');
     job.updatedAt = current;
 
     return snapshotJob(job, current);
@@ -116,8 +116,8 @@ function createRequestReportJobStore({
     job.status = 'done';
     job.progress = 100;
     job.stage = 'Готово';
-    job.detail = String(detail || '');
-    job.html = String(html || '');
+    job.detail = String(detail ?? '');
+    job.html = String(html ?? '');
     job.error = undefined;
     job.updatedAt = current;
 
@@ -132,12 +132,13 @@ function createRequestReportJobStore({
     }
 
     const current = now();
+    const message = String(error ?? 'Не удалось проверить отчет.');
 
     job.status = 'failed';
     job.progress = 100;
     job.stage = 'Ошибка';
-    job.detail = String(error || 'Не удалось проверить отчет.');
-    job.error = String(error || 'Не удалось проверить отчет.');
+    job.detail = message;
+    job.error = message;
     job.updatedAt = current;
 
     return snapshotJob(job, current);

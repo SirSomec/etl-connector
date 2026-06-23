@@ -54,7 +54,7 @@ const WORKER_CANCELLATION_NUMERIC_FILTERS = [
   { key: 'postStartCancellations', column: 'post_start_cancellations', param: 'post_start_cancellations' },
   { key: 'failedShifts', column: 'failed_shifts', param: 'failed_shifts' }
 ];
-const WORKER_CANCELLATION_FILTER_OPTION_KEYS = ['client'];
+const WORKER_CANCELLATION_FILTER_OPTION_KEYS = ['client', 'city'];
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -171,12 +171,14 @@ function normalizeNonNegativeNumber(value) {
 function appendWorkerCancellationOptionalFilters(filters, input) {
   const search = cleanText(input.search);
   const client = cleanValues(input.client);
+  const city = cleanValues(input.city);
 
   if (search !== '') {
     filters.search = search;
   }
 
   filters.client = client;
+  filters.city = city;
 
   for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
     const fromKey = `${metric.key}From`;
@@ -491,6 +493,10 @@ function cacheKeyForWorkerCancellationsSection(section, filters) {
     keyFilters.client = filters.client;
   }
 
+  if (filters.city.length > 0) {
+    keyFilters.city = filters.city;
+  }
+
   for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
     const fromKey = `${metric.key}From`;
     const toKey = `${metric.key}To`;
@@ -527,6 +533,10 @@ function paramsForFilters(filters) {
     params.param_clients = serializeStringArray(filters.client);
   }
 
+  if (filters.city.length > 0) {
+    params.param_cities = serializeStringArray(filters.city);
+  }
+
   for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
     const fromKey = `${metric.key}From`;
     const toKey = `${metric.key}To`;
@@ -555,6 +565,10 @@ function paramsForDetails(detailInput) {
     params.param_clients = serializeStringArray(detailInput.filters.client);
   }
 
+  if (detailInput.filters.city.length > 0) {
+    params.param_cities = serializeStringArray(detailInput.filters.city);
+  }
+
   return params;
 }
 
@@ -579,9 +593,9 @@ function workerFullNameExpression() {
     )`;
 }
 
-function workerShiftActualOrderJoinsSql({ clientAlias = 'c', contractorAlias = 'ct' } = {}) {
+function workerShiftActualOrderJoinsSql({ clientAlias = 'c', workplaceAlias = 'ow', contractorAlias = 'ct' } = {}) {
   return `INNER JOIN mg_orders AS o ON o._id = j.source
-    ${actualOrderJoinsSql('o', { clientAlias, contractorAlias })}`;
+    ${actualOrderJoinsSql('o', { clientAlias, workplaceAlias, contractorAlias })}`;
 }
 
 function serializeStringArray(values) {
@@ -590,6 +604,10 @@ function serializeStringArray(values) {
 
 function workerCancellationClientCondition(filters, clientAlias = 'c') {
   return filters.client.length > 0 ? `\n      AND ${clientAlias}.title IN {clients:Array(String)}` : '';
+}
+
+function workerCancellationCityCondition(filters, workplaceAlias = 'ow') {
+  return filters.city.length > 0 ? `\n      AND ${workplaceAlias}.address__city IN {cities:Array(String)}` : '';
 }
 
 function workerCancellationMetricsCtes(filters = {}) {
@@ -606,7 +624,7 @@ function workerCancellationMetricsCtes(filters = {}) {
       AND j.start < {to:DateTime}
       AND ifNull(j.worker, '') != ''
       AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}${workerCancellationCityCondition(filters, 'ow')}
   ),
   cancelled_shift_facts AS (
     SELECT
@@ -730,7 +748,7 @@ function totalWorkersQuery(filters = {}) {
       AND j.start < {to:DateTime}
       AND ifNull(j.worker, '') != ''
       AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}${workerCancellationCityCondition(filters, 'ow')}
     GROUP BY worker_id
   )
   SELECT
@@ -768,13 +786,14 @@ function workerCancellationDetailsQuery(metric, filters = {}) {
     FROM mg_jobs AS j
     ${workerShiftActualOrderJoinsSql({
       clientAlias: 'actual_client',
+      workplaceAlias: 'actual_workplace',
       contractorAlias: 'actual_contractor'
     })}
     WHERE j.start >= {from:DateTime}
       AND j.start < {to:DateTime}
       AND j.worker = {worker_id:String}
       AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'actual_client', 'actual_contractor')}${workerCancellationClientCondition(filters, 'actual_client')}
+      AND ${actualOrderDomainCondition('o', 'actual_client', 'actual_contractor')}${workerCancellationClientCondition(filters, 'actual_client')}${workerCancellationCityCondition(filters, 'actual_workplace')}
   ),
   cancelled_shift_facts AS (
     SELECT
@@ -860,6 +879,19 @@ function workerCancellationFilterOptionsQuery() {
   return `SELECT
     'client' AS filter,
     ifNull(c.title, '') AS value
+  FROM mg_jobs AS j
+  ${workerShiftActualOrderJoinsSql()}
+  WHERE j.start >= {from:DateTime}
+    AND j.start < {to:DateTime}
+    AND ifNull(j.worker, '') != ''
+    AND ifNull(j.deleted, 0) = 0
+    AND ${actualOrderDomainCondition('o', 'c', 'ct')}
+  GROUP BY value
+  HAVING value != ''
+  UNION ALL
+  SELECT
+    'city' AS filter,
+    ifNull(ow.address__city, '') AS value
   FROM mg_jobs AS j
   ${workerShiftActualOrderJoinsSql()}
   WHERE j.start >= {from:DateTime}

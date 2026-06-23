@@ -16,6 +16,11 @@ const {
   actualOrderDomainCondition,
   actualOrderJoinsSql
 } = require('./analyticsDomainSql');
+const { parseMultipartFormData } = require('./multipartFormData');
+const {
+  findRequestReportRowsWithoutConfirmedShift,
+  parseRequestsReportWorkbook
+} = require('./requestReportMissingConfirmed');
 const {
   createUserActivityStore,
   DEFAULT_USER_ACTIVITY_RETENTION_DAYS
@@ -71,6 +76,7 @@ const {
   renderLogin,
   renderPasswordChange,
   renderPreloadManagement,
+  renderRequestReportMissingConfirmedPage,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
@@ -158,7 +164,8 @@ function activeNavForPath(path) {
     '/dashboards/heatmap': 'heatmap',
     '/dashboards/sales-by-project': 'sales-by-project',
     '/dashboards/workplace-analysis': 'workplace-analysis',
-    '/dashboards/worker-cancellations': 'worker-cancellations'
+    '/dashboards/worker-cancellations': 'worker-cancellations',
+    '/tools/request-report-confirmed-check': 'request-report-matching'
   };
 
   if (normalized.startsWith('/admin/users/')) {
@@ -191,6 +198,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/dashboards/worker-cancellations/')) {
     return 'worker-cancellations';
+  }
+
+  if (normalized.startsWith('/tools/request-report-confirmed-check/')) {
+    return 'request-report-matching';
   }
 
   return navByPath[normalized] || 'tables';
@@ -499,6 +510,10 @@ function createApp({
 
     if (pathName === '/dashboards/worker-cancellations' || pathName.startsWith('/dashboards/worker-cancellations/')) {
       return 'worker-cancellations';
+    }
+
+    if (pathName === '/tools/request-report-confirmed-check' || pathName.startsWith('/tools/request-report-confirmed-check/')) {
+      return 'request-report-matching';
     }
 
     return 'other';
@@ -1918,6 +1933,113 @@ function createApp({
           .type('html')
           .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
       }
+    })
+  );
+
+  app.get(
+    '/tools/request-report-confirmed-check',
+    requireAuth('request-report-matching'),
+    asyncRoute(async (req, res) => {
+      recordCurrentUserActivity(req, activityEventType(req));
+      res
+        .status(200)
+        .type('html')
+        .send(renderRequestReportMissingConfirmedPage({ database, ...viewContext(req) }));
+    })
+  );
+
+  app.post(
+    '/tools/request-report-confirmed-check',
+    requireAuth('request-report-matching'),
+    asyncRoute(async (req, res) => {
+      let form;
+
+      try {
+        form = await parseMultipartFormData(req, { maxBytes: 10 * 1024 * 1024 });
+      } catch (error) {
+        res
+          .status(statusCodeFromError(error))
+          .type('html')
+          .send(
+            renderRequestReportMissingConfirmedPage({
+              database,
+              error: sanitizeForResponse(error && error.message, config),
+              ...viewContext(req)
+            })
+          );
+        return;
+      }
+
+      req.body = form.fields || {};
+
+      if (!verifyCsrf(req, res, 'request-report-matching')) {
+        return;
+      }
+
+      const file = form.files && form.files.reportFile;
+      const filename = file && file.filename ? file.filename : '';
+
+      if (!file || !file.buffer || file.buffer.length === 0) {
+        res
+          .status(400)
+          .type('html')
+          .send(
+            renderRequestReportMissingConfirmedPage({
+              database,
+              error: 'Выберите XLSX-файл.',
+              ...viewContext(req)
+            })
+          );
+        return;
+      }
+
+      if (!filename.toLowerCase().endsWith('.xlsx')) {
+        res
+          .status(400)
+          .type('html')
+          .send(
+            renderRequestReportMissingConfirmedPage({
+              database,
+              filename,
+              error: 'Поддерживаются только XLSX-файлы.',
+              ...viewContext(req)
+            })
+          );
+        return;
+      }
+
+      let parsed;
+
+      try {
+        parsed = parseRequestsReportWorkbook(file.buffer);
+      } catch (error) {
+        res
+          .status(400)
+          .type('html')
+          .send(
+            renderRequestReportMissingConfirmedPage({
+              database,
+              filename,
+              error: sanitizeForResponse(error && error.message, config),
+              ...viewContext(req)
+            })
+          );
+        return;
+      }
+
+      const lookup = await findRequestReportRowsWithoutConfirmedShift(client, parsed.rows);
+      const result = {
+        ...lookup,
+        warnings: [
+          ...(Array.isArray(parsed.warnings) ? parsed.warnings : []),
+          ...(Array.isArray(lookup.warnings) ? lookup.warnings : [])
+        ]
+      };
+
+      res
+        .status(200)
+        .type('html')
+        .send(renderRequestReportMissingConfirmedPage({ database, filename, result, ...viewContext(req) }));
     })
   );
 

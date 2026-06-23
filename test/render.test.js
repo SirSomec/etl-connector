@@ -12,6 +12,7 @@ const {
   renderHeatmapDashboardSection,
   renderHome,
   renderPreloadManagement,
+  renderRequestReportMissingConfirmedPage,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
@@ -73,6 +74,60 @@ test('renderHome renders an empty state when tables is empty', () => {
   });
 
   assert.match(html, /No tables found/);
+});
+
+test('renderRequestReportMissingConfirmedPage renders upload form and requested result columns', () => {
+  const html = renderRequestReportMissingConfirmedPage({
+    database: 'etl',
+    currentUser: {
+      email: 'analyst@example.test',
+      role: 'analyst',
+      permissions: ['request-report-matching']
+    },
+    csrfToken: 'csrf-token',
+    filename: 'requests-report.xlsx',
+    result: {
+      summary: {
+        totalRows: 2,
+        rowsWithId: 2,
+        checkedExternalIds: 2,
+        confirmedRows: 1,
+        missingConfirmedRows: 1
+      },
+      rows: [
+        {
+          organization: 'АО "Тандер"',
+          workplace: 'Точка <1>',
+          address: 'ул. Ленина, 1',
+          employee: 'Иванов Иван',
+          startText: '2026-06-01 09:00',
+          actualDuration: '7.5',
+          crmUrl: 'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=63e9cbf44eece00008747426'
+        }
+      ],
+      warnings: ['Предупреждение <одно>']
+    }
+  });
+
+  assert.match(html, /action="\/tools\/request-report-confirmed-check"/);
+  assert.match(html, /enctype="multipart\/form-data"/);
+  assert.match(html, /name="csrfToken" value="csrf-token"/);
+  assert.match(html, /Организация/);
+  assert.match(html, /Рабочая точка/);
+  assert.match(html, /Адрес/);
+  assert.match(html, /Сотрудник/);
+  assert.match(html, /Время с/);
+  assert.match(html, /Фактическая продолжительность/);
+  assert.match(html, /requests-report.xlsx/);
+  assert.match(html, /АО &quot;Тандер&quot;/);
+  assert.match(html, /Точка &lt;1&gt;/);
+  assert.match(
+    html,
+    /<a href="https:\/\/crm\.mygig\.ru\/coordination\?searchDate\[\]=2026-06-01&amp;searchDate\[\]=2026-06-01&amp;workplaceIds\[\]=63e9cbf44eece00008747426" target="_blank" rel="noopener noreferrer">7\.5<\/a>/
+  );
+  assert.match(html, /Предупреждение &lt;одно&gt;/);
+  assert.doesNotMatch(html, /ID ЛКК<\/th>/);
+  assert.doesNotMatch(html, /Статус<\/th>/);
 });
 
 test('renderHome includes sidebar navigation with tables active', () => {
@@ -438,10 +493,12 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
         pageSize: 200,
         sort: 'workerCancellations24h',
         direction: 'desc',
-        client: ['Brand A']
+        client: ['Brand A'],
+        city: ['Moscow']
       },
       filterOptions: {
-        client: ['Brand A', 'Brand B']
+        client: ['Brand A', 'Brand B'],
+        city: ['Moscow', 'Kazan']
       }
     }
   });
@@ -455,6 +512,8 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
   assert.match(html, /data-multi-filter/);
   assert.match(html, /<input type="checkbox" name="client" value="Brand A" checked data-multi-filter-checkbox>/);
   assert.match(html, /<input type="checkbox" name="client" value="Brand B" data-multi-filter-checkbox>/);
+  assert.match(html, /<input type="checkbox" name="city" value="Moscow" checked data-multi-filter-checkbox>/);
+  assert.match(html, /<input type="checkbox" name="city" value="Kazan" data-multi-filter-checkbox>/);
   assert.match(html, /<option value="200" selected>200<\/option>/);
   assert.match(html, /data-worker-cancellation-modal/);
   assert.match(html, /document\.addEventListener\('click', function \(event\)/);
@@ -462,7 +521,7 @@ test('renderWorkerCancellationsDashboard renders filters and progressive table l
   assert.match(html, /Период по плановому старту смены/);
   assert.match(
     html,
-    /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers&amp;from=2026-05-01&amp;to=2026-05-31&amp;page=2&amp;pageSize=200&amp;sort=workerCancellations24h&amp;direction=desc&amp;client=Brand\+A"/
+    /data-dashboard-fragment-url="\/dashboards\/worker-cancellations\/section\?section=workers&amp;from=2026-05-01&amp;to=2026-05-31&amp;page=2&amp;pageSize=200&amp;sort=workerCancellations24h&amp;direction=desc&amp;client=Brand\+A&amp;city=Moscow"/
   );
   assert.match(html, /Загружается/);
   assert.match(html, /document\.querySelectorAll\('\[data-dashboard-fragment-url\]/);
@@ -511,7 +570,8 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
         pageSize: 50,
         sort: 'workerCancellations',
         direction: 'asc',
-        client: ['Brand A']
+        client: ['Brand A'],
+        city: ['Moscow']
       },
       rows: [
         {
@@ -547,20 +607,20 @@ test('renderWorkerCancellationsDashboardSection renders sortable escaped table a
   assert.match(html, /Провалы \/ failed/);
   assert.match(
     html,
-    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=fullName&amp;direction=asc&amp;client=Brand\+A"/
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=fullName&amp;direction=asc&amp;client=Brand\+A&amp;city=Moscow"/
   );
   assert.match(
     html,
-    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc&amp;client=Brand\+A"/
+    /href="\/dashboards\/worker-cancellations\?from=2026-05-01&amp;to=2026-05-31&amp;pageSize=50&amp;sort=workerCancellations&amp;direction=desc&amp;client=Brand\+A&amp;city=Moscow"/
   );
   assert.match(html, /<td class="phone-cell">\+79990000000&lt;script&gt;x&lt;\/script&gt;<\/td>/);
   assert.match(
     html,
-    /<button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=confirmedShifts&amp;client=Brand\+A">10<\/button>/
+    /<button type="button" class="metric-detail-trigger" data-worker-cancellation-detail-trigger data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=confirmedShifts&amp;client=Brand\+A&amp;city=Moscow">10<\/button>/
   );
   assert.match(
     html,
-    /data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=workerCancellations&amp;client=Brand\+A"/
+    /data-detail-url="\/dashboards\/worker-cancellations\/details\?from=2026-05-01&amp;to=2026-05-31&amp;workerId=worker-1&amp;metric=workerCancellations&amp;client=Brand\+A&amp;city=Moscow"/
   );
   assert.match(html, /Иванов &lt;script&gt;Иван&lt;\/script&gt;/);
   assert.match(html, /Москва&lt;script&gt;bad&lt;\/script&gt;/);

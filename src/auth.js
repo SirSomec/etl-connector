@@ -54,6 +54,11 @@ const PERMISSION_DEFINITIONS = [
     description: 'Таблица исполнителей с отменами, поздними отменами и провалами смен.'
   },
   {
+    id: 'request-report-matching',
+    label: 'Проверка отчетов',
+    description: 'Загрузка отчетов запросов и поиск строк без confirmed-смен в etl.'
+  },
+  {
     id: 'sql-inspector',
     label: 'SQL метрик',
     description: 'Просмотр SQL-запросов и простых описаний расчетных метрик.'

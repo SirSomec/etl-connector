@@ -544,6 +544,40 @@ test('GET / renders available tables from metadata', async () => {
   assert.deepEqual(client.calls, [['listTables']]);
 });
 
+test('request report confirmed check page renders upload form and handles empty multipart upload', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const page = await fetchText(baseUrl, '/tools/request-report-confirmed-check');
+
+    assert.equal(page.response.status, 200);
+    assert.match(page.text, /Смены без confirmed/);
+    assert.match(page.text, /name="reportFile"/);
+
+    const boundary = '----request-report-test-boundary';
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="csrfToken"',
+      '',
+      '',
+      `--${boundary}--`,
+      ''
+    ].join('\r\n');
+    const emptyUpload = await fetchText(baseUrl, '/tools/request-report-confirmed-check', {
+      method: 'POST',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${boundary}`
+      },
+      body
+    });
+
+    assert.equal(emptyUpload.response.status, 400);
+    assert.match(emptyUpload.text, /Выберите XLSX-файл/);
+  });
+
+  assert.deepEqual(client.calls, []);
+});
+
 test('GET /dashboards/sales-by-project renders dashboard', async () => {
   const client = createFakeClient();
 

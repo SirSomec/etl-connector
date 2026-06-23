@@ -60,6 +60,12 @@ const NAV_LINKS = [
     permission: 'worker-cancellations'
   },
   {
+    href: '/tools/request-report-confirmed-check',
+    label: 'Проверка отчетов',
+    id: 'request-report-matching',
+    permission: 'request-report-matching'
+  },
+  {
     href: '/admin/users',
     label: 'Учетные записи',
     id: 'users',
@@ -4925,6 +4931,98 @@ ${body}`;
   });
 }
 
+function renderRequestReportMissingConfirmedRows(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+
+  if (safeRows.length === 0) {
+    return '<p class="empty">Строк без confirmed-смен не найдено.</p>';
+  }
+
+  const bodyRows = safeRows
+    .map((row) => {
+      const actualDuration = row.crmUrl
+        ? `<a href="${escapeHtml(row.crmUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.actualDuration || '')}</a>`
+        : escapeHtml(row.actualDuration || '');
+
+      return `<tr>
+  <td>${escapeHtml(row.organization || '')}</td>
+  <td>${escapeHtml(row.workplace || '')}</td>
+  <td>${escapeHtml(row.address || '')}</td>
+  <td>${escapeHtml(row.employee || '')}</td>
+  <td>${escapeHtml(row.startText || '')}</td>
+  <td>${actualDuration}</td>
+</tr>`;
+    })
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Организация</th><th>Рабочая точка</th><th>Адрес</th><th>Сотрудник</th><th>Время с</th><th>Фактическая продолжительность</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderRequestReportSummary(summary) {
+  const safeSummary = summary || {};
+
+  return `<div class="kpi-grid">
+  <div class="kpi-card"><div class="kpi-label">Строк в файле</div><div class="kpi-value">${escapeHtml(formatNumber(safeSummary.totalRows || 0))}</div></div>
+  <div class="kpi-card"><div class="kpi-label">С ID ЛКК</div><div class="kpi-value">${escapeHtml(formatNumber(safeSummary.rowsWithId || 0))}</div></div>
+  <div class="kpi-card"><div class="kpi-label">Найдены confirmed</div><div class="kpi-value">${escapeHtml(formatNumber(safeSummary.confirmedRows || 0))}</div></div>
+  <div class="kpi-card"><div class="kpi-label">Нет confirmed</div><div class="kpi-value">${escapeHtml(formatNumber(safeSummary.missingConfirmedRows || 0))}</div></div>
+</div>`;
+}
+
+function renderRequestReportWarnings(warnings) {
+  const safeWarnings = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+
+  if (safeWarnings.length === 0) {
+    return '';
+  }
+
+  return `<p class="technical-note">Предупреждения: ${safeWarnings.map(escapeHtml).join('; ')}</p>`;
+}
+
+function renderRequestReportMissingConfirmedPage({
+  database,
+  currentUser,
+  csrfToken = '',
+  filename = '',
+  result = null,
+  error = ''
+}) {
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+  const resultHtml = result
+    ? `<section class="section">
+  <h2>Результат${filename ? `: ${escapeHtml(filename)}` : ''}</h2>
+  ${renderRequestReportSummary(result.summary)}
+  ${renderRequestReportWarnings(result.warnings)}
+  ${renderRequestReportMissingConfirmedRows(result.rows)}
+</section>`
+    : '';
+  const content = `<section class="section">
+  <h1>Смены без confirmed</h1>
+  ${errorHtml}
+  <form class="filter-bar" action="/tools/request-report-confirmed-check" method="post" enctype="multipart/form-data">
+    ${renderHiddenCsrf(csrfToken)}
+    <div class="field">
+      <label for="reportFile">Файл отчета</label>
+      <input id="reportFile" name="reportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+    </div>
+    <button type="submit">Проверить</button>
+  </form>
+</section>
+${resultHtml}`;
+
+  return layout({
+    title: 'Смены без confirmed',
+    database,
+    content,
+    activeNav: 'request-report-matching',
+    currentUser,
+    csrfToken
+  });
+}
+
 function renderHome({ database, tables, currentUser, csrfToken }) {
   const tableItems = tables
     .map((table) => {
@@ -6517,6 +6615,7 @@ function workerCancellationsPageHref(filters, overrides = {}) {
   addDashboardQueryParam(params, 'direction', nextFilters.direction);
   addDashboardQueryParam(params, 'search', nextFilters.search);
   addDashboardQueryParam(params, 'client', nextFilters.client);
+  addDashboardQueryParam(params, 'city', nextFilters.city);
 
   for (const column of WORKER_CANCELLATION_NUMERIC_COLUMNS) {
     addDashboardQueryParam(params, `${column.key}From`, nextFilters[`${column.key}From`]);
@@ -6544,6 +6643,7 @@ function workerCancellationsDetailUrl(filters, row, metric) {
   addDashboardQueryParam(params, 'workerId', row.workerId);
   addDashboardQueryParam(params, 'metric', metric);
   addDashboardQueryParam(params, 'client', filters.client);
+  addDashboardQueryParam(params, 'city', filters.city);
 
   return `/dashboards/worker-cancellations/details?${params.toString()}`;
 }
@@ -7164,6 +7264,12 @@ function renderWorkerCancellationsDashboard({
       label: 'Бренд',
       options: filterOptions(dashboard, 'client'),
       selected: filters.client
+    })}
+    ${renderMultiSelectField({
+      id: 'city',
+      label: 'Город',
+      options: filterOptions(dashboard, 'city'),
+      selected: filters.city
     })}
     ${renderWorkerCancellationRangeFilters(filters)}
     <div class="field">
@@ -9810,6 +9916,7 @@ module.exports = {
   renderLogin,
   renderPasswordChange,
   renderPreloadManagement,
+  renderRequestReportMissingConfirmedPage,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,

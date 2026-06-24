@@ -15,6 +15,7 @@ const {
   renderHome,
   renderPreloadManagement,
   renderRequestReportMissingConfirmedPage,
+  renderRequestReportMissingConfirmedResult,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,
@@ -143,6 +144,23 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
 
   assert.match(html, /action="\/tools\/request-report-confirmed-check"/);
   assert.match(html, /enctype="multipart\/form-data"/);
+  assert.match(html, /data-request-report-check-form/);
+  assert.match(html, /data-request-report-jobs-url="\/tools\/request-report-confirmed-check\/jobs"/);
+  assert.match(html, /data-request-report-progress hidden/);
+  assert.match(html, /data-request-report-progress-bar/);
+  assert.match(html, /data-request-report-progress-percent/);
+  assert.match(html, /data-request-report-progress-stage/);
+  assert.match(html, /data-request-report-progress-detail/);
+  assert.match(html, /data-request-report-progress-eta/);
+  assert.match(html, /Осталось/);
+  assert.match(html, /estimatedRemainingMs/);
+  assert.match(html, /payload\.jobId/);
+  assert.match(html, /job\.jobId/);
+  assert.match(html, /responseError\(response, 'Не удалось запустить проверку\.'/);
+  assert.match(html, /nativeSubmitRequestReportForm/);
+  assert.match(html, /canFallbackToSync/);
+  assert.match(html, /data-request-report-progress-counters/);
+  assert.match(html, /data-request-report-result-target/);
   assert.match(html, /name="action" value="export"/);
   assert.match(html, /Проверить и скачать Excel/);
   assert.match(html, /name="csrfToken" value="csrf-token"/);
@@ -182,6 +200,42 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
   assert.match(html, /data-request-duration-filter-empty hidden/);
   assert.match(html, /Предупреждение &lt;одно&gt;/);
   assert.doesNotMatch(html, /ID ЛКК<\/th>/);
+});
+
+test('renderRequestReportMissingConfirmedResult returns reusable result fragment with filters', () => {
+  const html = renderRequestReportMissingConfirmedResult({
+    csrfToken: 'csrf-token',
+    filename: 'fragment-report.xlsx',
+    result: {
+      summary: {
+        totalRows: 2,
+        rowsWithId: 2,
+        confirmedRows: 1,
+        missingConfirmedRows: 1
+      },
+      rows: [
+        {
+          reviewStatusKey: 'lkk:201',
+          reviewStatus: 'verified',
+          organization: 'ООО Фрагмент',
+          workplace: 'Точка 2',
+          startText: '2026-06-02 09:00',
+          actualDuration: '0'
+        }
+      ],
+      warnings: ['warning <one>']
+    }
+  });
+
+  assert.match(html, /^<section class="section" data-request-report-result-fragment>/);
+  assert.match(html, /fragment-report.xlsx/);
+  assert.match(html, /data-request-report-result/);
+  assert.match(html, /data-request-duration-filter/);
+  assert.match(html, /data-request-status-filter/);
+  assert.match(html, /data-request-report-status-control/);
+  assert.match(html, /data-request-report-status-key="lkk:201"/);
+  assert.match(html, /data-request-duration-filter-empty hidden/);
+  assert.match(html, /warning &lt;one&gt;/);
 });
 
 test('renderHome includes sidebar navigation with tables active', () => {

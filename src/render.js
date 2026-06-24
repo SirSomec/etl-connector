@@ -623,6 +623,83 @@ function layout({
       min-width: 150px;
     }
 
+    .request-report-progress-panel {
+      display: grid;
+      gap: 8px;
+      margin-top: -6px;
+      margin-bottom: 18px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .request-report-progress-panel[hidden] {
+      display: none;
+    }
+
+    .request-report-progress-head,
+    .request-report-progress-meta,
+    .request-report-progress-counters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px 12px;
+    }
+
+    .request-report-progress-head {
+      font-size: 14px;
+    }
+
+    .request-report-progress-percent {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .request-report-progress-track {
+      position: relative;
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5ebf0;
+    }
+
+    .request-report-progress-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 220ms ease;
+    }
+
+    .request-report-progress-panel[data-request-report-progress-mode="indeterminate"] .request-report-progress-bar {
+      width: 42%;
+      background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+      animation: request-report-progress-slide 1.15s linear infinite;
+    }
+
+    .request-report-progress-meta,
+    .request-report-progress-counters {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .request-report-progress-error {
+      margin-bottom: 0;
+    }
+
+    @keyframes request-report-progress-slide {
+      0% {
+        transform: translateX(-110%);
+      }
+
+      100% {
+        transform: translateX(240%);
+      }
+    }
+
     .auth-page {
       display: grid;
       min-height: calc(100vh - 136px);
@@ -3360,7 +3437,11 @@ function layout({
   ${content.includes('data-giger-list-modal') ? renderGigerDetailsScript() : ''}
   ${content.includes('data-workplace-point-day-modal') ? renderWorkplacePointDayDetailsScript() : ''}
   ${content.includes('data-workplace-point-review-modal') ? renderWorkplacePointReviewsScript() : ''}
-  ${content.includes('data-request-duration-filter') ? renderRequestReportDurationFilterScript() : ''}
+  ${
+    content.includes('data-request-duration-filter') || content.includes('data-request-report-check-form')
+      ? renderRequestReportDurationFilterScript()
+      : ''
+  }
   ${
     content.includes('data-city-dynamic-chart') || content.includes('data-city-analysis-progressive')
       ? renderCityDynamicChartScript()
@@ -3479,6 +3560,363 @@ function renderRequestReportDurationFilterScript() {
       empty.hidden = visible !== 0;
     }
   }
+
+  function clampPercent(value) {
+    var number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return null;
+    }
+
+    if (number > 0 && number <= 1) {
+      number *= 100;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(number)));
+  }
+
+  function secondsLabel(value) {
+    var seconds = Number(value);
+
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return '';
+    }
+
+    seconds = Math.round(seconds);
+
+    if (seconds < 60) {
+      return seconds + ' сек.';
+    }
+
+    return Math.ceil(seconds / 60) + ' мин.';
+  }
+
+  function progressSource(payload) {
+    var source = payload && payload.job ? payload.job : payload;
+    var progress = source && source.progress && typeof source.progress === 'object' ? source.progress : {};
+
+    return {
+      source: source || {},
+      progress: progress
+    };
+  }
+
+  function progressPercent(payload) {
+    var parts = progressSource(payload);
+    var candidates = [
+      parts.progress.percent,
+      parts.progress.percentage,
+      parts.progress.value,
+      parts.source.percent,
+      parts.source.percentage,
+      parts.source.progress
+    ];
+    var index;
+    var percent;
+
+    for (index = 0; index < candidates.length; index += 1) {
+      percent = clampPercent(candidates[index]);
+
+      if (percent !== null) {
+        return percent;
+      }
+    }
+
+    return null;
+  }
+
+  function progressText(payload, key, fallback) {
+    var parts = progressSource(payload);
+    var value = parts.progress[key] || parts.source[key] || (payload && payload[key]);
+
+    return value ? String(value) : fallback;
+  }
+
+  function progressEta(payload) {
+    var parts = progressSource(payload);
+    var text = parts.progress.etaText || parts.progress.remainingText || parts.source.etaText || parts.source.remainingText;
+    var seconds = parts.progress.etaSeconds ?? parts.progress.remainingSeconds ?? parts.source.etaSeconds ?? parts.source.remainingSeconds;
+    var milliseconds = parts.progress.etaMs ?? parts.progress.remainingMs ?? parts.progress.estimatedRemainingMs ?? parts.source.etaMs ?? parts.source.remainingMs ?? parts.source.estimatedRemainingMs;
+    var label = text || secondsLabel(seconds);
+
+    if (!label && Number.isFinite(Number(milliseconds))) {
+      label = secondsLabel(Number(milliseconds) / 1000);
+    }
+
+    return label ? 'Осталось ' + label : 'Осталось --';
+  }
+
+  function progressCounters(payload) {
+    var parts = progressSource(payload);
+    var counters = parts.progress.counters || parts.source.counters || (payload && payload.counters) || {};
+    var total = counters.totalRows ?? counters.total ?? parts.progress.totalRows ?? parts.source.totalRows;
+    var processed = counters.processedRows ?? counters.processed ?? counters.checkedRows ?? parts.progress.processedRows ?? parts.source.processedRows;
+    var missing = counters.missingConfirmedRows ?? counters.missing ?? parts.progress.missingConfirmedRows ?? parts.source.missingConfirmedRows;
+    var failed = counters.failedRows ?? counters.failed ?? counters.errors ?? parts.progress.failedRows ?? parts.source.failedRows;
+    var labels = [];
+
+    if (total !== undefined && total !== null) {
+      labels.push('Строк: ' + total);
+    }
+
+    if (processed !== undefined && processed !== null) {
+      labels.push('Проверено: ' + processed);
+    }
+
+    if (missing !== undefined && missing !== null) {
+      labels.push('Без confirmed: ' + missing);
+    }
+
+    if (failed !== undefined && failed !== null) {
+      labels.push('Ошибки: ' + failed);
+    }
+
+    return labels.length > 0 ? labels.join(' · ') : 'Строк: 0 · Проверено: 0 · Без confirmed: 0';
+  }
+
+  function setSubmitting(form, submitting) {
+    form.setAttribute('aria-busy', submitting ? 'true' : 'false');
+    form.querySelectorAll('button[type="submit"]').forEach(function (button) {
+      button.disabled = submitting;
+    });
+  }
+
+  function setProgressError(panel, message) {
+    var error = panel ? panel.querySelector('[data-request-report-progress-error]') : null;
+
+    if (!error) {
+      return;
+    }
+
+    error.textContent = message || '';
+    error.hidden = !message;
+  }
+
+  function updateProgressPanel(panel, payload) {
+    var percent = progressPercent(payload);
+    var bar = panel.querySelector('[data-request-report-progress-bar]');
+    var percentLabel = panel.querySelector('[data-request-report-progress-percent]');
+    var stage = panel.querySelector('[data-request-report-progress-stage]');
+    var detail = panel.querySelector('[data-request-report-progress-detail]');
+    var eta = panel.querySelector('[data-request-report-progress-eta]');
+    var counters = panel.querySelector('[data-request-report-progress-counters]');
+
+    panel.hidden = false;
+
+    if (percent === null) {
+      panel.setAttribute('data-request-report-progress-mode', 'indeterminate');
+      if (percentLabel) {
+        percentLabel.textContent = '...';
+      }
+    } else {
+      panel.setAttribute('data-request-report-progress-mode', 'determinate');
+      if (bar) {
+        bar.style.width = percent + '%';
+      }
+      if (percentLabel) {
+        percentLabel.textContent = percent + '%';
+      }
+    }
+
+    if (stage) {
+      stage.textContent = progressText(payload, 'stage', 'Запуск проверки');
+    }
+
+    if (detail) {
+      detail.textContent = progressText(payload, 'detail', 'Файл отправлен, ожидаем прогресс.');
+    }
+
+    if (eta) {
+      eta.textContent = progressEta(payload);
+    }
+
+    if (counters) {
+      counters.textContent = progressCounters(payload);
+    }
+  }
+
+  function payloadStatus(payload) {
+    var source = payload && payload.job ? payload.job : payload;
+
+    return String((source && source.status) || (payload && payload.status) || '').toLowerCase();
+  }
+
+  function payloadResultHtml(payload) {
+    var source = payload && payload.job ? payload.job : payload;
+
+    return (source && (source.resultHtml || source.html)) || (payload && (payload.resultHtml || payload.html)) || '';
+  }
+
+  function responseError(response, fallbackMessage) {
+    return response.json().catch(function () {
+      return {};
+    }).then(function (payload) {
+      var source = payload && payload.job ? payload.job : payload;
+      var message = (source && (source.error || source.message)) || payload.error || payload.message || fallbackMessage;
+      var error = new Error(message || fallbackMessage);
+
+      error.status = response.status;
+      error.canFallbackToSync = response.status === 404 || response.status === 405;
+
+      throw error;
+    });
+  }
+
+  function nativeSubmitRequestReportForm(form, submitter) {
+    var hidden;
+
+    if (submitter && submitter.name) {
+      hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = submitter.name;
+      hidden.value = submitter.value || '';
+      hidden.setAttribute('data-request-report-fallback-action', '1');
+      form.appendChild(hidden);
+    }
+
+    if (!hidden && !new FormData(form).has('action')) {
+      hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = 'action';
+      hidden.value = 'check';
+      hidden.setAttribute('data-request-report-fallback-action', '1');
+      form.appendChild(hidden);
+    }
+
+    HTMLFormElement.prototype.submit.call(form);
+  }
+
+  function pollRequestReportJob(form, panel, target, jobUrl) {
+    fetch(jobUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: {
+        accept: 'application/json'
+      }
+    }).then(function (response) {
+      if (!response.ok) {
+        return responseError(response, 'Не удалось получить статус проверки.');
+      }
+
+      return response.json();
+    }).then(function (payload) {
+      var status = payloadStatus(payload);
+      var html;
+      var delay;
+
+      updateProgressPanel(panel, payload);
+
+      if (status === 'done' || status === 'completed' || status === 'success') {
+        updateProgressPanel(panel, { status: 'done', percent: 100, stage: 'Готово', detail: 'Результат проверки получен.', counters: (payload.job && payload.job.counters) || payload.counters });
+        html = payloadResultHtml(payload);
+
+        if (html && target) {
+          target.innerHTML = html;
+          target.querySelectorAll('[data-request-report-result]').forEach(updateRequestReportFilters);
+        }
+
+        setSubmitting(form, false);
+        return;
+      }
+
+      if (status === 'failed' || status === 'error') {
+        throw new Error(progressText(payload, 'error', progressText(payload, 'message', 'Проверка завершилась ошибкой.')));
+      }
+
+      delay = Number((payload.job && payload.job.pollAfterMs) || payload.pollAfterMs || 900);
+      window.setTimeout(function () {
+        pollRequestReportJob(form, panel, target, jobUrl);
+      }, Number.isFinite(delay) ? Math.max(200, Math.min(5000, delay)) : 900);
+    }).catch(function (error) {
+      setProgressError(panel, error && error.message ? error.message : 'Не удалось выполнить проверку.');
+      setSubmitting(form, false);
+    });
+  }
+
+  document.addEventListener('submit', function (event) {
+    var form = event.target && event.target.closest ? event.target.closest('[data-request-report-check-form]') : null;
+    var submitter = event.submitter || null;
+    if (!submitter && document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-request-report-check-form]') === form) {
+      submitter = document.activeElement;
+    }
+
+    var action = submitter && submitter.name === 'action' ? submitter.value : '';
+    var jobsUrl;
+    var panel;
+    var target;
+    var formData;
+
+    if (!form) {
+      return;
+    }
+
+    if (action === 'export') {
+      return;
+    }
+
+    jobsUrl = form.getAttribute('data-request-report-jobs-url') || '';
+
+    if (!jobsUrl || !window.fetch || !window.FormData) {
+      return;
+    }
+
+    event.preventDefault();
+
+    panel = document.querySelector('[data-request-report-progress]');
+    target = document.querySelector('[data-request-report-result-target]');
+
+    if (!panel || !target) {
+      nativeSubmitRequestReportForm(form, submitter || { name: 'action', value: 'check' });
+      return;
+    }
+
+    setSubmitting(form, true);
+    setProgressError(panel, '');
+    updateProgressPanel(panel, { stage: 'Отправка файла', detail: 'Создаем задачу проверки.', counters: {} });
+
+    try {
+      formData = new FormData(form, submitter || undefined);
+    } catch (error) {
+      formData = new FormData(form);
+      if (submitter && submitter.name && !formData.has(submitter.name)) {
+        formData.append(submitter.name, submitter.value || '');
+      }
+    }
+
+    if (!formData.has('action')) {
+      formData.append('action', 'check');
+    }
+
+    fetch(jobsUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(function (response) {
+      if (!response.ok) {
+        return responseError(response, 'Не удалось запустить проверку.');
+      }
+
+      return response.json();
+    }).then(function (payload) {
+      var job = payload && payload.job;
+      var id = payload && (payload.id || payload.jobId || (job && (job.id || job.jobId)));
+
+      if (!id) {
+        throw new Error('Сервер не вернул ID задачи.');
+      }
+
+      updateProgressPanel(panel, { stage: 'Проверка запущена', detail: 'Ожидаем первый статус задачи.', counters: {} });
+      pollRequestReportJob(form, panel, target, jobsUrl.replace(/\\/$/, '') + '/' + encodeURIComponent(id));
+    }).catch(function (error) {
+      if (error && error.canFallbackToSync) {
+        nativeSubmitRequestReportForm(form, submitter || { name: 'action', value: 'check' });
+        return;
+      }
+
+      setProgressError(panel, error && error.message ? error.message : 'Не удалось запустить проверку.');
+      setSubmitting(form, false);
+    });
+  });
 
   document.addEventListener('change', function (event) {
     var filter = event.target && event.target.closest
@@ -5545,6 +5983,19 @@ function renderRequestReportWarnings(warnings) {
   return `<p class="technical-note">Предупреждения: ${safeWarnings.map(escapeHtml).join('; ')}</p>`;
 }
 
+function renderRequestReportMissingConfirmedResult({ filename = '', result = null, csrfToken = '' } = {}) {
+  if (!result) {
+    return '';
+  }
+
+  return `<section class="section" data-request-report-result-fragment>
+  <h2>Результат${filename ? `: ${escapeHtml(filename)}` : ''}</h2>
+  ${renderRequestReportSummary(result.summary)}
+  ${renderRequestReportWarnings(result.warnings)}
+  ${renderRequestReportMissingConfirmedRows(result.rows, csrfToken)}
+</section>`;
+}
+
 function renderRequestReportMissingConfirmedPage({
   database,
   currentUser,
@@ -5554,18 +6005,11 @@ function renderRequestReportMissingConfirmedPage({
   error = ''
 }) {
   const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
-  const resultHtml = result
-    ? `<section class="section">
-  <h2>Результат${filename ? `: ${escapeHtml(filename)}` : ''}</h2>
-  ${renderRequestReportSummary(result.summary)}
-  ${renderRequestReportWarnings(result.warnings)}
-  ${renderRequestReportMissingConfirmedRows(result.rows, csrfToken)}
-</section>`
-    : '';
+  const resultHtml = renderRequestReportMissingConfirmedResult({ filename, result, csrfToken });
   const content = `<section class="section">
   <h1>Смены без confirmed</h1>
   ${errorHtml}
-  <form class="filter-bar" action="/tools/request-report-confirmed-check" method="post" enctype="multipart/form-data">
+  <form class="filter-bar" action="/tools/request-report-confirmed-check" method="post" enctype="multipart/form-data" data-request-report-check-form data-request-report-jobs-url="/tools/request-report-confirmed-check/jobs">
     ${renderHiddenCsrf(csrfToken)}
     <div class="field">
       <label for="reportFile">Файл отчета</label>
@@ -5574,8 +6018,23 @@ function renderRequestReportMissingConfirmedPage({
     <button type="submit" name="action" value="check">Проверить</button>
     <button type="submit" name="action" value="export">Проверить и скачать Excel</button>
   </form>
+  <div class="request-report-progress-panel" data-request-report-progress hidden data-request-report-progress-mode="indeterminate" aria-live="polite">
+    <div class="request-report-progress-head">
+      <strong data-request-report-progress-stage>Ожидание запуска</strong>
+      <span class="request-report-progress-percent" data-request-report-progress-percent>0%</span>
+    </div>
+    <div class="request-report-progress-track">
+      <div class="request-report-progress-bar" data-request-report-progress-bar></div>
+    </div>
+    <div class="request-report-progress-meta">
+      <span data-request-report-progress-detail>Файл еще не отправлен.</span>
+      <span data-request-report-progress-eta>Осталось --</span>
+    </div>
+    <div class="request-report-progress-counters" data-request-report-progress-counters>Строк: 0 · Проверено: 0 · Без confirmed: 0</div>
+    <div class="inline-error request-report-progress-error" data-request-report-progress-error hidden></div>
+  </div>
 </section>
-${resultHtml}`;
+<div data-request-report-result-target>${resultHtml}</div>`;
 
   return layout({
     title: 'Смены без confirmed',
@@ -11003,6 +11462,7 @@ module.exports = {
   renderPasswordChange,
   renderPreloadManagement,
   renderRequestReportMissingConfirmedPage,
+  renderRequestReportMissingConfirmedResult,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
   renderTable,

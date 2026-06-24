@@ -9,6 +9,7 @@ const {
 } = require('../src/requestReportMissingConfirmed');
 
 test('extractRequestsReportRowsFromSheetRows maps request report columns', () => {
+  const events = [];
   const result = extractRequestsReportRowsFromSheetRows([
     ['Служебная строка'],
     [
@@ -33,7 +34,7 @@ test('extractRequestsReportRowsFromSheetRows maps request report columns', () =>
       7.5,
       6.75
     ]
-  ]);
+  ], { onProgress: (event) => events.push(event) });
 
   assert.deepEqual(result.warnings, []);
   assert.deepEqual(result.rows, [
@@ -50,6 +51,63 @@ test('extractRequestsReportRowsFromSheetRows maps request report columns', () =>
       actualDuration: '6.75'
     }
   ]);
+  assert.deepEqual(events.map((event) => event.stage), ['extracting-rows', 'extracting-rows']);
+  assert.equal(events[0].progress, 5);
+  assert.equal(events[0].counts.total, 3);
+  assert.equal(events[0].counts.processed, 0);
+  assert.equal(events[1].progress, 15);
+  assert.equal(events[1].counts.total, 3);
+  assert.equal(events[1].counts.processed, 3);
+  assert.equal(events[1].counts.matched, 1);
+});
+
+test('request report parsing emits file reading and row extraction progress stages', () => {
+  const events = [];
+  const workbook = buildRequestReportCheckWorkbook({
+    sourceSheet: {
+      headers: [
+        'ID ЛКК',
+        'Организация',
+        'Рабочая точка',
+        'Адрес',
+        'Сотрудник',
+        'Дата запроса "с"',
+        'Время запроса "с"',
+        'Фактическая продолжительность запроса за вычетом перерыва'
+      ],
+      rows: [
+        {
+          sourceRowNumber: 2,
+          cells: ['101', 'АО "Тандер"', 'Point A', 'Address 1', 'Ivan Ivanov', '2026-06-01', '09:00', '7.5']
+        }
+      ]
+    },
+    rows: []
+  });
+
+  const result = parseRequestsReportWorkbook(workbook, {
+    onProgress: (event) => events.push(event)
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(events.map((event) => event.stage), [
+    'reading-file',
+    'reading-file',
+    'extracting-rows',
+    'extracting-rows'
+  ]);
+  assert.deepEqual(events.map((event) => event.progress), [0, 5, 5, 15]);
+  assert.equal(events[3].counts.total, 2);
+  assert.equal(events[3].counts.processed, 2);
+  assert.equal(events[3].counts.matched, 1);
+
+  const resultWithFailingProgress = parseRequestsReportWorkbook(workbook, {
+    onProgress() {
+      throw new Error('progress callback failed');
+    }
+  });
+
+  assert.equal(resultWithFailingProgress.rows.length, 1);
 });
 
 test('findRequestReportRowsWithoutConfirmedShift returns rows without confirmed jobs by LKK id', async () => {
@@ -119,6 +177,58 @@ test('findRequestReportRowsWithoutConfirmedShift does not query ClickHouse when 
     confirmedRows: 0,
     missingConfirmedRows: 1
   });
+});
+
+test('findRequestReportRowsWithoutConfirmedShift ignores progress callback failures', async () => {
+  const client = {
+    async queryJSONEachRow() {
+      throw new Error('query should not be called');
+    }
+  };
+  const rows = [
+    { idLkk: '', organization: 'А', workplace: 'Т1' }
+  ];
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, rows, {
+    onProgress() {
+      throw new Error('progress callback failed');
+    }
+  });
+
+  assert.deepEqual(result.rows, rows);
+  assert.equal(result.summary.totalRows, 1);
+  assert.equal(result.summary.missingConfirmedRows, 1);
+});
+
+test('findRequestReportRowsWithoutConfirmedShift counts unique confirmed external id progress matches', async () => {
+  const events = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      assert.equal(operation, 'request report confirmed shift lookup');
+
+      return [
+        { external_id: 'confirmed-id', status: 'confirmed', workplace_id: 'wp-confirmed-a' },
+        { external_id: 'confirmed-id', status: 'confirmed', workplace_id: 'wp-confirmed-b' },
+        { external_id: 'cancelled-id', status: 'cancelled', workplace_id: 'wp-cancelled' }
+      ];
+    }
+  };
+
+  await findRequestReportRowsWithoutConfirmedShift(client, [
+    { idLkk: 'confirmed-id', organization: 'А', workplace: 'Т1' },
+    { idLkk: 'cancelled-id', organization: 'Б', workplace: 'Т2' }
+  ], {
+    batchSize: 10,
+    onProgress: (event) => events.push(event)
+  });
+
+  const externalEvents = events.filter((event) => event.stage === 'external-id-lookup');
+  const finalExternalEvent = externalEvents.at(-1);
+
+  assert.equal(finalExternalEvent.counts.total, 2);
+  assert.equal(finalExternalEvent.counts.processed, 2);
+  assert.equal(finalExternalEvent.counts.matched, 1);
+  assert.equal(finalExternalEvent.counts.missing, 1);
 });
 
 test('findRequestReportRowsWithoutConfirmedShift uses unique confirmed composite fallback without confirmed direct job', async () => {
@@ -514,6 +624,105 @@ test('findRequestReportRowsWithoutConfirmedShift resolves ambiguous technical na
   assert.equal(
     result.rows[0].crmUrl,
     'https://crm.mygig.ru/coordination?searchDate[]=2026-06-10&searchDate[]=2026-06-10&workplaceIds[]=wp-balti%20day'
+  );
+});
+
+test('findRequestReportRowsWithoutConfirmedShift emits monotonic staged progress for lookup fallbacks', async () => {
+  const events = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      if (operation === 'request report confirmed shift lookup') {
+        return [];
+      }
+
+      if (operation === 'request report confirmed composite lookup') {
+        return [
+          {
+            start_date: '2026-06-11',
+            start_time: '09:00',
+            technical_name: 'Point Alpha',
+            confirmed_jobs: 2
+          }
+        ];
+      }
+
+      if (operation === 'request report confirmed employee composite lookup') {
+        return [
+          {
+            start_date: '2026-06-11',
+            start_time: '09:00',
+            technical_name: 'Point Alpha',
+            employee_name: 'alice worker',
+            resolved_job_id: 'job-alpha',
+            resolved_workplace_id: 'wp-alpha',
+            confirmed_jobs: 1
+          }
+        ];
+      }
+
+      if (operation === 'request report workplace date lookup') {
+        return [
+          {
+            start_date: '2026-06-11',
+            technical_name: 'Point Beta',
+            resolved_workplace_id: 'wp-beta-day'
+          }
+        ];
+      }
+
+      return [];
+    }
+  };
+  const rows = [
+    {
+      idLkk: 'employee-fallback-id',
+      dateFrom: '2026-06-11',
+      startText: '2026-06-11 09:00',
+      timeFrom: '09:00',
+      workplace: 'Point Alpha',
+      employee: 'Alice Worker'
+    },
+    {
+      idLkk: 'workplace-date-id',
+      dateFrom: '2026-06-11',
+      startText: '2026-06-11 10:00',
+      timeFrom: '10:00',
+      workplace: 'Point Beta',
+      employee: 'Bob Worker'
+    }
+  ];
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, rows, {
+    batchSize: 1,
+    onProgress: (event) => events.push(event)
+  });
+
+  const uniqueStages = [...new Set(events.map((event) => event.stage))];
+
+  assert.deepEqual(uniqueStages, [
+    'external-id-lookup',
+    'composite-lookup',
+    'employee-lookup',
+    'employee-date-lookup',
+    'workplace-lookup',
+    'workplace-date-lookup',
+    'render-result'
+  ]);
+  assert.ok(events.every((event, index) => index === 0 || event.progress >= events[index - 1].progress));
+  assert.equal(events.at(-1).stage, 'render-result');
+  assert.equal(events.at(-1).progress, 100);
+
+  const externalEvents = events.filter((event) => event.stage === 'external-id-lookup');
+
+  assert.ok(externalEvents.length >= 3);
+  assert.equal(externalEvents.at(0).counts.total, 2);
+  assert.equal(externalEvents.at(-1).counts.processed, 2);
+  assert.equal(externalEvents.at(-1).counts.matched, 0);
+  assert.ok(externalEvents.at(0).progress < externalEvents.at(-1).progress);
+  assert.equal(result.rows.length, 1);
+  assert.equal(
+    result.rows[0].crmUrl,
+    'https://crm.mygig.ru/coordination?searchDate[]=2026-06-11&searchDate[]=2026-06-11&workplaceIds[]=wp-beta-day'
   );
 });
 

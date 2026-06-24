@@ -18,6 +18,18 @@ const CHECK_RESULT_LABELS = {
   [CHECK_RESULT_MISSING]: 'Confirmed-смена не найдена'
 };
 
+const PROGRESS_POINTS = Object.freeze({
+  'reading-file': Object.freeze({ start: 0, end: 5, detail: 'Читаем файл отчета' }),
+  'extracting-rows': Object.freeze({ start: 5, end: 15, detail: 'Извлекаем строки отчета' }),
+  'external-id-lookup': Object.freeze({ start: 15, end: 30, detail: 'Проверяем ID ЛКК в заказах' }),
+  'composite-lookup': Object.freeze({ start: 30, end: 45, detail: 'Проверяем дату, время и рабочую точку' }),
+  'employee-lookup': Object.freeze({ start: 45, end: 60, detail: 'Уточняем совпадения по исполнителю' }),
+  'employee-date-lookup': Object.freeze({ start: 60, end: 72, detail: 'Проверяем исполнителя по дате смены' }),
+  'workplace-lookup': Object.freeze({ start: 72, end: 84, detail: 'Подбираем рабочую точку для ссылки CRM' }),
+  'workplace-date-lookup': Object.freeze({ start: 84, end: 94, detail: 'Уточняем рабочую точку по дате' }),
+  'render-result': Object.freeze({ start: 95, end: 100, detail: 'Формируем результат проверки' })
+});
+
 const REPORT_HEADERS = {
   idLkk: ['ID ЛКК'],
   organization: ['Организация'],
@@ -31,6 +43,86 @@ const REPORT_HEADERS = {
     'Продолжительность запроса (факт) (в часах)'
   ]
 };
+
+function clampProgress(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, value));
+}
+
+function progressForStage(stage, processed, total) {
+  const point = PROGRESS_POINTS[stage] || { start: 0, end: 100 };
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return point.end;
+  }
+
+  const ratio = Math.max(0, Math.min(1, processed / total));
+
+  return point.start + ((point.end - point.start) * ratio);
+}
+
+function emitProgress(options, stage, input = {}) {
+  const onProgress = options && options.onProgress;
+
+  if (typeof onProgress !== 'function') {
+    return;
+  }
+
+  const point = PROGRESS_POINTS[stage] || { start: 0, end: 100, detail: stage };
+  const progress = input.progress !== undefined
+    ? input.progress
+    : point.end;
+
+  try {
+    onProgress({
+      stage,
+      progress: clampProgress(progress),
+      detail: input.detail || point.detail || stage,
+      counts: input.counts ? { ...input.counts } : {}
+    });
+  } catch {
+    // Progress reporting is a best-effort side channel and must not change analysis results.
+  }
+}
+
+function emitLookupProgress(options, stage, input = {}) {
+  const total = Number(input.total) || 0;
+  const processed = Number(input.processed) || 0;
+
+  emitProgress(options, stage, {
+    detail: input.detail,
+    progress: input.progress !== undefined ? input.progress : progressForStage(stage, processed, total),
+    counts: {
+      total,
+      processed,
+      ...(input.counts || {})
+    }
+  });
+}
+
+function normalizeLookupOptions(value = DEFAULT_BATCH_SIZE) {
+  if (typeof value === 'number') {
+    return {
+      batchSize: Number.isInteger(value) && value > 0 ? value : DEFAULT_BATCH_SIZE,
+      onProgress: undefined
+    };
+  }
+
+  if (value && typeof value === 'object') {
+    return {
+      batchSize: Number.isInteger(value.batchSize) && value.batchSize > 0 ? value.batchSize : DEFAULT_BATCH_SIZE,
+      onProgress: value.onProgress
+    };
+  }
+
+  return {
+    batchSize: DEFAULT_BATCH_SIZE,
+    onProgress: undefined
+  };
+}
 
 function normalizeCellText(value) {
   if (value === undefined || value === null) {
@@ -493,10 +585,15 @@ function buildXlsxWorkbook(rows, sheetName = 'Запросы') {
   ]);
 }
 
-function parseRequestsReportWorkbook(buffer) {
+function parseRequestsReportWorkbook(buffer, options = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error('Загруженный файл пустой.');
   }
+
+  emitProgress(options, 'reading-file', {
+    progress: PROGRESS_POINTS['reading-file'].start,
+    counts: { total: 1, processed: 0 }
+  });
 
   const entries = readZipEntries(buffer);
   const sheetPath = resolveWorkbookSheetPath(entries);
@@ -509,7 +606,12 @@ function parseRequestsReportWorkbook(buffer) {
   const sharedStrings = parseSharedStrings(entryText(entries, 'xl/sharedStrings.xml'));
   const sheetRows = parseWorksheetRows(sheetXml, sharedStrings);
 
-  return extractRequestsReportRowsFromSheetRows(sheetRows);
+  emitProgress(options, 'reading-file', {
+    progress: PROGRESS_POINTS['reading-file'].end,
+    counts: { total: 1, processed: 1 }
+  });
+
+  return extractRequestsReportRowsFromSheetRows(sheetRows, options);
 }
 
 function normalizedHeaderMap(row) {
@@ -655,8 +757,15 @@ function sourceCellsForRow(row, columnIndexes, columnCount) {
   return cells;
 }
 
-function extractRequestsReportRowsFromSheetRows(sheetRows) {
-  const header = findHeaderRow(Array.isArray(sheetRows) ? sheetRows : []);
+function extractRequestsReportRowsFromSheetRows(sheetRows, options = {}) {
+  const safeSheetRows = Array.isArray(sheetRows) ? sheetRows : [];
+
+  emitProgress(options, 'extracting-rows', {
+    progress: PROGRESS_POINTS['extracting-rows'].start,
+    counts: { total: safeSheetRows.length, processed: 0 }
+  });
+
+  const header = findHeaderRow(safeSheetRows);
 
   if (!header) {
     throw new Error('Не найдены обязательные колонки отчета: ID ЛКК, Организация, Рабочая точка.');
@@ -682,11 +791,11 @@ function extractRequestsReportRowsFromSheetRows(sheetRows) {
   const rows = [];
   const sourceRows = [];
   const warnings = [];
-  const sourceHeaders = sourceCellsForRow(sheetRows[header.rowIndex] || [], columnIndexes, (sheetRows[header.rowIndex] || []).length);
+  const sourceHeaders = sourceCellsForRow(safeSheetRows[header.rowIndex] || [], columnIndexes, (safeSheetRows[header.rowIndex] || []).length);
   const sourceColumnCount = sourceHeaders.length;
 
-  for (let index = header.rowIndex + 1; index < sheetRows.length; index += 1) {
-    const source = sheetRows[index] || [];
+  for (let index = header.rowIndex + 1; index < safeSheetRows.length; index += 1) {
+    const source = safeSheetRows[index] || [];
 
     if (source.every((cell) => normalizeCellText(cell) === '')) {
       continue;
@@ -718,6 +827,11 @@ function extractRequestsReportRowsFromSheetRows(sheetRows) {
   if (rows.length === 0) {
     warnings.push('В отчете не найдено строк с запросами после строки заголовков.');
   }
+
+  emitProgress(options, 'extracting-rows', {
+    progress: PROGRESS_POINTS['extracting-rows'].end,
+    counts: { total: safeSheetRows.length, processed: safeSheetRows.length, matched: rows.length }
+  });
 
   return {
     rows,
@@ -752,10 +866,32 @@ function chunkValues(values, size) {
   return chunks;
 }
 
-async function loadJobsForExternalIds(client, externalIds, batchSize = DEFAULT_BATCH_SIZE) {
+async function loadJobsForExternalIds(client, externalIds, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
+  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const safeExternalIds = Array.isArray(externalIds) ? externalIds : [];
+  const progressOptions = { onProgress };
   const jobs = [];
+  let processed = 0;
+  const matchedExternalIds = new Set();
 
-  for (const batch of chunkValues(externalIds, batchSize)) {
+  if (safeExternalIds.length === 0) {
+    emitLookupProgress(progressOptions, 'external-id-lookup', {
+      total: 0,
+      processed: 0,
+      counts: { matched: 0 }
+    });
+
+    return jobs;
+  }
+
+  emitLookupProgress(progressOptions, 'external-id-lookup', {
+    total: safeExternalIds.length,
+    processed: 0,
+    progress: PROGRESS_POINTS['external-id-lookup'].start,
+    counts: { matched: matchedExternalIds.size }
+  });
+
+  for (const batch of chunkValues(safeExternalIds, batchSize)) {
     const idsSql = batch.map(quoteClickHouseString).join(', ');
     const query = [
       'SELECT',
@@ -771,6 +907,24 @@ async function loadJobsForExternalIds(client, externalIds, batchSize = DEFAULT_B
     const rows = await client.queryJSONEachRow(query, {}, 'request report confirmed shift lookup');
 
     jobs.push(...rows);
+    for (const row of rows) {
+      if (String(row && row.status).toLowerCase() === 'confirmed') {
+        const externalId = normalizeExternalId(row && row.external_id);
+
+        if (externalId) {
+          matchedExternalIds.add(externalId);
+        }
+      }
+    }
+    processed += batch.length;
+    emitLookupProgress(progressOptions, 'external-id-lookup', {
+      total: safeExternalIds.length,
+      processed,
+      counts: {
+        matched: matchedExternalIds.size,
+        missing: Math.max(0, safeExternalIds.length - matchedExternalIds.size)
+      }
+    });
   }
 
   return jobs;
@@ -1019,11 +1173,32 @@ function uniqueWorkplaceDateCandidates(rows) {
   return [...candidates.values()];
 }
 
-async function loadConfirmedCompositeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+async function loadConfirmedCompositeKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
+  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const progressOptions = { onProgress };
   const uniqueKeys = new Set();
   const uniqueMatches = new Map();
+  let processed = 0;
 
-  for (const batch of chunkValues(candidates, batchSize)) {
+  if (safeCandidates.length === 0) {
+    emitLookupProgress(progressOptions, 'composite-lookup', {
+      total: 0,
+      processed: 0,
+      counts: { matched: 0 }
+    });
+
+    return { uniqueKeys, uniqueMatches };
+  }
+
+  emitLookupProgress(progressOptions, 'composite-lookup', {
+    total: safeCandidates.length,
+    processed: 0,
+    progress: PROGRESS_POINTS['composite-lookup'].start,
+    counts: { matched: 0 }
+  });
+
+  for (const batch of chunkValues(safeCandidates, batchSize)) {
     const tuplesSql = batch
       .map((candidate) => `(${quoteClickHouseString(candidate.date)}, ${quoteClickHouseString(candidate.time)}, ${quoteClickHouseString(candidate.technicalName)})`)
       .join(', ');
@@ -1068,6 +1243,13 @@ async function loadConfirmedCompositeKeys(client, candidates, batchSize = DEFAUL
         });
       }
     }
+
+    processed += batch.length;
+    emitLookupProgress(progressOptions, 'composite-lookup', {
+      total: safeCandidates.length,
+      processed,
+      counts: { matched: uniqueKeys.size }
+    });
   }
 
   return { uniqueKeys, uniqueMatches };
@@ -1081,10 +1263,31 @@ function normalizedClickHouseTechnicalNameExpression(expression) {
   return `replaceRegexpAll(${normalizedClickHouseTextExpression(expression)}, '^(мк|мм)\\\\s+', '')`;
 }
 
-async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
+  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const progressOptions = { onProgress };
   const keys = new Map();
+  let processed = 0;
 
-  for (const batch of chunkValues(candidates, batchSize)) {
+  if (safeCandidates.length === 0) {
+    emitLookupProgress(progressOptions, 'employee-lookup', {
+      total: 0,
+      processed: 0,
+      counts: { matched: 0 }
+    });
+
+    return keys;
+  }
+
+  emitLookupProgress(progressOptions, 'employee-lookup', {
+    total: safeCandidates.length,
+    processed: 0,
+    progress: PROGRESS_POINTS['employee-lookup'].start,
+    counts: { matched: 0 }
+  });
+
+  for (const batch of chunkValues(safeCandidates, batchSize)) {
     const tuplesSql = batch
       .map((candidate) => [
         quoteClickHouseString(candidate.date),
@@ -1142,15 +1345,43 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
         });
       }
     }
+
+    processed += batch.length;
+    emitLookupProgress(progressOptions, 'employee-lookup', {
+      total: safeCandidates.length,
+      processed,
+      counts: { matched: keys.size }
+    });
   }
 
   return keys;
 }
 
-async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
+  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const progressOptions = { onProgress };
   const keys = new Map();
+  let processed = 0;
 
-  for (const batch of chunkValues(candidates, batchSize)) {
+  if (safeCandidates.length === 0) {
+    emitLookupProgress(progressOptions, 'employee-date-lookup', {
+      total: 0,
+      processed: 0,
+      counts: { matched: 0 }
+    });
+
+    return keys;
+  }
+
+  emitLookupProgress(progressOptions, 'employee-date-lookup', {
+    total: safeCandidates.length,
+    processed: 0,
+    progress: PROGRESS_POINTS['employee-date-lookup'].start,
+    counts: { matched: 0 }
+  });
+
+  for (const batch of chunkValues(safeCandidates, batchSize)) {
     const tuplesSql = batch
       .map((candidate) => [
         quoteClickHouseString(candidate.date),
@@ -1204,15 +1435,43 @@ async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, 
         });
       }
     }
+
+    processed += batch.length;
+    emitLookupProgress(progressOptions, 'employee-date-lookup', {
+      total: safeCandidates.length,
+      processed,
+      counts: { matched: keys.size }
+    });
   }
 
   return keys;
 }
 
-async function loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, batchSize = DEFAULT_BATCH_SIZE) {
+async function loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
+  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const safeTechnicalNames = Array.isArray(technicalNames) ? technicalNames : [];
+  const progressOptions = { onProgress };
   const workplaceIds = new Map();
+  let processed = 0;
 
-  for (const batch of chunkValues(technicalNames, batchSize)) {
+  if (safeTechnicalNames.length === 0) {
+    emitLookupProgress(progressOptions, 'workplace-lookup', {
+      total: 0,
+      processed: 0,
+      counts: { matched: 0 }
+    });
+
+    return workplaceIds;
+  }
+
+  emitLookupProgress(progressOptions, 'workplace-lookup', {
+    total: safeTechnicalNames.length,
+    processed: 0,
+    progress: PROGRESS_POINTS['workplace-lookup'].start,
+    counts: { matched: 0 }
+  });
+
+  for (const batch of chunkValues(safeTechnicalNames, batchSize)) {
     const namesSql = batch.map(quoteClickHouseString).join(', ');
     const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('technical_name');
     const query = [
@@ -1241,15 +1500,43 @@ async function loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, bat
         workplaceIds.set(technicalName, workplaceId);
       }
     }
+
+    processed += batch.length;
+    emitLookupProgress(progressOptions, 'workplace-lookup', {
+      total: safeTechnicalNames.length,
+      processed,
+      counts: { matched: workplaceIds.size }
+    });
   }
 
   return workplaceIds;
 }
 
-async function loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+async function loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
+  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const progressOptions = { onProgress };
   const workplaceIds = new Map();
+  let processed = 0;
 
-  for (const batch of chunkValues(candidates, batchSize)) {
+  if (safeCandidates.length === 0) {
+    emitLookupProgress(progressOptions, 'workplace-date-lookup', {
+      total: 0,
+      processed: 0,
+      counts: { matched: 0 }
+    });
+
+    return workplaceIds;
+  }
+
+  emitLookupProgress(progressOptions, 'workplace-date-lookup', {
+    total: safeCandidates.length,
+    processed: 0,
+    progress: PROGRESS_POINTS['workplace-date-lookup'].start,
+    counts: { matched: 0 }
+  });
+
+  for (const batch of chunkValues(safeCandidates, batchSize)) {
     const tuplesSql = batch
       .map((candidate) => `(${quoteClickHouseString(candidate.date)}, ${quoteClickHouseString(candidate.technicalName)})`)
       .join(', ');
@@ -1286,6 +1573,13 @@ async function loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, candidates, 
         workplaceIds.set(key, workplaceId);
       }
     }
+
+    processed += batch.length;
+    emitLookupProgress(progressOptions, 'workplace-date-lookup', {
+      total: safeCandidates.length,
+      processed,
+      counts: { matched: workplaceIds.size }
+    });
   }
 
   return workplaceIds;
@@ -1326,9 +1620,8 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
   const batchSize = Number.isInteger(options.batchSize) && options.batchSize > 0
     ? options.batchSize
     : DEFAULT_BATCH_SIZE;
-  const jobs = externalIds.length > 0
-    ? await loadJobsForExternalIds(client, externalIds, batchSize)
-    : [];
+  const progressOptions = { batchSize, onProgress: options.onProgress };
+  const jobs = await loadJobsForExternalIds(client, externalIds, progressOptions);
   const confirmedExternalIds = buildConfirmedExternalIdSet(jobs);
   const confirmedJobByExternalId = buildConfirmedJobByExternalId(jobs);
   const jobsByExternalId = groupJobsByExternalId(jobs);
@@ -1338,15 +1631,11 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     return !externalId || !confirmedExternalIds.has(externalId);
   });
   const compositeCandidates = uniqueCompositeCandidates(rowsForCompositeFallback);
-  const confirmedCompositeKeys = compositeCandidates.length > 0
-    ? await loadConfirmedCompositeKeys(client, compositeCandidates, batchSize)
-    : { uniqueKeys: new Set(), uniqueMatches: new Map() };
+  const confirmedCompositeKeys = await loadConfirmedCompositeKeys(client, compositeCandidates, progressOptions);
   const uniqueConfirmedCompositeKeys = confirmedCompositeKeys.uniqueKeys;
   const uniqueConfirmedCompositeMatches = confirmedCompositeKeys.uniqueMatches || new Map();
   const compositeEmployeeCandidates = uniqueCompositeEmployeeCandidates(rowsForCompositeFallback);
-  const uniqueConfirmedCompositeEmployeeKeys = compositeEmployeeCandidates.length > 0
-    ? await loadUniqueConfirmedCompositeEmployeeKeys(client, compositeEmployeeCandidates, batchSize)
-    : new Map();
+  const uniqueConfirmedCompositeEmployeeKeys = await loadUniqueConfirmedCompositeEmployeeKeys(client, compositeEmployeeCandidates, progressOptions);
   const rowsForCompositeEmployeeDateFallback = rowsForCompositeFallback.filter((row) => {
     const candidate = compositeCandidateForRow(row);
 
@@ -1363,9 +1652,7 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     return compositeEmployeeDateCandidateForRow(row) !== null;
   });
   const compositeEmployeeDateCandidates = uniqueCompositeEmployeeDateCandidates(rowsForCompositeEmployeeDateFallback);
-  const uniqueConfirmedCompositeEmployeeDateKeys = compositeEmployeeDateCandidates.length > 0
-    ? await loadUniqueConfirmedCompositeEmployeeDateKeys(client, compositeEmployeeDateCandidates, batchSize)
-    : new Map();
+  const uniqueConfirmedCompositeEmployeeDateKeys = await loadUniqueConfirmedCompositeEmployeeDateKeys(client, compositeEmployeeDateCandidates, progressOptions);
   const missingRows = safeRows.filter((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
 
@@ -1395,18 +1682,14 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     return !directWorkplaceId && normalizeCompositeDate(row && row.startText) && normalizeCellText(row && row.workplace);
   });
   const technicalNames = uniqueTechnicalNames(rowsNeedingWorkplaceLookup);
-  const workplaceIdsByTechnicalName = technicalNames.length > 0
-    ? await loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, batchSize)
-    : new Map();
+  const workplaceIdsByTechnicalName = await loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, progressOptions);
   const rowsNeedingWorkplaceDateLookup = rowsNeedingWorkplaceLookup.filter((row) => {
     const technicalName = normalizeTechnicalName(row && row.workplace);
 
     return technicalName && !workplaceIdsByTechnicalName.has(technicalName);
   });
   const workplaceDateCandidates = uniqueWorkplaceDateCandidates(rowsNeedingWorkplaceDateLookup);
-  const workplaceIdsByTechnicalNameAndDate = workplaceDateCandidates.length > 0
-    ? await loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, workplaceDateCandidates, batchSize)
-    : new Map();
+  const workplaceIdsByTechnicalNameAndDate = await loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, workplaceDateCandidates, progressOptions);
   const enrichedMissingRows = missingRows.map((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
     const directWorkplaceId = uniqueWorkplaceIdFromJobs(jobsByExternalId.get(externalId));
@@ -1441,6 +1724,15 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     };
   });
   const confirmedRows = safeRows.length - missingRows.length;
+  emitProgress(progressOptions, 'render-result', {
+    progress: PROGRESS_POINTS['render-result'].end,
+    counts: {
+      total: safeRows.length,
+      processed: safeRows.length,
+      matched: confirmedRows,
+      missing: missingRows.length
+    }
+  });
 
   return {
     rows: enrichedMissingRows,
@@ -1491,5 +1783,6 @@ module.exports = {
   buildRequestReportCheckWorkbook,
   extractRequestsReportRowsFromSheetRows,
   findRequestReportRowsWithoutConfirmedShift,
-  parseRequestsReportWorkbook
+  parseRequestsReportWorkbook,
+  PROGRESS_POINTS
 };

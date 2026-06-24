@@ -514,6 +514,86 @@ test('managed users only access granted sections', async () => {
   });
 });
 
+test('request report async endpoints return JSON auth errors', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await createReadyUser(userStore, {
+      email: 'analyst@example.test',
+      name: 'Analyst',
+      role: 'analyst',
+      permissions: ['tables'],
+      password: 'WorkerPass123!'
+    }, 'WorkerReady123!');
+
+    const anonymous = await fetchText(baseUrl, '/tools/request-report-confirmed-check/jobs/missing-job', {
+      redirect: 'manual',
+      headers: {
+        accept: 'application/json'
+      }
+    });
+    const analystLogin = await login(baseUrl, 'analyst@example.test', 'WorkerReady123!');
+    const forbidden = await fetchText(baseUrl, '/tools/request-report-confirmed-check/jobs/missing-job', {
+      headers: {
+        accept: 'application/json',
+        cookie: cookieFrom(analystLogin)
+      }
+    });
+
+    assert.equal(anonymous.response.status, 401);
+    assert.match(anonymous.response.headers.get('content-type'), /^application\/json\b/);
+    assert.deepEqual(JSON.parse(anonymous.text), {
+      error: 'Требуется вход в систему'
+    });
+    assert.equal(forbidden.response.status, 403);
+    assert.match(forbidden.response.headers.get('content-type'), /^application\/json\b/);
+    assert.deepEqual(JSON.parse(forbidden.text), {
+      error: 'Недостаточно прав для выбранного раздела.'
+    });
+  });
+});
+
+test('request report async job start rejects invalid csrf as JSON', async () => {
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await createReadyUser(userStore, {
+      email: 'report@example.test',
+      name: 'Report Analyst',
+      role: 'analyst',
+      permissions: ['request-report-matching'],
+      password: 'ReportPass123!'
+    }, 'ReportReady123!');
+
+    const loginResponse = await login(baseUrl, 'report@example.test', 'ReportReady123!');
+    const boundary = '----request-report-auth-csrf-boundary';
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="csrfToken"',
+      '',
+      'bad-token',
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="reportFile"; filename="requests-report.xlsx"',
+      'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '',
+      'fake-xlsx',
+      `--${boundary}--`,
+      ''
+    ].join('\r\n');
+    const response = await fetchText(baseUrl, '/tools/request-report-confirmed-check/jobs', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        cookie: cookieFrom(loginResponse),
+        'content-type': `multipart/form-data; boundary=${boundary}`
+      },
+      body
+    });
+
+    assert.equal(response.response.status, 403);
+    assert.match(response.response.headers.get('content-type'), /^application\/json\b/);
+    assert.deepEqual(JSON.parse(response.text), {
+      error: 'Неверный CSRF-токен'
+    });
+  });
+});
+
 test('admin can open /admin/activity', async () => {
   const activityStore = createActivitySpy();
   let capturedOverviewInput = null;

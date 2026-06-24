@@ -407,6 +407,92 @@ GROUP BY status
 ORDER BY shifts DESC
 FORMAT JSONEachRow`;
 
+const BRAND_ANALYSIS_SUMMARY_SQL = `-- orders summary for one brand
+WITH actual_orders AS (
+  SELECT
+    o._id AS order_id,
+    o.start AS start,
+    o.client AS client,
+    o.workplace AS workplace,
+    ifNull(o.amount, 0) AS amount,
+    o.pieceworks AS pieceworks,
+    ifNull(o.contract_type, '') AS order_contract_type,
+    ifNull(ct.contract_type, '') AS contractor_contract_type,
+    ifNull(ct.comission, 0) AS commission_percent
+  FROM mg_orders AS o
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
+  WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
+    AND ifNull(nullIf(trimBoth(ifNull(c.title, '')), ''), 'Без бренда') = {brand_title:String}
+    AND o.start >= {from:DateTime}
+    AND o.start < {to:DateTime}
+)
+SELECT
+  sum(amount) AS ordered_shifts,
+  countDistinctIf(workplace, workplace != '') AS workplaces_with_orders,
+  countDistinct(toDate(start)) AS active_days
+FROM actual_orders
+FORMAT JSONEachRow;
+
+-- shifts summary for one brand
+${SALES_DOMAIN_SHIFT_FACTS_SQL}
+SELECT
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  uniqExactIf(job, (status IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting') OR is_successful_confirmed_shift = 1) AND job != '') AS covered_shifts,
+  sum(${SALES_DOMAIN_REVENUE_SQL}) AS revenue_rub,
+  uniqExactIf(worker, is_successful_confirmed_shift = 1 AND worker != '') AS unique_workers,
+  uniqExactIf(workplace, is_successful_confirmed_shift = 1 AND workplace != '') AS workplaces_with_worked_shifts,
+  countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts,
+  countIf(is_successful_confirmed_shift = 1 AND is_self_booked = 1) AS self_booked_confirmed_shifts,
+  ${SALES_DOMAIN_AVG_WORKER_RATE_SQL} AS avg_worker_rate_hour,
+  avgIf(customer_shift_amount / nullIf(hours, 0), is_successful_confirmed_shift = 1 AND hours > 0) AS avg_customer_rate_hour
+FROM shift_enriched
+WHERE brand = {brand_title:String}
+FORMAT JSONEachRow`;
+
+const BRAND_ANALYSIS_TREND_SQL = `-- brand orders trend
+WITH actual_orders AS (
+  SELECT o.start AS start, ifNull(o.amount, 0) AS amount
+  FROM mg_orders AS o
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', contractorAlias: 'ct' })}
+  WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
+    AND ifNull(nullIf(trimBoth(ifNull(c.title, '')), ''), 'Без бренда') = {brand_title:String}
+    AND o.start >= {from:DateTime}
+    AND o.start < {to:DateTime}
+)
+SELECT
+  <period_expression(start)> AS period,
+  sum(amount) AS ordered_shifts
+FROM actual_orders
+GROUP BY period
+ORDER BY period
+FORMAT JSONEachRow;
+
+-- brand shifts trend
+${SALES_DOMAIN_SHIFT_FACTS_SQL}
+SELECT
+  <period_expression(shift_start)> AS period,
+  uniqExactIf(job, is_successful_confirmed_shift = 1 AND job != '') AS worked_shifts,
+  uniqExactIf(job, (status IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting') OR is_successful_confirmed_shift = 1) AND job != '') AS covered_shifts,
+  sum(${SALES_DOMAIN_REVENUE_SQL}) AS revenue_rub,
+  countIf(ifNull(cancellation_reason, '') != '' OR status = 'failed') AS cancelled_shifts
+FROM shift_enriched
+WHERE brand = {brand_title:String}
+GROUP BY period
+ORDER BY period
+FORMAT JSONEachRow`;
+
+const BRAND_ANALYSIS_WORKPLACES_SQL = `${BRAND_ANALYSIS_TREND_SQL}
+
+-- workplace breakdown groups the same one-brand actual orders and shift facts by workplace.`;
+
+const BRAND_ANALYSIS_PROFESSIONS_SQL = `${BRAND_ANALYSIS_TREND_SQL}
+
+-- profession breakdown groups the same one-brand actual orders and shift facts by mg_professions caption.`;
+
+const BRAND_ANALYSIS_STATUSES_SQL = `${SALES_DOMAIN_STATUSES_SQL}
+
+-- The dashboard applies the same brand_title filter to actual_orders before joining shift_facts.`;
+
 const WORKPLACE_ANALYSIS_POINTS_SQL = `SELECT
   metrics.workplace_id AS workplace_id,
   metrics.workplace_title AS workplace_title,
@@ -1635,6 +1721,81 @@ defineMetricSet({
 });
 
 defineMetricSet({
+  baseId: 'brand-analysis.summary',
+  sql: BRAND_ANALYSIS_SUMMARY_SQL,
+  metrics: [
+    { id: 'brand-analysis.summary', title: 'Анализ бренда', description: 'Показывает заказ, выполнение, покрытие, выручку, точки и ставки для одного выбранного бренда.' },
+    { suffix: 'ordered-shifts', title: 'Бренд: заказано смен', description: 'Сумма планового количества смен из заказов выбранного бренда.' },
+    { suffix: 'worked-shifts', title: 'Бренд: отработано смен', description: 'Количество успешных confirmed-смен выбранного бренда без нулевых прогулов.' },
+    { suffix: 'covered-shifts', title: 'Бренд: закрыто смен', description: 'Количество смен в закрывающих статусах или успешных confirmed-сменах.' },
+    { suffix: 'open-demand', title: 'Бренд: свободный заказ', description: 'Разница между плановым заказом и закрытыми сменами; отрицательные значения обрезаются до нуля.' },
+    { suffix: 'sla', title: 'Бренд: SLA', description: 'Доля успешных confirmed-смен от планового заказа выбранного бренда.' },
+    { suffix: 'coverage', title: 'Бренд: покрытие', description: 'Доля закрывающих смен от планового заказа выбранного бренда.' },
+    { suffix: 'revenue-rub', title: 'Бренд: выручка', description: 'Расчетная выручка по успешным confirmed-сменам выбранного бренда.' },
+    { suffix: 'unique-workers', title: 'Бренд: уникальные исполнители', description: 'Количество уникальных исполнителей успешных confirmed-смен.' },
+    { suffix: 'workplaces-with-orders', title: 'Бренд: ТТ с заказами', description: 'Количество рабочих мест выбранного бренда с плановым заказом.' },
+    { suffix: 'workplaces-with-worked-shifts', title: 'Бренд: ТТ с выполнением', description: 'Количество рабочих мест выбранного бренда с успешными confirmed-сменами.' },
+    { suffix: 'cancelled-shifts', title: 'Бренд: отмены', description: 'Количество смен с причиной отмены или статусом failed.' },
+    { suffix: 'self-booking-percent', title: 'Бренд: самоброни', description: 'Доля самоброни среди успешных confirmed-смен выбранного бренда.' },
+    { suffix: 'order-stability', title: 'Бренд: стабильность заказа', description: 'Доля дней выбранного периода, когда у бренда был плановый заказ.' },
+    { suffix: 'avg-worker-rate-hour', title: 'Бренд: ставка гигера/час', description: 'Средняя положительная часовая ставка исполнителя по успешным confirmed-сменам.' },
+    { suffix: 'avg-customer-rate-hour', title: 'Бренд: ставка клиента/час', description: 'Средняя положительная клиентская часовая ставка по успешным confirmed-сменам.' }
+  ]
+});
+
+defineMetricSet({
+  baseId: 'brand-analysis.trend',
+  sql: BRAND_ANALYSIS_TREND_SQL,
+  metrics: [
+    { id: 'brand-analysis.trend', title: 'Динамика бренда', description: 'Показывает заказ, выполнение, покрытие, SLA, выручку и отмены выбранного бренда по периодам.' },
+    { suffix: 'ordered-shifts', title: 'Динамика бренда: заказано', description: 'Плановый заказ выбранного бренда по периодам.' },
+    { suffix: 'worked-shifts', title: 'Динамика бренда: отработано', description: 'Успешные confirmed-смены выбранного бренда по периодам.' },
+    { suffix: 'covered-shifts', title: 'Динамика бренда: закрыто', description: 'Закрывающие смены выбранного бренда по периодам.' },
+    { suffix: 'open-demand', title: 'Динамика бренда: свободно', description: 'Свободный заказ выбранного бренда по периодам.' },
+    { suffix: 'sla', title: 'Динамика бренда: SLA', description: 'Доля успешных confirmed-смен от заказа по периоду.' },
+    { suffix: 'coverage', title: 'Динамика бренда: покрытие', description: 'Доля закрывающих смен от заказа по периоду.' },
+    { suffix: 'revenue-rub', title: 'Динамика бренда: выручка', description: 'Расчетная выручка выбранного бренда по периодам.' },
+    { suffix: 'cancelled-shifts', title: 'Динамика бренда: отмены', description: 'Количество отмененных или failed смен по периодам.' }
+  ]
+});
+
+defineMetricSet({
+  baseId: 'brand-analysis.workplaces',
+  sql: BRAND_ANALYSIS_WORKPLACES_SQL,
+  metrics: [
+    { id: 'brand-analysis.workplaces', title: 'Точки бренда', description: 'Показывает заказ, выполнение, покрытие, SLA и выручку в разрезе точек выбранного бренда.' },
+    { suffix: 'ordered-shifts', title: 'Точка бренда: заказано', description: 'Плановый заказ выбранного бренда по точке.' },
+    { suffix: 'worked-shifts', title: 'Точка бренда: отработано', description: 'Успешные confirmed-смены выбранного бренда по точке.' },
+    { suffix: 'coverage', title: 'Точка бренда: покрытие', description: 'Доля закрывающих смен от планового заказа точки.' },
+    { suffix: 'sla', title: 'Точка бренда: SLA', description: 'Доля успешных confirmed-смен от планового заказа точки.' },
+    { suffix: 'revenue-rub', title: 'Точка бренда: выручка', description: 'Расчетная выручка выбранного бренда по точке.' },
+    { suffix: 'cancelled-shifts', title: 'Точка бренда: отмены', description: 'Количество отмененных или failed смен по точке.' }
+  ]
+});
+
+defineMetricSet({
+  baseId: 'brand-analysis.professions',
+  sql: BRAND_ANALYSIS_PROFESSIONS_SQL,
+  metrics: [
+    { id: 'brand-analysis.professions', title: 'Специальности бренда', description: 'Показывает заказ, выполнение, SLA, выручку и отмены выбранного бренда по специальностям.' },
+    { suffix: 'ordered-shifts', title: 'Специальность бренда: заказано', description: 'Плановый заказ выбранного бренда по специальности.' },
+    { suffix: 'worked-shifts', title: 'Специальность бренда: отработано', description: 'Успешные confirmed-смены выбранного бренда по специальности.' },
+    { suffix: 'sla', title: 'Специальность бренда: SLA', description: 'Доля успешных confirmed-смен от планового заказа специальности.' },
+    { suffix: 'revenue-rub', title: 'Специальность бренда: выручка', description: 'Расчетная выручка выбранного бренда по специальности.' },
+    { suffix: 'cancelled-shifts', title: 'Специальность бренда: отмены', description: 'Количество отмененных или failed смен по специальности.' }
+  ]
+});
+
+defineMetricSet({
+  baseId: 'brand-analysis.statuses',
+  sql: BRAND_ANALYSIS_STATUSES_SQL,
+  metrics: [
+    { id: 'brand-analysis.statuses', title: 'Статусы работ бренда', description: 'Показывает распределение смен выбранного бренда по статусам.' },
+    { suffix: 'shifts', title: 'Статусы бренда: смены', description: 'Количество смен выбранного бренда в конкретном статусе.' }
+  ]
+});
+
+defineMetricSet({
   baseId: 'workplace-analysis.points',
   sql: WORKPLACE_ANALYSIS_POINTS_SQL,
   metrics: [
@@ -1752,6 +1913,16 @@ defineMetricSet({
   sql: CITY_DYNAMICS_SQL,
   metrics: [
     { id: 'city-analysis.dynamics', title: 'Динамика города', description: 'Показывает дневную динамику спроса, входов в приложение, откликов и завершений.' },
+    { suffix: 'line-ordered-shifts', title: 'Динамика города: линия заказа', description: 'Линия дневного планового заказа в классическом графике динамики.' },
+    { suffix: 'line-app-active-users', title: 'Динамика города: линия входов', description: 'Линия дневного количества пользователей базы, входивших в приложение.' },
+    { suffix: 'line-booked-users', title: 'Динамика города: линия откликов', description: 'Линия дневного количества пользователей, бронировавших смены.' },
+    { suffix: 'line-completed-users', title: 'Динамика города: линия завершений', description: 'Линия дневного количества пользователей, завершивших смены.' },
+    { suffix: 'line-active-users-per-request', title: 'Динамика города: линия актив / заявка', description: 'Линия дневного отношения активных пользователей приложения к активным заявкам.' },
+    { suffix: 'bar-ordered-shifts', title: 'Динамика города: столбцы заказа', description: 'Столбцы дневного планового заказа в графике динамики.' },
+    { suffix: 'bar-app-active-users', title: 'Динамика города: столбцы входов', description: 'Столбцы дневного количества пользователей базы, входивших в приложение.' },
+    { suffix: 'bar-booked-users', title: 'Динамика города: столбцы откликов', description: 'Столбцы дневного количества пользователей, бронировавших смены.' },
+    { suffix: 'bar-completed-users', title: 'Динамика города: столбцы завершений', description: 'Столбцы дневного количества пользователей, завершивших смены.' },
+    { suffix: 'bar-active-users-per-request', title: 'Динамика города: столбцы актив / заявка', description: 'Столбцы дневного отношения активных пользователей приложения к активным заявкам.' },
     { suffix: 'combo-ordered-shifts', title: 'Динамика города: заказ', description: 'Дневной плановый заказ в комбинированном графике.' },
     { suffix: 'combo-app-active-users', title: 'Динамика города: входы', description: 'Дневное количество пользователей базы, входивших в приложение.' },
     { suffix: 'combo-booked-users', title: 'Динамика города: отклики', description: 'Дневное количество пользователей, бронировавших смены.' },

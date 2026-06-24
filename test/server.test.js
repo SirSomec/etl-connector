@@ -96,6 +96,33 @@ function createFakeClient(overrides = {}) {
         return [{ status: 'confirmed', shifts: 8 }];
       }
 
+      if (operation === 'brand analysis brand options') {
+        return [
+          { brand_title: 'Brand A' },
+          { brand_title: 'Brand B' }
+        ];
+      }
+
+      if (operation === 'brand analysis orders summary') {
+        return [{ ordered_shifts: 20, workplaces_with_orders: 4, active_days: 10 }];
+      }
+
+      if (operation === 'brand analysis shifts summary') {
+        return [
+          {
+            worked_shifts: 15,
+            covered_shifts: 17,
+            revenue_rub: 30000,
+            unique_workers: 9,
+            workplaces_with_worked_shifts: 3,
+            cancelled_shifts: 2,
+            self_booked_confirmed_shifts: 6,
+            avg_worker_rate_hour: 320,
+            avg_customer_rate_hour: 450
+          }
+        ];
+      }
+
       if (operation === 'workplace analysis filter options') {
         return [
           { filter: 'client', value: 'Бренд' },
@@ -578,6 +605,54 @@ test('request report confirmed check page renders upload form and handles empty 
   assert.deepEqual(client.calls, []);
 });
 
+test('POST /tools/request-report-confirmed-check/status saves row status for current user', async () => {
+  const client = createFakeClient();
+  const saved = [];
+  const requestReportShiftStatusStore = {
+    async setStatus(input) {
+      saved.push(input);
+
+      return {
+        status: input.status,
+        label: 'Проверена'
+      };
+    }
+  };
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const result = await fetchText(baseUrl, '/tools/request-report-confirmed-check/status', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          rowKey: 'lkk:101',
+          status: 'verified'
+        })
+      });
+
+      assert.equal(result.response.status, 200);
+      assert.deepEqual(JSON.parse(result.text), {
+        status: 'verified',
+        label: 'Проверена'
+      });
+    },
+    baseConfig(),
+    { requestReportShiftStatusStore }
+  );
+
+  assert.deepEqual(saved, [
+    {
+      userId: 'anonymous',
+      rowKey: 'lkk:101',
+      status: 'verified'
+    }
+  ]);
+  assert.deepEqual(client.calls, []);
+});
+
 test('GET /dashboards/sales-by-project renders dashboard', async () => {
   const client = createFakeClient();
 
@@ -709,6 +784,82 @@ test('GET /dashboards/sales-by-project/section redacts upstream errors in fragme
     assert.match(text, /sales by project orders summary failed with password \[redacted\]/);
     assert.doesNotMatch(text, /super-secret/);
     assert.doesNotMatch(text, /<html/);
+  });
+});
+
+test('GET /dashboards/brand-analysis renders dashboard shell without heavy query', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/brand-analysis?period=month&from=2026-04-01&to=2026-04-30&brandId=Brand%20A'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Анализ брендов/);
+    assert.match(text, /Brand A/);
+    assert.match(text, /\/dashboards\/brand-analysis\/section\?section=summary/);
+    assert.match(text, /\/dashboards\/brand-analysis\/section\?section=workplaces/);
+  });
+
+  const brandCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('brand analysis')
+  );
+
+  assert.deepEqual(brandCalls.map((call) => call[1]), ['brand analysis brand options']);
+});
+
+test('GET /dashboards/brand-analysis/section renders selected brand fragment', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/brand-analysis/section?section=summary&period=month&from=2026-04-01&to=2026-04-30&brandId=Brand%20A'
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html\b/);
+    assert.match(text, /Основные показатели/);
+    assert.match(text, /30 000/);
+    assert.doesNotMatch(text, /<html/);
+  });
+
+  const brandCalls = client.calls.filter(
+    (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('brand analysis')
+  );
+
+  assert.deepEqual(brandCalls.map((call) => call[1]), [
+    'brand analysis orders summary',
+    'brand analysis shifts summary'
+  ]);
+  assert.equal(brandCalls[0][2].param_brand_title, 'Brand A');
+  assert.equal(brandCalls[0][2].param_from, '2026-04-01 00:00:00');
+  assert.equal(brandCalls[0][2].param_to, '2026-05-01 00:00:00');
+});
+
+test('GET /dashboards/brand-analysis keeps navigation active and redacts fragment errors', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      throw new Error(`${operation} failed with password super-secret`);
+    }
+  });
+
+  await withServer(client, async (baseUrl) => {
+    const page = await fetchText(baseUrl, '/dashboards/brand-analysis');
+    const fragment = await fetchText(
+      baseUrl,
+      '/dashboards/brand-analysis/section?section=summary&brandId=Brand%20A'
+    );
+
+    assert.equal(page.response.status, 502);
+    assert.match(page.text, /class="nav-link active" href="\/dashboards\/brand-analysis"/);
+    assert.equal(fragment.response.status, 502);
+    assert.match(fragment.text, /brand analysis orders summary failed with password \[redacted\]/);
+    assert.doesNotMatch(fragment.text, /super-secret/);
+    assert.doesNotMatch(fragment.text, /<html/);
   });
 });
 
@@ -1862,6 +2013,8 @@ test('activeNavForPath normalizes dashboard trailing slashes', () => {
   assert.equal(activeNavForPath('/admin/preload/run'), 'preload-admin');
   assert.equal(activeNavForPath('/dashboards/workplace-analysis/'), 'workplace-analysis');
   assert.equal(activeNavForPath('/dashboards/sales-by-project/'), 'sales-by-project');
+  assert.equal(activeNavForPath('/dashboards/brand-analysis'), 'brand-analysis');
+  assert.equal(activeNavForPath('/dashboards/brand-analysis/'), 'brand-analysis');
   assert.equal(activeNavForPath('/dashboards/city-analysis'), 'city-analysis');
   assert.equal(activeNavForPath('/dashboards/city-analysis/'), 'city-analysis');
   assert.equal(activeNavForPath('/dashboards/heatmap'), 'heatmap');

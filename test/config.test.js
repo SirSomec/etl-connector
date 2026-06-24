@@ -37,6 +37,10 @@ test('loadConfig returns required values and safe defaults', () => {
     config.preload.storePath,
     path.join(process.cwd(), 'data', 'preload.sqlite')
   );
+  assert.equal(
+    config.requestReportStatus.storePath,
+    path.join(process.cwd(), 'data', 'request-report-shift-statuses.json')
+  );
   assert.equal(config.auth.sessionCookieName, 'etl_analytics_session');
   assert.equal(config.auth.sessionTtlMs, 12 * 60 * 60 * 1000);
 });
@@ -60,6 +64,14 @@ test('loadConfig includes user activity store path', () => {
   });
 
   assert.equal(config.activity.storePath, 'C:\\activity\\user-activity.sqlite');
+});
+
+test('loadConfig includes request report status store path override', () => {
+  const config = loadConfig(baseEnv({
+    REQUEST_REPORT_STATUS_STORE_PATH: 'C:\\runtime\\request-report-statuses.json'
+  }));
+
+  assert.equal(config.requestReportStatus.storePath, 'C:\\runtime\\request-report-statuses.json');
 });
 
 test('loadConfig defaults user activity store to data directory', () => {

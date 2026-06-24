@@ -6,6 +6,8 @@ const {
   renderError,
   renderGigerDetails,
   renderGigerDetailsWorkbook,
+  renderBrandAnalysisDashboard,
+  renderBrandAnalysisDashboardSection,
   renderCityAnalysisDashboard,
   renderCityAnalysisDashboardSection,
   renderHeatmapDashboard,
@@ -88,14 +90,17 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
     filename: 'requests-report.xlsx',
     result: {
       summary: {
-        totalRows: 2,
-        rowsWithId: 2,
-        checkedExternalIds: 2,
+        totalRows: 5,
+        rowsWithId: 5,
+        checkedExternalIds: 5,
         confirmedRows: 1,
-        missingConfirmedRows: 1
+        missingConfirmedRows: 4
       },
       rows: [
         {
+          reviewStatusKey: 'lkk:101',
+          reviewStatus: 'verified',
+          reviewStatusLabel: 'Проверена',
           organization: 'АО "Тандер"',
           workplace: 'Точка <1>',
           address: 'ул. Ленина, 1',
@@ -103,6 +108,33 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
           startText: '2026-06-01 09:00',
           actualDuration: '7.5',
           crmUrl: 'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=63e9cbf44eece00008747426'
+        },
+        {
+          reviewStatusKey: 'lkk:102',
+          reviewStatus: 'return-later',
+          reviewStatusLabel: 'Вернуться позже',
+          organization: 'ООО Ноль',
+          workplace: 'Точка 0',
+          startText: '2026-06-01 10:00',
+          actualDuration: '0'
+        },
+        {
+          reviewStatusKey: 'lkk:103',
+          reviewStatus: '',
+          reviewStatusLabel: '',
+          organization: 'ООО Пусто',
+          workplace: 'Точка пусто',
+          startText: '2026-06-01 11:00',
+          actualDuration: ''
+        },
+        {
+          reviewStatusKey: 'lkk:104',
+          reviewStatus: '',
+          reviewStatusLabel: '',
+          organization: 'ООО Неявка',
+          workplace: 'Точка неявка',
+          startText: '2026-06-01 12:00',
+          actualDuration: 'Неявка'
         }
       ],
       warnings: ['Предупреждение <одно>']
@@ -117,7 +149,8 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
   assert.match(html, /Адрес/);
   assert.match(html, /Сотрудник/);
   assert.match(html, /Время с/);
-  assert.match(html, /Фактическая продолжительность/);
+  assert.match(html, /<th>Фактическая продолжительность за вычетом перерыва<\/th>/);
+  assert.match(html, /<th>Статус проверки<\/th>/);
   assert.match(html, /requests-report.xlsx/);
   assert.match(html, /АО &quot;Тандер&quot;/);
   assert.match(html, /Точка &lt;1&gt;/);
@@ -125,9 +158,28 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
     html,
     /<a href="https:\/\/crm\.mygig\.ru\/coordination\?searchDate\[\]=2026-06-01&amp;searchDate\[\]=2026-06-01&amp;workplaceIds\[\]=63e9cbf44eece00008747426" target="_blank" rel="noopener noreferrer">7\.5<\/a>/
   );
+  assert.match(html, /data-request-duration-filter/);
+  assert.match(html, /<option value="non-zero">Есть не 0<\/option>/);
+  assert.match(html, /<option value="zero">Есть 0<\/option>/);
+  assert.match(html, /<option value="empty">Нет значения<\/option>/);
+  assert.match(html, /<option value="absence">Есть неявка<\/option>/);
+  assert.match(html, /data-request-status-filter/);
+  assert.match(html, /<option value="verified">Проверена<\/option>/);
+  assert.match(html, /<option value="return-later">Вернуться позже<\/option>/);
+  assert.match(html, /data-request-report-status-control/);
+  assert.match(html, /data-request-report-status-key="lkk:101"/);
+  assert.match(html, /data-request-review-status="verified"/);
+  assert.match(html, /data-request-review-status="return-later"/);
+  assert.match(html, /data-request-review-status=""/);
+  assert.match(html, /option value="verified" selected>Проверена<\/option>/);
+  assert.match(html, /option value="return-later" selected>Вернуться позже<\/option>/);
+  assert.match(html, /data-request-duration-category="non-zero"/);
+  assert.match(html, /data-request-duration-category="zero"/);
+  assert.match(html, /data-request-duration-category="empty"/);
+  assert.match(html, /data-request-duration-category="absence"/);
+  assert.match(html, /data-request-duration-filter-empty hidden/);
   assert.match(html, /Предупреждение &lt;одно&gt;/);
   assert.doesNotMatch(html, /ID ЛКК<\/th>/);
-  assert.doesNotMatch(html, /Статус<\/th>/);
 });
 
 test('renderHome includes sidebar navigation with tables active', () => {
@@ -1498,8 +1550,9 @@ test('dashboard visual outputs render SQL inspectors on individual values', () =
   assert.match(pointHtml, /data-sql-inspector-open="workplace-point\.charts\.calendar-sla"/);
   assert.doesNotMatch(pointHtml, /<button[^>]*class="point-calendar-cell-button"[\s\S]*<button[^>]*class="sql-inspector-button"/);
   assert.match(pointHtml, /data-sql-inspector-open="workplace-point\.charts\.professions"/);
-  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.combo-ordered-shifts"/);
-  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.heatmap-active-users-per-request"/);
+  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.line-ordered-shifts"/);
+  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.bar-ordered-shifts"/);
+  assert.match(cityHtml, /data-sql-inspector-open="city-analysis\.dynamics\.line-active-users-per-request"/);
   assert.match(heatmapHtml, /data-sql-inspector-open="heatmap\.map\.weighted-active-users"/);
 });
 
@@ -1569,6 +1622,167 @@ test('renderSalesByProjectDashboard renders progressive fragments with generic l
   assert.match(html, /document\.querySelectorAll\('\[data-dashboard-fragment-url\]/);
   assert.match(html, /Загружается/);
   assert.doesNotMatch(html, /<(?:div|section)[^>]+data-city-analysis-fragment-url/);
+});
+
+test('renderBrandAnalysisDashboard renders brand selector and progressive sections', () => {
+  const html = renderBrandAnalysisDashboard({
+    database: 'etl',
+    progressive: true,
+    currentUser: { role: 'analyst', permissions: ['brand-analysis'] },
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-04-30',
+        brandId: 'Brand <A>'
+      },
+      brandOptions: [
+        { id: 'Brand <A>', title: 'Brand <A>' },
+        { id: 'Brand B', title: 'Brand B' }
+      ],
+      selectedBrandTitle: 'Brand <A>',
+      summary: {},
+      trendRows: [],
+      workplaceRows: [],
+      professionRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(html, /Анализ брендов/);
+  assert.match(html, /class="nav-link active" href="\/dashboards\/brand-analysis"/);
+  assert.match(html, /<form class="filter-bar" action="\/dashboards\/brand-analysis" method="get">/);
+  assert.match(html, /<option value="Brand &lt;A&gt;" selected>Brand &lt;A&gt;<\/option>/);
+  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section\?section=summary&amp;period=month&amp;from=2026-04-01&amp;to=2026-04-30&amp;brandId=Brand\+%3CA%3E"/);
+  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section\?section=workplaces/);
+  assert.match(html, /Загружается/);
+  assert.doesNotMatch(html, /Brand <A>/);
+});
+
+test('renderBrandAnalysisDashboard asks to choose brand when no brand is selected', () => {
+  const html = renderBrandAnalysisDashboard({
+    database: 'etl',
+    progressive: true,
+    dashboard: {
+      filters: {
+        period: 'month',
+        from: '2026-04-01',
+        to: '2026-04-30',
+        brandId: ''
+      },
+      brandOptions: [{ id: 'client-1', title: 'Brand A' }],
+      selectedBrandTitle: '',
+      summary: {},
+      trendRows: [],
+      workplaceRows: [],
+      professionRows: [],
+      statusRows: []
+    }
+  });
+
+  assert.match(html, /Выберите бренд/);
+  assert.doesNotMatch(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section/);
+});
+
+test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors', () => {
+  const currentUser = { role: 'analyst', permissions: ['brand-analysis', 'sql-inspector'] };
+  const summaryHtml = renderBrandAnalysisDashboardSection({
+    section: 'summary',
+    currentUser,
+    dashboard: {
+      filters: { brandId: 'client-1' },
+      selectedBrandTitle: 'Brand A',
+      summary: {
+        orderedShifts: 20,
+        workedShifts: 15,
+        coveredShifts: 17,
+        openDemand: 3,
+        slaPercent: 75,
+        coveragePercent: 85,
+        revenueRub: 30000,
+        uniqueWorkers: 9,
+        workplacesWithOrders: 4,
+        workplacesWithWorkedShifts: 3,
+        cancelledShifts: 2,
+        selfBookingPercent: 40,
+        orderStabilityPercent: 33.33333333333333,
+        avgWorkerRateHour: 320,
+        avgCustomerRateHour: 450
+      }
+    }
+  });
+  const trendHtml = renderBrandAnalysisDashboardSection({
+    section: 'trend',
+    currentUser,
+    dashboard: {
+      trendRows: [
+        {
+          period: '2026-04-01',
+          orderedShifts: 20,
+          workedShifts: 15,
+          coveredShifts: 17,
+          openDemand: 3,
+          slaPercent: 75,
+          coveragePercent: 85,
+          revenueRub: 30000,
+          cancelledShifts: 2
+        }
+      ]
+    }
+  });
+  const workplacesHtml = renderBrandAnalysisDashboardSection({
+    section: 'workplaces',
+    currentUser,
+    dashboard: {
+      workplaceRows: [
+        {
+          workplaceTitle: 'Точка <1>',
+          city: 'Москва',
+          orderedShifts: 20,
+          workedShifts: 15,
+          coveragePercent: 85,
+          slaPercent: 75,
+          revenueRub: 30000,
+          cancelledShifts: 2
+        }
+      ]
+    }
+  });
+  const professionsHtml = renderBrandAnalysisDashboardSection({
+    section: 'professions',
+    currentUser,
+    dashboard: {
+      professionRows: [
+        {
+          profession: 'Комплектовщик',
+          orderedShifts: 20,
+          workedShifts: 15,
+          slaPercent: 75,
+          revenueRub: 30000,
+          cancelledShifts: 2
+        }
+      ]
+    }
+  });
+  const statusesHtml = renderBrandAnalysisDashboardSection({
+    section: 'statuses',
+    currentUser,
+    dashboard: {
+      statusRows: [{ status: 'confirmed', shifts: 15 }]
+    }
+  });
+
+  assert.match(summaryHtml, /Основные показатели/);
+  assert.match(summaryHtml, /30 000/);
+  assert.match(summaryHtml, /data-sql-inspector-open="brand-analysis\.summary\.ordered-shifts"/);
+  assert.match(summaryHtml, /data-sql-inspector-open="brand-analysis\.summary\.open-demand"/);
+  assert.match(summaryHtml, /data-sql-inspector-open="brand-analysis\.summary\.avg-customer-rate-hour"/);
+  assert.match(trendHtml, /data-sql-inspector-open="brand-analysis\.trend\.coverage"/);
+  assert.match(workplacesHtml, /Точка &lt;1&gt;/);
+  assert.doesNotMatch(workplacesHtml, /Точка <1>/);
+  assert.match(workplacesHtml, /data-sql-inspector-open="brand-analysis\.workplaces\.sla"/);
+  assert.match(professionsHtml, /data-sql-inspector-open="brand-analysis\.professions\.worked-shifts"/);
+  assert.match(statusesHtml, /data-sql-inspector-open="brand-analysis\.statuses\.shifts"/);
 });
 
 test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and escapes values', () => {
@@ -2999,6 +3213,11 @@ test('renderCityAnalysisDashboard renders filters, active navigation, KPI cards,
   assert.match(html, /отклики 10/);
   assert.match(html, /завершения 7/);
   assert.match(html, /актив\/заявка 2,5/);
+  assert.match(html, /data-city-dynamic-chart/);
+  assert.match(html, /data-city-dynamic-series-toggle="orderedShifts"/);
+  assert.match(html, /data-city-dynamic-series="orderedShifts"/);
+  assert.match(html, /data-city-dynamic-has-selection/);
+  assert.match(html, /document\.addEventListener\('click'[\s\S]*data-city-dynamic-series-toggle/);
   const miniMetaStyle = html.match(/\.mini-meta\s*\{(?<rules>[^}]+)\}/);
   assert.ok(miniMetaStyle);
   assert.doesNotMatch(miniMetaStyle.groups.rules, /white-space:\s*nowrap/);
@@ -3270,20 +3489,16 @@ test('renderCityAnalysisDashboardSection renders SQL inspectors for every city m
     'city-analysis.composition.professions.ordered-shifts',
     'city-analysis.composition.rate-buckets',
     'city-analysis.composition.rate-buckets.ordered-shifts',
-    'city-analysis.dynamics.multiples-ordered-shifts',
-    'city-analysis.dynamics.multiples-app-active-users',
-    'city-analysis.dynamics.multiples-booked-users',
-    'city-analysis.dynamics.multiples-completed-users',
-    'city-analysis.dynamics.multiples-active-users-per-request',
-    'city-analysis.dynamics.funnel-ordered-shifts',
-    'city-analysis.dynamics.funnel-app-active-users',
-    'city-analysis.dynamics.funnel-booked-users',
-    'city-analysis.dynamics.funnel-completed-users',
-    'city-analysis.dynamics.index-ordered-shifts',
-    'city-analysis.dynamics.index-app-active-users',
-    'city-analysis.dynamics.index-booked-users',
-    'city-analysis.dynamics.index-completed-users',
-    'city-analysis.dynamics.index-active-users-per-request'
+    'city-analysis.dynamics.line-ordered-shifts',
+    'city-analysis.dynamics.line-app-active-users',
+    'city-analysis.dynamics.line-booked-users',
+    'city-analysis.dynamics.line-completed-users',
+    'city-analysis.dynamics.line-active-users-per-request',
+    'city-analysis.dynamics.bar-ordered-shifts',
+    'city-analysis.dynamics.bar-app-active-users',
+    'city-analysis.dynamics.bar-booked-users',
+    'city-analysis.dynamics.bar-completed-users',
+    'city-analysis.dynamics.bar-active-users-per-request'
   ];
 
   for (const id of expectedIds) {
@@ -3291,8 +3506,9 @@ test('renderCityAnalysisDashboardSection renders SQL inspectors for every city m
   }
 });
 
-test('renderCityAnalysisDashboardSection renders five dynamics subtabs', () => {
+test('renderCityAnalysisDashboardSection renders line and bar chart variants for city dynamics', () => {
   const html = renderCityAnalysisDashboardSection({
+    currentUser: { role: 'admin', permissions: [] },
     section: 'dynamics',
     dashboard: {
       filters: { city: 'Москва', from: '2026-05-01', to: '2026-05-31' },
@@ -3324,18 +3540,46 @@ test('renderCityAnalysisDashboardSection renders five dynamics subtabs', () => {
     }
   });
 
-  assert.match(html, /city-dynamics-tabs/);
-  assert.equal(countOccurrences(html, 'name="city-dynamics-tab"'), 5);
-  assert.match(html, /city-dynamics-panel-combo/);
-  assert.match(html, /city-dynamics-panel-multiples/);
-  assert.match(html, /city-dynamics-panel-heatmap/);
-  assert.match(html, /city-dynamics-panel-funnel/);
-  assert.match(html, /city-dynamics-panel-index/);
-  assert.match(html, /Спрос vs исполнители/);
-  assert.match(html, /Small multiples/);
-  assert.match(html, /Тепловая карта/);
-  assert.match(html, /Воронка/);
-  assert.match(html, /Индексы/);
+  assert.match(html, /city-chart-variant-tabs/);
+  assert.equal(countOccurrences(html, 'name="city-dynamics-chart-variant"'), 2);
+  assert.match(html, /for="city-dynamics-chart-line">Линии<\/label>/);
+  assert.match(html, /for="city-dynamics-chart-bar">Столбцы<\/label>/);
+  assert.match(html, /city-chart-variant-panel-line/);
+  assert.match(html, /city-chart-variant-panel-bar/);
+  assert.match(html, /data-city-dynamic-chart/);
+  assert.match(html, /city-line-chart/);
+  assert.match(html, /<svg class="city-line-chart-svg"/);
+  assert.equal(countOccurrences(html, 'class="city-line-series'), 5);
+  assert.match(html, /<polyline class="city-line-series city-series-demand" data-city-dynamic-series="orderedShifts"/);
+  assert.match(html, /<circle class="city-line-point city-series-demand" data-city-dynamic-series="orderedShifts"/);
+  assert.match(html, /city-line-legend/);
+  assert.match(html, /city-bar-chart/);
+  assert.match(html, /city-bar-chart-grid/);
+  assert.equal(countOccurrences(html, 'class="city-bar-column'), 10);
+  assert.match(html, /<div class="city-bar-column" data-city-dynamic-series="orderedShifts"/);
+  assert.match(html, /city-bar-legend/);
+  assert.equal(countOccurrences(html, 'data-city-dynamic-series-toggle='), 10);
+  assert.equal(countOccurrences(html, 'data-city-dynamic-legend-item='), 10);
+  assert.equal(countOccurrences(html, 'aria-pressed="false"'), 10);
+  assert.match(html, /Заказ/);
+  assert.match(html, /Входы/);
+  assert.match(html, /Отклики/);
+  assert.match(html, /Завершения/);
+  assert.match(html, /Актив\/заявка/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.line-ordered-shifts"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.line-app-active-users"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.line-booked-users"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.line-completed-users"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.line-active-users-per-request"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.bar-ordered-shifts"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.bar-app-active-users"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.bar-booked-users"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.bar-completed-users"/);
+  assert.match(html, /data-sql-inspector-open="city-analysis\.dynamics\.bar-active-users-per-request"/);
+  assert.doesNotMatch(html, /Small multiples/);
+  assert.doesNotMatch(html, /Тепловая карта/);
+  assert.doesNotMatch(html, /Воронка/);
+  assert.doesNotMatch(html, /Индексы/);
   assert.match(html, /2026-05-02/);
   assert.match(html, /75/);
   assert.doesNotMatch(html, /<html/);

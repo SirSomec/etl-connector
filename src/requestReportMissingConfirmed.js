@@ -14,7 +14,10 @@ const REPORT_HEADERS = {
   employee: ['Сотрудник'],
   dateFrom: ['Дата запроса "с"', 'Дата запроса с'],
   timeFrom: ['Время запроса "с"', 'Время запроса с'],
-  actualDuration: ['Продолжительность запроса (факт) (в часах)']
+  actualDuration: [
+    'Фактическая продолжительность запроса за вычетом перерыва',
+    'Продолжительность запроса (факт) (в часах)'
+  ]
 };
 
 function normalizeCellText(value) {
@@ -562,6 +565,13 @@ function normalizeCompositeTime(value) {
   return `${match[1].padStart(2, '0')}:${match[2]}`;
 }
 
+function normalizeTechnicalName(value) {
+  return normalizeCellText(value)
+    .toLowerCase()
+    .replace(/^(?:(?:мк|мм)\s+)+/u, '')
+    .trim();
+}
+
 function compositeKey(date, time, technicalName) {
   if (!date || !time || !technicalName) {
     return '';
@@ -570,10 +580,30 @@ function compositeKey(date, time, technicalName) {
   return [date, time, technicalName].join('\u001f');
 }
 
+function normalizeCompositeEmployee(value) {
+  return normalizeCellText(value).toLowerCase();
+}
+
+function compositeEmployeeKey(date, time, technicalName, employeeName) {
+  if (!date || !time || !technicalName || !employeeName) {
+    return '';
+  }
+
+  return [date, time, technicalName, employeeName].join('\u001f');
+}
+
+function compositeEmployeeDateKey(date, technicalName, employeeName) {
+  if (!date || !technicalName || !employeeName) {
+    return '';
+  }
+
+  return [date, technicalName, employeeName].join('\u001f');
+}
+
 function compositeCandidateForRow(row) {
   const date = normalizeCompositeDate(row && row.dateFrom);
   const time = normalizeCompositeTime(row && row.timeFrom);
-  const technicalName = normalizeCellText(row && row.workplace);
+  const technicalName = normalizeTechnicalName(row && row.workplace);
   const key = compositeKey(date, time, technicalName);
 
   if (!key) {
@@ -581,6 +611,42 @@ function compositeCandidateForRow(row) {
   }
 
   return { date, time, technicalName, key };
+}
+
+function compositeEmployeeCandidateForRow(row) {
+  const candidate = compositeCandidateForRow(row);
+  const employeeName = normalizeCompositeEmployee(row && row.employee);
+  const key = candidate
+    ? compositeEmployeeKey(candidate.date, candidate.time, candidate.technicalName, employeeName)
+    : '';
+
+  if (!key) {
+    return null;
+  }
+
+  return {
+    ...candidate,
+    employeeName,
+    key
+  };
+}
+
+function compositeEmployeeDateCandidateForRow(row) {
+  const date = normalizeCompositeDate(row && row.dateFrom);
+  const technicalName = normalizeTechnicalName(row && row.workplace);
+  const employeeName = normalizeCompositeEmployee(row && row.employee);
+  const key = compositeEmployeeDateKey(date, technicalName, employeeName);
+
+  if (!key) {
+    return null;
+  }
+
+  return {
+    date,
+    technicalName,
+    employeeName,
+    key
+  };
 }
 
 function uniqueCompositeCandidates(rows) {
@@ -597,19 +663,83 @@ function uniqueCompositeCandidates(rows) {
   return [...candidates.values()];
 }
 
+function uniqueCompositeEmployeeCandidates(rows) {
+  const candidates = new Map();
+
+  for (const row of rows) {
+    const candidate = compositeEmployeeCandidateForRow(row);
+
+    if (candidate) {
+      candidates.set(candidate.key, candidate);
+    }
+  }
+
+  return [...candidates.values()];
+}
+
+function uniqueCompositeEmployeeDateCandidates(rows) {
+  const candidates = new Map();
+
+  for (const row of rows) {
+    const candidate = compositeEmployeeDateCandidateForRow(row);
+
+    if (candidate) {
+      candidates.set(candidate.key, candidate);
+    }
+  }
+
+  return [...candidates.values()];
+}
+
 function uniqueTechnicalNames(rows) {
   return [...new Set((Array.isArray(rows) ? rows : [])
-    .map((row) => normalizeCellText(row && row.workplace))
+    .map((row) => normalizeTechnicalName(row && row.workplace))
     .filter(Boolean))];
 }
 
-async function loadUniqueConfirmedCompositeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
-  const keys = new Set();
+function workplaceDateKey(date, technicalName) {
+  if (!date || !technicalName) {
+    return '';
+  }
+
+  return [date, technicalName].join('\u001f');
+}
+
+function workplaceDateCandidateForRow(row) {
+  const date = normalizeCompositeDate(row && row.startText);
+  const technicalName = normalizeTechnicalName(row && row.workplace);
+  const key = workplaceDateKey(date, technicalName);
+
+  if (!key) {
+    return null;
+  }
+
+  return { date, technicalName, key };
+}
+
+function uniqueWorkplaceDateCandidates(rows) {
+  const candidates = new Map();
+
+  for (const row of rows) {
+    const candidate = workplaceDateCandidateForRow(row);
+
+    if (candidate) {
+      candidates.set(candidate.key, candidate);
+    }
+  }
+
+  return [...candidates.values()];
+}
+
+async function loadConfirmedCompositeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+  const uniqueKeys = new Set();
+  const matchedKeys = new Set();
 
   for (const batch of chunkValues(candidates, batchSize)) {
     const tuplesSql = batch
       .map((candidate) => `(${quoteClickHouseString(candidate.date)}, ${quoteClickHouseString(candidate.time)}, ${quoteClickHouseString(candidate.technicalName)})`)
       .join(', ');
+    const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('w.technical_name');
     const query = [
       'SELECT',
       '  start_date,',
@@ -620,11 +750,11 @@ async function loadUniqueConfirmedCompositeKeys(client, candidates, batchSize = 
       '  SELECT',
       '    toString(toDate(j.start)) AS start_date,',
       '    left(toString(j.start_time), 5) AS start_time,',
-      '    toString(w.technical_name) AS technical_name',
+      `    ${technicalNameExpression} AS technical_name`,
       '  FROM mg_jobs AS j',
       '  INNER JOIN mg_workplaces AS w ON toString(j.workplace) = toString(w._id)',
       "  WHERE toString(j.status) = 'confirmed'",
-      `    AND tuple(toString(toDate(j.start)), left(toString(j.start_time), 5), toString(w.technical_name)) IN (${tuplesSql})`,
+      `    AND tuple(toString(toDate(j.start)), left(toString(j.start_time), 5), ${technicalNameExpression}) IN (${tuplesSql})`,
       ')',
       'GROUP BY start_date, start_time, technical_name',
       'FORMAT JSONEachRow'
@@ -632,11 +762,137 @@ async function loadUniqueConfirmedCompositeKeys(client, candidates, batchSize = 
     const rows = await client.queryJSONEachRow(query, {}, 'request report confirmed composite lookup');
 
     for (const row of rows) {
+      const key = compositeKey(
+        normalizeCompositeDate(row.start_date),
+        normalizeCompositeTime(row.start_time),
+        normalizeTechnicalName(row.technical_name)
+      );
+
+      if (key) {
+        matchedKeys.add(key);
+      }
+
       if (Number(row && row.confirmed_jobs) === 1) {
-        keys.add(compositeKey(
+        uniqueKeys.add(key);
+      }
+    }
+  }
+
+  return { uniqueKeys, matchedKeys };
+}
+
+function normalizedClickHouseTextExpression(expression) {
+  return `lowerUTF8(replaceRegexpAll(trimBoth(ifNull(toString(${expression}), '')), '\\\\s+', ' '))`;
+}
+
+function normalizedClickHouseTechnicalNameExpression(expression) {
+  return `replaceRegexpAll(${normalizedClickHouseTextExpression(expression)}, '^(мк|мм)\\\\s+', '')`;
+}
+
+async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+  const keys = new Set();
+
+  for (const batch of chunkValues(candidates, batchSize)) {
+    const tuplesSql = batch
+      .map((candidate) => [
+        quoteClickHouseString(candidate.date),
+        quoteClickHouseString(candidate.time),
+        quoteClickHouseString(candidate.technicalName),
+        quoteClickHouseString(candidate.employeeName)
+      ])
+      .map((parts) => `(${parts.join(', ')})`)
+      .join(', ');
+    const workerNameExpression = normalizedClickHouseTextExpression('wr.full_name');
+    const userNameExpression = normalizedClickHouseTextExpression("concat(toString(u.lastname), ' ', toString(u.firstname), ' ', toString(u.middlename))");
+    const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('w.technical_name');
+    const query = [
+      'SELECT',
+      '  start_date,',
+      '  start_time,',
+      '  technical_name,',
+      '  employee_name,',
+      '  uniqExact(job_id) AS confirmed_jobs',
+      'FROM (',
+      '  SELECT',
+      '    toString(j._id) AS job_id,',
+      '    toString(toDate(j.start)) AS start_date,',
+      '    left(toString(j.start_time), 5) AS start_time,',
+      `    ${technicalNameExpression} AS technical_name,`,
+      `    arrayJoin([${workerNameExpression}, ${userNameExpression}]) AS employee_name`,
+      '  FROM mg_jobs AS j',
+      '  INNER JOIN mg_workplaces AS w ON toString(j.workplace) = toString(w._id)',
+      '  LEFT JOIN mg_workers AS wr ON toString(j.worker) = toString(wr._id)',
+      '  LEFT JOIN mg_users AS u ON toString(wr.user) = toString(u._id)',
+      "  WHERE toString(j.status) = 'confirmed'",
+      ')',
+      "WHERE employee_name != ''",
+      `  AND tuple(start_date, start_time, technical_name, employee_name) IN (${tuplesSql})`,
+      'GROUP BY start_date, start_time, technical_name, employee_name',
+      'FORMAT JSONEachRow'
+    ].join('\n');
+    const rows = await client.queryJSONEachRow(query, {}, 'request report confirmed employee composite lookup');
+
+    for (const row of rows) {
+      if (Number(row && row.confirmed_jobs) === 1) {
+        keys.add(compositeEmployeeKey(
           normalizeCompositeDate(row.start_date),
           normalizeCompositeTime(row.start_time),
-          normalizeCellText(row.technical_name)
+          normalizeTechnicalName(row.technical_name),
+          normalizeCompositeEmployee(row.employee_name)
+        ));
+      }
+    }
+  }
+
+  return keys;
+}
+
+async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+  const keys = new Set();
+
+  for (const batch of chunkValues(candidates, batchSize)) {
+    const tuplesSql = batch
+      .map((candidate) => [
+        quoteClickHouseString(candidate.date),
+        quoteClickHouseString(candidate.technicalName),
+        quoteClickHouseString(candidate.employeeName)
+      ])
+      .map((parts) => `(${parts.join(', ')})`)
+      .join(', ');
+    const workerNameExpression = normalizedClickHouseTextExpression('wr.full_name');
+    const userNameExpression = normalizedClickHouseTextExpression("concat(toString(u.lastname), ' ', toString(u.firstname), ' ', toString(u.middlename))");
+    const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('w.technical_name');
+    const query = [
+      'SELECT',
+      '  start_date,',
+      '  technical_name,',
+      '  employee_name,',
+      '  uniqExact(job_id) AS confirmed_jobs',
+      'FROM (',
+      '  SELECT',
+      '    toString(j._id) AS job_id,',
+      '    toString(toDate(j.start)) AS start_date,',
+      `    ${technicalNameExpression} AS technical_name,`,
+      `    arrayJoin([${workerNameExpression}, ${userNameExpression}]) AS employee_name`,
+      '  FROM mg_jobs AS j',
+      '  INNER JOIN mg_workplaces AS w ON toString(j.workplace) = toString(w._id)',
+      '  LEFT JOIN mg_workers AS wr ON toString(j.worker) = toString(wr._id)',
+      '  LEFT JOIN mg_users AS u ON toString(wr.user) = toString(u._id)',
+      "  WHERE toString(j.status) = 'confirmed'",
+      ')',
+      "WHERE employee_name != ''",
+      `  AND tuple(start_date, technical_name, employee_name) IN (${tuplesSql})`,
+      'GROUP BY start_date, technical_name, employee_name',
+      'FORMAT JSONEachRow'
+    ].join('\n');
+    const rows = await client.queryJSONEachRow(query, {}, 'request report confirmed employee date lookup');
+
+    for (const row of rows) {
+      if (Number(row && row.confirmed_jobs) === 1) {
+        keys.add(compositeEmployeeDateKey(
+          normalizeCompositeDate(row.start_date),
+          normalizeTechnicalName(row.technical_name),
+          normalizeCompositeEmployee(row.employee_name)
         ));
       }
     }
@@ -650,6 +906,7 @@ async function loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, bat
 
   for (const batch of chunkValues(technicalNames, batchSize)) {
     const namesSql = batch.map(quoteClickHouseString).join(', ');
+    const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('technical_name');
     const query = [
       'SELECT',
       '  technical_name,',
@@ -657,10 +914,10 @@ async function loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, bat
       '  uniqExact(workplace_id) AS workplace_count',
       'FROM (',
       '  SELECT',
-      '    toString(technical_name) AS technical_name,',
+      `    ${technicalNameExpression} AS technical_name,`,
       '    toString(_id) AS workplace_id',
       '  FROM mg_workplaces',
-      `  WHERE toString(technical_name) IN (${namesSql})`,
+      `  WHERE ${technicalNameExpression} IN (${namesSql})`,
       ')',
       'GROUP BY technical_name',
       'HAVING workplace_count = 1',
@@ -669,11 +926,56 @@ async function loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, bat
     const rows = await client.queryJSONEachRow(query, {}, 'request report workplace lookup');
 
     for (const row of rows) {
-      const technicalName = normalizeCellText(row && row.technical_name);
+      const technicalName = normalizeTechnicalName(row && row.technical_name);
       const workplaceId = normalizeCellText((row && row.resolved_workplace_id) || (row && row.workplace_id));
 
       if (technicalName && workplaceId) {
         workplaceIds.set(technicalName, workplaceId);
+      }
+    }
+  }
+
+  return workplaceIds;
+}
+
+async function loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
+  const workplaceIds = new Map();
+
+  for (const batch of chunkValues(candidates, batchSize)) {
+    const tuplesSql = batch
+      .map((candidate) => `(${quoteClickHouseString(candidate.date)}, ${quoteClickHouseString(candidate.technicalName)})`)
+      .join(', ');
+    const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('w.technical_name');
+    const query = [
+      'SELECT',
+      '  start_date,',
+      '  technical_name,',
+      '  any(workplace_id) AS resolved_workplace_id,',
+      '  uniqExact(workplace_id) AS workplace_count',
+      'FROM (',
+      '  SELECT',
+      '    toString(toDate(j.start)) AS start_date,',
+      `    ${technicalNameExpression} AS technical_name,`,
+      '    toString(j.workplace) AS workplace_id',
+      '  FROM mg_jobs AS j',
+      '  INNER JOIN mg_workplaces AS w ON toString(j.workplace) = toString(w._id)',
+      `  WHERE tuple(toString(toDate(j.start)), ${technicalNameExpression}) IN (${tuplesSql})`,
+      ')',
+      'GROUP BY start_date, technical_name',
+      'HAVING workplace_count = 1',
+      'FORMAT JSONEachRow'
+    ].join('\n');
+    const rows = await client.queryJSONEachRow(query, {}, 'request report workplace date lookup');
+
+    for (const row of rows) {
+      const key = workplaceDateKey(
+        normalizeCompositeDate(row && row.start_date),
+        normalizeTechnicalName(row && row.technical_name)
+      );
+      const workplaceId = normalizeCellText((row && row.resolved_workplace_id) || (row && row.workplace_id));
+
+      if (key && workplaceId) {
+        workplaceIds.set(key, workplaceId);
       }
     }
   }
@@ -728,8 +1030,33 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     return !externalId || !directExternalIds.has(externalId);
   });
   const compositeCandidates = uniqueCompositeCandidates(rowsForCompositeFallback);
-  const uniqueConfirmedCompositeKeys = compositeCandidates.length > 0
-    ? await loadUniqueConfirmedCompositeKeys(client, compositeCandidates, batchSize)
+  const confirmedCompositeKeys = compositeCandidates.length > 0
+    ? await loadConfirmedCompositeKeys(client, compositeCandidates, batchSize)
+    : { uniqueKeys: new Set(), matchedKeys: new Set() };
+  const uniqueConfirmedCompositeKeys = confirmedCompositeKeys.uniqueKeys;
+  const matchedConfirmedCompositeKeys = confirmedCompositeKeys.matchedKeys;
+  const compositeEmployeeCandidates = uniqueCompositeEmployeeCandidates(rowsForCompositeFallback);
+  const uniqueConfirmedCompositeEmployeeKeys = compositeEmployeeCandidates.length > 0
+    ? await loadUniqueConfirmedCompositeEmployeeKeys(client, compositeEmployeeCandidates, batchSize)
+    : new Set();
+  const rowsForCompositeEmployeeDateFallback = rowsForCompositeFallback.filter((row) => {
+    const candidate = compositeCandidateForRow(row);
+
+    if (candidate && (uniqueConfirmedCompositeKeys.has(candidate.key) || matchedConfirmedCompositeKeys.has(candidate.key))) {
+      return false;
+    }
+
+    const employeeCandidate = compositeEmployeeCandidateForRow(row);
+
+    if (employeeCandidate && uniqueConfirmedCompositeEmployeeKeys.has(employeeCandidate.key)) {
+      return false;
+    }
+
+    return compositeEmployeeDateCandidateForRow(row) !== null;
+  });
+  const compositeEmployeeDateCandidates = uniqueCompositeEmployeeDateCandidates(rowsForCompositeEmployeeDateFallback);
+  const uniqueConfirmedCompositeEmployeeDateKeys = compositeEmployeeDateCandidates.length > 0
+    ? await loadUniqueConfirmedCompositeEmployeeDateKeys(client, compositeEmployeeDateCandidates, batchSize)
     : new Set();
   const missingRows = safeRows.filter((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
@@ -743,8 +1070,19 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     }
 
     const candidate = compositeCandidateForRow(row);
+    const employeeCandidate = compositeEmployeeCandidateForRow(row);
 
-    return !candidate || !uniqueConfirmedCompositeKeys.has(candidate.key);
+    if (candidate && uniqueConfirmedCompositeKeys.has(candidate.key)) {
+      return false;
+    }
+
+    if (employeeCandidate && uniqueConfirmedCompositeEmployeeKeys.has(employeeCandidate.key)) {
+      return false;
+    }
+
+    const employeeDateCandidate = compositeEmployeeDateCandidateForRow(row);
+
+    return !employeeDateCandidate || !uniqueConfirmedCompositeEmployeeDateKeys.has(employeeDateCandidate.key);
   });
   const rowsNeedingWorkplaceLookup = missingRows.filter((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
@@ -756,12 +1094,26 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
   const workplaceIdsByTechnicalName = technicalNames.length > 0
     ? await loadUniqueWorkplaceIdsByTechnicalName(client, technicalNames, batchSize)
     : new Map();
+  const rowsNeedingWorkplaceDateLookup = rowsNeedingWorkplaceLookup.filter((row) => {
+    const technicalName = normalizeTechnicalName(row && row.workplace);
+
+    return technicalName && !workplaceIdsByTechnicalName.has(technicalName);
+  });
+  const workplaceDateCandidates = uniqueWorkplaceDateCandidates(rowsNeedingWorkplaceDateLookup);
+  const workplaceIdsByTechnicalNameAndDate = workplaceDateCandidates.length > 0
+    ? await loadUniqueWorkplaceIdsByTechnicalNameAndDate(client, workplaceDateCandidates, batchSize)
+    : new Map();
   const enrichedMissingRows = missingRows.map((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
     const directWorkplaceId = uniqueWorkplaceIdFromJobs(jobsByExternalId.get(externalId));
-    const fallbackWorkplaceId = workplaceIdsByTechnicalName.get(normalizeCellText(row && row.workplace)) || '';
+    const technicalName = normalizeTechnicalName(row && row.workplace);
+    const fallbackWorkplaceId = workplaceIdsByTechnicalName.get(technicalName) || '';
+    const fallbackWorkplaceIdByDate = workplaceIdsByTechnicalNameAndDate.get(workplaceDateKey(
+      normalizeCompositeDate(row && row.startText),
+      technicalName
+    )) || '';
 
-    return addCrmUrl(row, directWorkplaceId || fallbackWorkplaceId);
+    return addCrmUrl(row, directWorkplaceId || fallbackWorkplaceId || fallbackWorkplaceIdByDate);
   });
   const confirmedRows = safeRows.length - missingRows.length;
 

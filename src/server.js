@@ -22,6 +22,9 @@ const {
   parseRequestsReportWorkbook
 } = require('./requestReportMissingConfirmed');
 const {
+  createRequestReportShiftStatusStore
+} = require('./requestReportShiftStatusStore');
+const {
   createUserActivityStore,
   DEFAULT_USER_ACTIVITY_RETENTION_DAYS
 } = require('./userActivityStore');
@@ -41,6 +44,11 @@ const {
   loadSalesByProjectDashboardSection,
   loadSalesByProjectDashboardShell
 } = require('./salesByProjectDashboard');
+const {
+  BRAND_ANALYSIS_SECTIONS,
+  loadBrandAnalysisDashboardSection,
+  loadBrandAnalysisDashboardShell
+} = require('./brandAnalysisDashboard');
 const {
   WORKPLACE_ANALYSIS_SECTIONS,
   loadWorkplaceAnalysisGigerDetails,
@@ -63,6 +71,8 @@ const {
 } = require('./workerCancellationsDashboard');
 const {
   renderAccountManagement,
+  renderBrandAnalysisDashboard,
+  renderBrandAnalysisDashboardSection,
   renderDashboardSectionError,
   renderError,
   renderGigerDetails,
@@ -162,6 +172,7 @@ function activeNavForPath(path) {
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
     '/dashboards/heatmap': 'heatmap',
+    '/dashboards/brand-analysis': 'brand-analysis',
     '/dashboards/sales-by-project': 'sales-by-project',
     '/dashboards/workplace-analysis': 'workplace-analysis',
     '/dashboards/worker-cancellations': 'worker-cancellations',
@@ -194,6 +205,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/dashboards/sales-by-project/')) {
     return 'sales-by-project';
+  }
+
+  if (normalized.startsWith('/dashboards/brand-analysis/')) {
+    return 'brand-analysis';
   }
 
   if (normalized.startsWith('/dashboards/worker-cancellations/')) {
@@ -422,6 +437,9 @@ function createApp({
   dashboardSectionCache = null,
   workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null, disabled: true }),
   preloadService = null,
+  requestReportShiftStatusStore = createRequestReportShiftStatusStore({
+    filePath: config.requestReportStatus && config.requestReportStatus.storePath
+  }),
   userStore = null,
   sessionManager = null,
   activityStore = null,
@@ -494,6 +512,10 @@ function createApp({
 
     if (pathName === '/dashboards/sales-by-project' || pathName.startsWith('/dashboards/sales-by-project/')) {
       return 'sales-by-project';
+    }
+
+    if (pathName === '/dashboards/brand-analysis' || pathName.startsWith('/dashboards/brand-analysis/')) {
+      return 'brand-analysis';
     }
 
     if (pathName === '/dashboards/city-analysis' || pathName.startsWith('/dashboards/city-analysis/')) {
@@ -621,6 +643,10 @@ function createApp({
       currentUser: req.auth.user,
       csrfToken: req.auth.session.csrfToken
     };
+  }
+
+  function requestReportStatusUserId(req) {
+    return (req && req.auth && req.auth.user && req.auth.user.id) || 'anonymous';
   }
 
   function sendError(res, statusCode, title, message, activeNav = 'tables', context = {}) {
@@ -1444,6 +1470,58 @@ function createApp({
   );
 
   app.get(
+    '/dashboards/brand-analysis',
+    requireAuth('brand-analysis'),
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadBrandAnalysisDashboardShell(client, req.query);
+
+      recordCurrentUserActivity(req, activityEventType(req));
+      res
+        .status(200)
+        .type('html')
+        .send(renderBrandAnalysisDashboard({ database, dashboard, progressive: true, ...viewContext(req) }));
+    })
+  );
+
+  app.get(
+    '/dashboards/brand-analysis/section',
+    requireAuth('brand-analysis'),
+    asyncRoute(async (req, res) => {
+      const section = String(req.query.section || '');
+
+      if (!BRAND_ANALYSIS_SECTIONS.has(section)) {
+        sendError(
+          res,
+          400,
+          'Bad Request',
+          `Unknown brand analysis section: ${section}`,
+          'brand-analysis',
+          viewContext(req)
+        );
+        return;
+      }
+
+      try {
+        const dashboard = await loadBrandAnalysisDashboardSection(client, req.query, section, new Date(), {
+          cache: dashboardSectionCache
+        });
+
+        res
+          .status(200)
+          .type('html')
+          .send(renderBrandAnalysisDashboardSection({ dashboard, section, ...viewContext(req) }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
     '/dashboards/city-analysis',
     requireAuth('city-analysis'),
     asyncRoute(async (req, res) => {
@@ -1949,6 +2027,30 @@ function createApp({
   );
 
   app.post(
+    '/tools/request-report-confirmed-check/status',
+    requireAuth('request-report-matching'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'request-report-matching')) {
+        return;
+      }
+
+      try {
+        const saved = await requestReportShiftStatusStore.setStatus({
+          userId: requestReportStatusUserId(req),
+          rowKey: String((req.body && req.body.rowKey) || ''),
+          status: String((req.body && req.body.status) || '')
+        });
+
+        res.status(200).json(saved);
+      } catch (error) {
+        res.status(400).json({
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.post(
     '/tools/request-report-confirmed-check',
     requireAuth('request-report-matching'),
     asyncRoute(async (req, res) => {
@@ -2028,8 +2130,13 @@ function createApp({
       }
 
       const lookup = await findRequestReportRowsWithoutConfirmedShift(client, parsed.rows);
+      const rowsWithReviewStatuses = await requestReportShiftStatusStore.attachStatuses(
+        requestReportStatusUserId(req),
+        lookup.rows
+      );
       const result = {
         ...lookup,
+        rows: rowsWithReviewStatuses,
         warnings: [
           ...(Array.isArray(parsed.warnings) ? parsed.warnings : []),
           ...(Array.isArray(lookup.warnings) ? lookup.warnings : [])

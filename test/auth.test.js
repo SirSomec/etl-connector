@@ -62,6 +62,8 @@ test('user store exposes env admin and persists managed accounts', async () => {
     assert.equal(hasPermission(envAdmin, 'users'), true);
     assert.equal(ALL_PERMISSION_IDS.includes('sql-inspector'), true);
     assert.equal(hasPermission(envAdmin, 'sql-inspector'), true);
+    assert.equal(ALL_PERMISSION_IDS.includes('brand-analysis'), true);
+    assert.equal(hasPermission(envAdmin, 'brand-analysis'), true);
     assert.equal(ALL_PERMISSION_IDS.includes('preload-admin'), true);
     assert.equal(hasPermission(envAdmin, 'preload-admin'), true);
     await assert.rejects(
@@ -82,6 +84,7 @@ test('user store exposes env admin and persists managed accounts', async () => {
       role: 'analyst',
       permissions: [
         'city-analysis',
+        'brand-analysis',
         'heatmap',
         'worker-cancellations',
         'sql-inspector',
@@ -96,6 +99,7 @@ test('user store exposes env admin and persists managed accounts', async () => {
     assert.equal(created.name, 'Analyst <One>');
     assert.equal(created.role, 'analyst');
     assert.deepEqual(created.permissions, [
+      'brand-analysis',
       'city-analysis',
       'heatmap',
       'worker-cancellations',
@@ -111,6 +115,7 @@ test('user store exposes env admin and persists managed accounts', async () => {
 
     assert.equal(analyst.id, created.id);
     assert.equal(hasPermission(analyst, 'city-analysis'), true);
+    assert.equal(hasPermission(analyst, 'brand-analysis'), true);
     assert.equal(hasPermission(analyst, 'heatmap'), true);
     assert.equal(hasPermission(analyst, 'worker-cancellations'), true);
     assert.equal(hasPermission(analyst, 'sql-inspector'), true);

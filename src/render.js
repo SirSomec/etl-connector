@@ -6,6 +6,9 @@ const {
   getSqlMetricInfo,
   highlightSql
 } = require('./sqlMetricInfo');
+const {
+  REQUEST_REPORT_SHIFT_STATUS_OPTIONS
+} = require('./requestReportShiftStatusStore');
 
 function escapeHtml(value) {
   return String(value)
@@ -34,6 +37,12 @@ const NAV_LINKS = [
     label: 'Продажи по проектам',
     id: 'sales-by-project',
     permission: 'sales-by-project'
+  },
+  {
+    href: '/dashboards/brand-analysis',
+    label: 'Анализ брендов',
+    id: 'brand-analysis',
+    permission: 'brand-analysis'
   },
   {
     href: '/dashboards/workplace-analysis',
@@ -593,6 +602,25 @@ function layout({
       border: 1px solid var(--line);
       border-radius: 6px;
       background: var(--surface);
+    }
+
+    .request-report-filter {
+      margin: 12px 0 10px;
+    }
+
+    .request-report-filter-status {
+      align-self: center;
+      margin-left: auto;
+      font-size: 13px;
+    }
+
+    .request-report-status-cell {
+      min-width: 168px;
+    }
+
+    .request-report-status-select {
+      width: 100%;
+      min-width: 150px;
     }
 
     .auth-page {
@@ -2155,6 +2183,293 @@ function layout({
     .city-series-completed { background: #7f5a83; }
     .city-series-ratio { background: #4b5563; }
 
+    .city-line-chart {
+      display: grid;
+      gap: 12px;
+    }
+
+    .city-line-chart-scroll {
+      overflow-x: auto;
+    }
+
+    .city-line-chart-svg {
+      display: block;
+      width: 100%;
+      min-width: 640px;
+      height: auto;
+    }
+
+    .city-line-grid {
+      stroke: #e5edf2;
+      stroke-width: 1;
+    }
+
+    .city-line-axis {
+      stroke: #b8c5cf;
+      stroke-width: 1.2;
+    }
+
+    .city-line-label {
+      fill: var(--muted);
+      font-size: 11px;
+    }
+
+    .city-line-series {
+      fill: none;
+      stroke-width: 2.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .city-line-point {
+      stroke: var(--surface);
+      stroke-width: 1.4;
+    }
+
+    .city-line-series,
+    .city-line-point,
+    .city-bar-column,
+    .city-line-legend-item,
+    .city-bar-legend-item {
+      transition: opacity 0.16s ease;
+    }
+
+    .city-line-series.city-series-demand { stroke: #256d85; }
+    .city-line-series.city-series-app { stroke: #2f855a; }
+    .city-line-series.city-series-booked { stroke: #b7791f; }
+    .city-line-series.city-series-completed { stroke: #7f5a83; }
+    .city-line-series.city-series-ratio { stroke: #4b5563; }
+
+    .city-line-point.city-series-demand { fill: #256d85; }
+    .city-line-point.city-series-app { fill: #2f855a; }
+    .city-line-point.city-series-booked { fill: #b7791f; }
+    .city-line-point.city-series-completed { fill: #7f5a83; }
+    .city-line-point.city-series-ratio { fill: #4b5563; }
+
+    .city-line-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+    }
+
+    .city-line-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .city-line-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    .city-line-legend-value {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .city-series-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      min-height: 24px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      font-weight: inherit;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    .city-series-toggle:hover,
+    .city-series-toggle:focus-visible,
+    .city-series-toggle[aria-pressed="true"] {
+      color: var(--accent);
+      outline: none;
+    }
+
+    .city-series-toggle:focus-visible {
+      border-radius: 4px;
+      box-shadow: 0 0 0 2px var(--accent-bg), 0 0 0 4px rgba(37, 109, 133, 0.28);
+    }
+
+    [data-city-dynamic-chart][data-city-dynamic-has-selection="1"] [data-city-dynamic-series],
+    [data-city-dynamic-chart][data-city-dynamic-has-selection="1"] [data-city-dynamic-legend-item] {
+      opacity: 0.2;
+    }
+
+    [data-city-dynamic-chart][data-city-dynamic-has-selection="1"] [data-city-dynamic-active="1"] {
+      opacity: 1;
+    }
+
+    .city-chart-variant-tabs {
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .city-chart-variant-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .city-chart-variant-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .city-chart-variant-tab {
+      min-height: 34px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .city-chart-variant-tab:hover {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+    }
+
+    .city-chart-variant-panel {
+      display: none;
+      min-width: 0;
+    }
+
+    #city-dynamics-chart-line:checked ~ .city-chart-variant-list label[for="city-dynamics-chart-line"],
+    #city-dynamics-chart-bar:checked ~ .city-chart-variant-list label[for="city-dynamics-chart-bar"] {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    #city-dynamics-chart-line:focus-visible ~ .city-chart-variant-list label[for="city-dynamics-chart-line"],
+    #city-dynamics-chart-bar:focus-visible ~ .city-chart-variant-list label[for="city-dynamics-chart-bar"] {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    #city-dynamics-chart-line:checked ~ .city-chart-variant-panels .city-chart-variant-panel-line,
+    #city-dynamics-chart-bar:checked ~ .city-chart-variant-panels .city-chart-variant-panel-bar {
+      display: block;
+    }
+
+    .city-bar-chart {
+      display: grid;
+      gap: 12px;
+    }
+
+    .city-bar-chart-scroll {
+      overflow-x: auto;
+    }
+
+    .city-bar-chart-grid {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(74px, 1fr);
+      gap: 8px;
+      min-width: 640px;
+      align-items: end;
+      padding: 8px 4px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .city-bar-day {
+      display: grid;
+      grid-template-rows: 180px auto;
+      gap: 7px;
+      min-width: 0;
+      align-items: end;
+    }
+
+    .city-bar-series {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(7px, 1fr));
+      gap: 3px;
+      height: 180px;
+      align-items: end;
+      padding: 0 2px;
+    }
+
+    .city-bar-column {
+      display: flex;
+      height: 100%;
+      min-width: 7px;
+      align-items: flex-end;
+      overflow: hidden;
+      border-radius: 3px 3px 0 0;
+      background: #edf3f6;
+    }
+
+    .city-bar-fill {
+      display: block;
+      width: 100%;
+      min-height: 2px;
+      border-radius: 3px 3px 0 0;
+    }
+
+    .city-bar-fill-empty {
+      min-height: 0;
+    }
+
+    .city-bar-date {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      overflow: hidden;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .city-bar-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+    }
+
+    .city-bar-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .city-bar-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex: 0 0 auto;
+    }
+
+    .city-bar-legend-value {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
     .city-heatmap-scroll,
     .city-index-scroll {
       overflow-x: auto;
@@ -3045,9 +3360,201 @@ function layout({
   ${content.includes('data-giger-list-modal') ? renderGigerDetailsScript() : ''}
   ${content.includes('data-workplace-point-day-modal') ? renderWorkplacePointDayDetailsScript() : ''}
   ${content.includes('data-workplace-point-review-modal') ? renderWorkplacePointReviewsScript() : ''}
+  ${content.includes('data-request-duration-filter') ? renderRequestReportDurationFilterScript() : ''}
+  ${
+    content.includes('data-city-dynamic-chart') || content.includes('data-city-analysis-progressive')
+      ? renderCityDynamicChartScript()
+      : ''
+  }
   ${content.includes('data-sql-inspector-modal') || canViewSqlInspector(currentUser) ? renderSqlInspectorScript() : ''}
 </body>
 </html>`;
+}
+
+function renderCityDynamicChartScript() {
+  return `<script>
+(function () {
+  function selectedSeries(root) {
+    return (root.getAttribute('data-city-dynamic-selected-series') || '')
+      .split(',')
+      .filter(function (key) {
+        return key !== '';
+      });
+  }
+
+  function setActiveState(elements, selected) {
+    elements.forEach(function (element) {
+      var key = element.getAttribute('data-city-dynamic-series') || element.getAttribute('data-city-dynamic-legend-item') || element.getAttribute('data-city-dynamic-series-toggle');
+      var active = selected.indexOf(key) !== -1;
+
+      if (active) {
+        element.setAttribute('data-city-dynamic-active', '1');
+      } else {
+        element.removeAttribute('data-city-dynamic-active');
+      }
+    });
+  }
+
+  function updateChart(root, selected) {
+    root.setAttribute('data-city-dynamic-selected-series', selected.join(','));
+    root.setAttribute('data-city-dynamic-has-selection', selected.length > 0 ? '1' : '0');
+
+    setActiveState(Array.prototype.slice.call(root.querySelectorAll('[data-city-dynamic-series], [data-city-dynamic-legend-item]')), selected);
+
+    root.querySelectorAll('[data-city-dynamic-series-toggle]').forEach(function (button) {
+      var key = button.getAttribute('data-city-dynamic-series-toggle');
+      var active = selected.indexOf(key) !== -1;
+
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+
+      if (active) {
+        button.setAttribute('data-city-dynamic-active', '1');
+      } else {
+        button.removeAttribute('data-city-dynamic-active');
+      }
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('[data-city-dynamic-series-toggle]') : null;
+
+    if (!button) {
+      return;
+    }
+
+    var root = button.closest('[data-city-dynamic-chart]');
+
+    if (!root) {
+      return;
+    }
+
+    var key = button.getAttribute('data-city-dynamic-series-toggle');
+    var selected = selectedSeries(root);
+    var index = selected.indexOf(key);
+
+    if (index === -1) {
+      selected.push(key);
+    } else {
+      selected.splice(index, 1);
+    }
+
+    updateChart(root, selected);
+  });
+})();
+</script>`;
+}
+
+function renderRequestReportDurationFilterScript() {
+  return `<script>
+(function () {
+  function updateRequestReportFilters(root) {
+    var durationFilter = root.querySelector('[data-request-duration-filter]');
+    var statusFilter = root.querySelector('[data-request-status-filter]');
+    var rows = Array.prototype.slice.call(root.querySelectorAll('[data-request-duration-category]'));
+    var status = root.querySelector('[data-request-duration-filter-status]');
+    var empty = root.querySelector('[data-request-duration-filter-empty]');
+    var selectedDuration = durationFilter ? durationFilter.value : '';
+    var selectedStatus = statusFilter ? statusFilter.value : '';
+    var visible = 0;
+
+    rows.forEach(function (row) {
+      var category = row.getAttribute('data-request-duration-category') || '';
+      var reviewStatus = row.getAttribute('data-request-review-status') || '';
+      var durationVisible = selectedDuration === '' || category === selectedDuration;
+      var statusVisible = selectedStatus === '' || reviewStatus === selectedStatus;
+      var isVisible = durationVisible && statusVisible;
+
+      row.hidden = !isVisible;
+
+      if (isVisible) {
+        visible += 1;
+      }
+    });
+
+    if (status) {
+      status.textContent = 'Показано ' + visible + ' из ' + rows.length;
+    }
+
+    if (empty) {
+      empty.hidden = visible !== 0;
+    }
+  }
+
+  document.addEventListener('change', function (event) {
+    var filter = event.target && event.target.closest
+      ? event.target.closest('[data-request-duration-filter], [data-request-status-filter]')
+      : null;
+
+    if (!filter) {
+      return;
+    }
+
+    var root = filter.closest('[data-request-report-result]');
+
+    if (root) {
+      updateRequestReportFilters(root);
+    }
+  });
+
+  document.addEventListener('change', function (event) {
+    var control = event.target && event.target.closest
+      ? event.target.closest('[data-request-report-status-control]')
+      : null;
+
+    if (!control) {
+      return;
+    }
+
+    var root = control.closest('[data-request-report-result]');
+    var row = control.closest('[data-request-review-status]');
+    var rowKey = control.getAttribute('data-request-report-status-key') || '';
+    var previousStatus = control.getAttribute('data-saved-status') || '';
+    var nextStatus = control.value || '';
+
+    if (!root || !row || !rowKey) {
+      return;
+    }
+
+    row.setAttribute('data-request-review-status', nextStatus);
+    control.disabled = true;
+    updateRequestReportFilters(root);
+
+    var body = new URLSearchParams();
+    body.set('rowKey', rowKey);
+    body.set('status', nextStatus);
+    body.set('csrfToken', root.getAttribute('data-csrf-token') || '');
+
+    fetch(root.getAttribute('data-request-status-url') || '/tools/request-report-confirmed-check/status', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: body.toString()
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error('status save failed');
+      }
+
+      return response.json();
+    }).then(function (payload) {
+      var savedStatus = payload && payload.status ? payload.status : '';
+
+      control.setAttribute('data-saved-status', savedStatus);
+      row.setAttribute('data-request-review-status', savedStatus);
+      control.value = savedStatus;
+      updateRequestReportFilters(root);
+    }).catch(function () {
+      control.value = previousStatus;
+      row.setAttribute('data-request-review-status', previousStatus);
+      updateRequestReportFilters(root);
+    }).finally(function () {
+      control.disabled = false;
+    });
+  });
+
+  document.querySelectorAll('[data-request-report-result]').forEach(updateRequestReportFilters);
+})();
+</script>`;
 }
 
 function renderMultiFilterScript() {
@@ -4931,34 +5438,90 @@ ${body}`;
   });
 }
 
-function renderRequestReportMissingConfirmedRows(rows) {
+function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
   const safeRows = Array.isArray(rows) ? rows : [];
 
   if (safeRows.length === 0) {
     return '<p class="empty">Строк без confirmed-смен не найдено.</p>';
   }
 
+  const statusFilterOptions = REQUEST_REPORT_SHIFT_STATUS_OPTIONS
+    .map((option) => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  const statusControlOptions = (selectedStatus) => [
+    '<option value="">Без статуса</option>',
+    ...REQUEST_REPORT_SHIFT_STATUS_OPTIONS.map((option) => {
+      const selected = option.id === selectedStatus ? ' selected' : '';
+
+      return `<option value="${escapeHtml(option.id)}"${selected}>${escapeHtml(option.label)}</option>`;
+    })
+  ].join('');
   const bodyRows = safeRows
     .map((row) => {
+      const durationText = String(row.actualDuration ?? '');
+      const durationCategory = requestReportDurationCategory(durationText);
+      const reviewStatus = String(row.reviewStatus || '');
+      const reviewStatusKey = String(row.reviewStatusKey || '');
+      const statusDisabled = reviewStatusKey ? '' : ' disabled';
       const actualDuration = row.crmUrl
-        ? `<a href="${escapeHtml(row.crmUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.actualDuration || '')}</a>`
-        : escapeHtml(row.actualDuration || '');
+        ? `<a href="${escapeHtml(row.crmUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(durationText)}</a>`
+        : escapeHtml(durationText);
 
-      return `<tr>
+      return `<tr data-request-duration-category="${escapeHtml(durationCategory)}" data-request-review-status="${escapeHtml(reviewStatus)}">
   <td>${escapeHtml(row.organization || '')}</td>
   <td>${escapeHtml(row.workplace || '')}</td>
   <td>${escapeHtml(row.address || '')}</td>
   <td>${escapeHtml(row.employee || '')}</td>
   <td>${escapeHtml(row.startText || '')}</td>
   <td>${actualDuration}</td>
+  <td class="request-report-status-cell"><select class="request-report-status-select" data-request-report-status-control data-request-report-status-key="${escapeHtml(reviewStatusKey)}" data-saved-status="${escapeHtml(reviewStatus)}"${statusDisabled}>${statusControlOptions(reviewStatus)}</select></td>
 </tr>`;
     })
     .join('');
 
-  return `<div class="table-wrap"><table>
-  <thead><tr><th>Организация</th><th>Рабочая точка</th><th>Адрес</th><th>Сотрудник</th><th>Время с</th><th>Фактическая продолжительность</th></tr></thead>
+  return `<div data-request-report-result data-request-status-url="/tools/request-report-confirmed-check/status" data-csrf-token="${escapeHtml(csrfToken || '')}">
+  <div class="filter-bar request-report-filter">
+    <div class="field filter-field">
+      <label for="requestDurationFilter">Фактическая продолжительность</label>
+      <select id="requestDurationFilter" data-request-duration-filter>
+        <option value="">Все</option>
+        <option value="non-zero">Есть не 0</option>
+        <option value="zero">Есть 0</option>
+        <option value="empty">Нет значения</option>
+        <option value="absence">Есть неявка</option>
+      </select>
+    </div>
+    <div class="field filter-field">
+      <label for="requestReviewStatusFilter">Статус проверки</label>
+      <select id="requestReviewStatusFilter" data-request-status-filter>
+        <option value="">Все</option>
+        ${statusFilterOptions}
+      </select>
+    </div>
+    <p class="technical-note request-report-filter-status" data-request-duration-filter-status>Показано ${escapeHtml(formatNumber(safeRows.length))} из ${escapeHtml(formatNumber(safeRows.length))}</p>
+  </div>
+  <p class="empty" data-request-duration-filter-empty hidden>Нет строк для выбранного фильтра.</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>Организация</th><th>Рабочая точка</th><th>Адрес</th><th>Сотрудник</th><th>Время с</th><th>Фактическая продолжительность за вычетом перерыва</th><th>Статус проверки</th></tr></thead>
   <tbody>${bodyRows}</tbody>
-</table></div>`;
+</table></div>
+</div>`;
+}
+
+function requestReportDurationCategory(value) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+
+  if (/неяв/i.test(text)) {
+    return 'absence';
+  }
+
+  if (text === '') {
+    return 'empty';
+  }
+
+  const number = Number(text.replace(',', '.'));
+
+  return Number.isFinite(number) && number === 0 ? 'zero' : 'non-zero';
 }
 
 function renderRequestReportSummary(summary) {
@@ -4996,7 +5559,7 @@ function renderRequestReportMissingConfirmedPage({
   <h2>Результат${filename ? `: ${escapeHtml(filename)}` : ''}</h2>
   ${renderRequestReportSummary(result.summary)}
   ${renderRequestReportWarnings(result.warnings)}
-  ${renderRequestReportMissingConfirmedRows(result.rows)}
+  ${renderRequestReportMissingConfirmedRows(result.rows, csrfToken)}
 </section>`
     : '';
   const content = `<section class="section">
@@ -5536,6 +6099,284 @@ ${resultsHtml}`;
     database,
     content: fullContent,
     activeNav: 'sales-by-project',
+    currentUser,
+    csrfToken
+  });
+}
+
+function renderBrandOptions(options, selectedId) {
+  const emptySelected = String(selectedId || '') === '' ? ' selected' : '';
+  const rows = [
+    `<option value=""${emptySelected}>Выберите бренд</option>`,
+    ...safeRows(options).map((option) => {
+      const id = String(option.id || '');
+      const selected = id === String(selectedId || '') ? ' selected' : '';
+
+      return `<option value="${escapeHtml(id)}"${selected}>${escapeHtml(option.title || 'Без бренда')}</option>`;
+    })
+  ];
+
+  return rows.join('');
+}
+
+function brandAnalysisSectionUrl(filters, section) {
+  const params = new URLSearchParams();
+
+  params.set('section', section);
+  addDashboardQueryParam(params, 'period', filters.period);
+  addDashboardQueryParam(params, 'from', filters.from);
+  addDashboardQueryParam(params, 'to', filters.to);
+  addDashboardQueryParam(params, 'brandId', filters.brandId);
+
+  return `/dashboards/brand-analysis/section?${params.toString()}`;
+}
+
+function renderBrandAnalysisProgressiveSections(filters) {
+  if (String(filters.brandId || '') === '') {
+    return `<section class="section">
+  <div class="dashboard-empty-state"><p class="empty">Выберите бренд, чтобы загрузить аналитику.</p></div>
+</section>`;
+  }
+
+  return `<div data-dashboard-fragment-url="${escapeHtml(brandAnalysisSectionUrl(filters, 'summary'))}">
+  <section class="section">
+    <h2>Основные показатели</h2>
+    <div class="kpi-grid">
+      ${['Заказано смен', 'Отработано смен', 'SLA', 'Свободный заказ']
+        .map((label) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">Загружается</div></div>`)
+        .join('')}
+    </div>
+  </section>
+</div>
+${renderDashboardLoadingSection({
+  title: 'Динамика',
+  url: brandAnalysisSectionUrl(filters, 'trend')
+})}
+${renderDashboardLoadingSection({
+  title: 'Точки бренда',
+  url: brandAnalysisSectionUrl(filters, 'workplaces')
+})}
+${renderDashboardLoadingSection({
+  title: 'Специальности',
+  url: brandAnalysisSectionUrl(filters, 'professions')
+})}
+${renderDashboardLoadingSection({
+  title: 'Статусы работ',
+  url: brandAnalysisSectionUrl(filters, 'statuses')
+})}`;
+}
+
+function renderBrandAnalysisKpiCards(summary, currentUser) {
+  return renderKpiGrid([
+    { label: 'Заказано смен', value: formatNumber(summary.orderedShifts), metricId: 'brand-analysis.summary.ordered-shifts' },
+    { label: 'Отработано смен', value: formatNumber(summary.workedShifts), metricId: 'brand-analysis.summary.worked-shifts' },
+    { label: 'Закрыто смен', value: formatNumber(summary.coveredShifts), metricId: 'brand-analysis.summary.covered-shifts' },
+    { label: 'Свободный заказ', value: formatNumber(summary.openDemand), metricId: 'brand-analysis.summary.open-demand' },
+    { label: 'SLA', value: formatPercent(summary.slaPercent), metricId: 'brand-analysis.summary.sla' },
+    { label: 'Покрытие', value: formatPercent(summary.coveragePercent), metricId: 'brand-analysis.summary.coverage' },
+    { label: 'Выручка, руб.', value: formatNumber(summary.revenueRub), metricId: 'brand-analysis.summary.revenue-rub' },
+    { label: 'Уникальные исполнители', value: formatNumber(summary.uniqueWorkers), metricId: 'brand-analysis.summary.unique-workers' },
+    { label: 'ТТ с заказами', value: formatNumber(summary.workplacesWithOrders), metricId: 'brand-analysis.summary.workplaces-with-orders' },
+    { label: 'ТТ с выполненными сменами', value: formatNumber(summary.workplacesWithWorkedShifts), metricId: 'brand-analysis.summary.workplaces-with-worked-shifts' },
+    { label: 'Отмены', value: formatNumber(summary.cancelledShifts), metricId: 'brand-analysis.summary.cancelled-shifts' },
+    { label: 'Самоброни', value: formatPercent(summary.selfBookingPercent), metricId: 'brand-analysis.summary.self-booking-percent' },
+    { label: 'Стабильность заказа', value: formatPercent(summary.orderStabilityPercent), metricId: 'brand-analysis.summary.order-stability' },
+    { label: 'Ставка гигера/час', value: formatNumber(summary.avgWorkerRateHour), metricId: 'brand-analysis.summary.avg-worker-rate-hour' },
+    { label: 'Ставка клиента/час', value: formatNumber(summary.avgCustomerRateHour), metricId: 'brand-analysis.summary.avg-customer-rate-hour' }
+  ], currentUser);
+}
+
+function renderBrandTrendRows(rows, currentUser) {
+  const trendRows = safeRows(rows);
+
+  if (trendRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = trendRows
+    .map((row) => `<tr>
+  <td>${escapeHtml(trendRowValue(row, 'period'))}</td>
+  ${numberCell(trendRowNumber(row, 'orderedShifts'), 0, 'brand-analysis.trend.ordered-shifts', currentUser)}
+  ${numberCell(trendRowNumber(row, 'workedShifts'), 0, 'brand-analysis.trend.worked-shifts', currentUser)}
+  ${numberCell(trendRowNumber(row, 'coveredShifts'), 0, 'brand-analysis.trend.covered-shifts', currentUser)}
+  ${numberCell(trendRowNumber(row, 'openDemand'), 0, 'brand-analysis.trend.open-demand', currentUser)}
+  ${percentCell(trendRowNumber(row, 'slaPercent'), 'brand-analysis.trend.sla', currentUser)}
+  ${percentCell(trendRowNumber(row, 'coveragePercent'), 'brand-analysis.trend.coverage', currentUser)}
+  ${numberCell(trendRowNumber(row, 'revenueRub'), 0, 'brand-analysis.trend.revenue-rub', currentUser)}
+  ${numberCell(trendRowNumber(row, 'cancelledShifts'), 0, 'brand-analysis.trend.cancelled-shifts', currentUser)}
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Период</th><th>Заказано</th><th>Отработано</th><th>Закрыто</th><th>Свободно</th><th>SLA</th><th>Покрытие</th><th>Выручка</th><th>Отмены</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderBrandWorkplaceRows(rows, currentUser) {
+  const workplaceRows = safeRows(rows);
+
+  if (workplaceRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = workplaceRows
+    .map((row) => `<tr>
+  <td>${escapeHtml(row.workplaceTitle || 'Без точки')}</td>
+  <td>${escapeHtml(row.city || '')}</td>
+  ${numberCell(row.orderedShifts, 0, 'brand-analysis.workplaces.ordered-shifts', currentUser)}
+  ${numberCell(row.workedShifts, 0, 'brand-analysis.workplaces.worked-shifts', currentUser)}
+  ${percentCell(row.coveragePercent, 'brand-analysis.workplaces.coverage', currentUser)}
+  ${percentCell(row.slaPercent, 'brand-analysis.workplaces.sla', currentUser)}
+  ${numberCell(row.revenueRub, 0, 'brand-analysis.workplaces.revenue-rub', currentUser)}
+  ${numberCell(row.cancelledShifts, 0, 'brand-analysis.workplaces.cancelled-shifts', currentUser)}
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Точка</th><th>Город</th><th>Заказано</th><th>Отработано</th><th>Покрытие</th><th>SLA</th><th>Выручка</th><th>Отмены</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderBrandProfessionRows(rows, currentUser) {
+  const professionRows = safeRows(rows);
+
+  if (professionRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = professionRows
+    .map((row) => `<tr>
+  <td>${escapeHtml(row.profession || 'Без специальности')}</td>
+  ${numberCell(row.orderedShifts, 0, 'brand-analysis.professions.ordered-shifts', currentUser)}
+  ${numberCell(row.workedShifts, 0, 'brand-analysis.professions.worked-shifts', currentUser)}
+  ${percentCell(row.slaPercent, 'brand-analysis.professions.sla', currentUser)}
+  ${numberCell(row.revenueRub, 0, 'brand-analysis.professions.revenue-rub', currentUser)}
+  ${numberCell(row.cancelledShifts, 0, 'brand-analysis.professions.cancelled-shifts', currentUser)}
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Специальность</th><th>Заказано</th><th>Отработано</th><th>SLA</th><th>Выручка</th><th>Отмены</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderBrandStatusRows(rows, currentUser) {
+  const statusRows = safeRows(rows);
+
+  if (statusRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = statusRows
+    .map((row) => `<tr>
+  <td>${escapeHtml(row.status)}</td>
+  ${numberCell(row.shifts, 0, 'brand-analysis.statuses.shifts', currentUser)}
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Статус</th><th>Смены</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderBrandAnalysisDashboardSection({ dashboard, section, currentUser }) {
+  if (section === 'summary') {
+    return `<section class="section">
+  ${renderMetricPanelHead('Основные показатели', 'brand-analysis.summary', currentUser)}
+  ${renderBrandAnalysisKpiCards(dashboard.summary || {}, currentUser)}
+</section>`;
+  }
+
+  if (section === 'trend') {
+    return `<section class="section">
+  ${renderMetricPanelHead('Динамика', 'brand-analysis.trend', currentUser)}
+  ${renderBrandTrendRows(dashboard.trendRows, currentUser)}
+</section>`;
+  }
+
+  if (section === 'workplaces') {
+    return `<section class="section">
+  ${renderMetricPanelHead('Точки бренда', 'brand-analysis.workplaces', currentUser)}
+  ${renderBrandWorkplaceRows(dashboard.workplaceRows, currentUser)}
+</section>`;
+  }
+
+  if (section === 'professions') {
+    return `<section class="section">
+  ${renderMetricPanelHead('Специальности', 'brand-analysis.professions', currentUser)}
+  ${renderBrandProfessionRows(dashboard.professionRows, currentUser)}
+</section>`;
+  }
+
+  if (section === 'statuses') {
+    return `<section class="section">
+  ${renderMetricPanelHead('Статусы работ', 'brand-analysis.statuses', currentUser)}
+  ${renderBrandStatusRows(dashboard.statusRows, currentUser)}
+</section>`;
+  }
+
+  return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
+}
+
+function renderBrandAnalysisDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
+  const filters = dashboard.filters || {};
+  const selectedBrandTitle = dashboard.selectedBrandTitle || '';
+  const period = `${filters.from || ''} - ${filters.to || ''}`;
+  const details = selectedBrandTitle ? [`Бренд: ${selectedBrandTitle}`, `Группировка: ${periodLabel(filters.period)}`] : [`Группировка: ${periodLabel(filters.period)}`];
+  const resultsHtml = progressive
+    ? renderBrandAnalysisProgressiveSections(filters)
+    : `${renderBrandAnalysisDashboardSection({ dashboard, section: 'summary', currentUser })}
+${renderBrandAnalysisDashboardSection({ dashboard, section: 'trend', currentUser })}
+${renderBrandAnalysisDashboardSection({ dashboard, section: 'workplaces', currentUser })}
+${renderBrandAnalysisDashboardSection({ dashboard, section: 'professions', currentUser })}
+${renderBrandAnalysisDashboardSection({ dashboard, section: 'statuses', currentUser })}`;
+  const content = `<section class="section">
+  ${renderDashboardHeader({
+    title: 'Анализ брендов',
+    eyebrow: 'Дашборд',
+    period,
+    details
+  })}
+  <p class="technical-note">Экран показывает один выбранный бренд из mg_clients: плановый заказ, выполнение, покрытие, точки, специальности и статусы смен.</p>
+</section>
+<section class="section">
+  <form class="filter-bar" action="/dashboards/brand-analysis" method="get">
+    <div class="field">
+      <label for="brandId">Бренд</label>
+      <select id="brandId" name="brandId">${renderBrandOptions(dashboard.brandOptions || [], filters.brandId)}</select>
+    </div>
+    <div class="field">
+      <label for="period">Период</label>
+      <select id="period" name="period">${renderPeriodOptions(filters.period)}</select>
+    </div>
+    <div class="field">
+      <label for="from">С</label>
+      <input id="from" name="from" type="date" value="${escapeHtml(filters.from || '')}">
+    </div>
+    <div class="field">
+      <label for="to">По</label>
+      <input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}">
+    </div>
+    <button type="submit">Применить</button>
+  </form>
+</section>
+${resultsHtml}`;
+
+  return layout({
+    title: 'Анализ брендов',
+    database,
+    content,
+    activeNav: 'brand-analysis',
     currentUser,
     csrfToken
   });
@@ -8632,7 +9473,7 @@ function renderCityAnalysisDashboardSection({ dashboard, section, currentUser })
   }
 
   if (section === 'dynamics') {
-    return renderCityDynamics(dashboard.dynamics, currentUser, filters);
+    return renderCityDynamics(dashboard.dynamics, currentUser);
   }
 
   return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
@@ -8714,6 +9555,62 @@ function cityDynamicsMeta(row) {
   return `заказ ${formatNumber(row.orderedShifts)} · входы ${formatNumber(row.appActiveUsers)} · отклики ${formatNumber(row.bookedUsers)} · завершения ${formatNumber(row.completedUsers)} · актив/заявка ${formatNumber(row.activeUsersPerRequest, 1)}`;
 }
 
+const CITY_DYNAMIC_METRICS = [
+  {
+    label: 'Заказ',
+    key: 'orderedShifts',
+    digits: 0,
+    className: 'city-series-demand',
+    lineMetricId: 'city-analysis.dynamics.line-ordered-shifts',
+    barMetricId: 'city-analysis.dynamics.bar-ordered-shifts'
+  },
+  {
+    label: 'Входы',
+    key: 'appActiveUsers',
+    digits: 0,
+    className: 'city-series-app',
+    lineMetricId: 'city-analysis.dynamics.line-app-active-users',
+    barMetricId: 'city-analysis.dynamics.bar-app-active-users'
+  },
+  {
+    label: 'Отклики',
+    key: 'bookedUsers',
+    digits: 0,
+    className: 'city-series-booked',
+    lineMetricId: 'city-analysis.dynamics.line-booked-users',
+    barMetricId: 'city-analysis.dynamics.bar-booked-users'
+  },
+  {
+    label: 'Завершения',
+    key: 'completedUsers',
+    digits: 0,
+    className: 'city-series-completed',
+    lineMetricId: 'city-analysis.dynamics.line-completed-users',
+    barMetricId: 'city-analysis.dynamics.bar-completed-users'
+  },
+  {
+    label: 'Актив/заявка',
+    key: 'activeUsersPerRequest',
+    digits: 1,
+    className: 'city-series-ratio',
+    lineMetricId: 'city-analysis.dynamics.line-active-users-per-request',
+    barMetricId: 'city-analysis.dynamics.bar-active-users-per-request'
+  }
+];
+
+function cityDynamicMetricVariant(metricIdKey) {
+  return CITY_DYNAMIC_METRICS.map((metric) => ({
+    label: metric.label,
+    key: metric.key,
+    digits: metric.digits,
+    className: metric.className,
+    metricId: metric[metricIdKey]
+  }));
+}
+
+const CITY_LINE_DYNAMIC_METRICS = cityDynamicMetricVariant('lineMetricId');
+const CITY_BAR_DYNAMIC_METRICS = cityDynamicMetricVariant('barMetricId');
+
 function cssPercent(value) {
   return escapeHtml(formatNumber(clampPercent(value), 1).replace(',', '.'));
 }
@@ -8724,6 +9621,225 @@ function maxCityDynamicValue(rows, key) {
 
 function cityDynamicWidth(value, maxValue) {
   return maxValue > 0 ? ((Number(value) || 0) / maxValue) * 100 : 0;
+}
+
+function cityLineValue(row, metric) {
+  const value = Number(row[metric.key]);
+
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function cityLineX(index, count, left, width) {
+  if (count <= 1) {
+    return left + width / 2;
+  }
+
+  return left + (width * index) / (count - 1);
+}
+
+function cityLineY(value, maxValue, top, height) {
+  if (maxValue <= 0) {
+    return top + height;
+  }
+
+  return top + (1 - value / maxValue) * height;
+}
+
+function cityLinePoint(value) {
+  return formatNumber(value, 2).replace(',', '.');
+}
+
+function cityLineTickIndexes(rowCount) {
+  if (rowCount <= 8) {
+    return Array.from({ length: rowCount }, (_, index) => index);
+  }
+
+  const lastIndex = rowCount - 1;
+  const indexes = new Set([
+    0,
+    Math.round(lastIndex * 0.25),
+    Math.round(lastIndex * 0.5),
+    Math.round(lastIndex * 0.75),
+    lastIndex
+  ]);
+
+  return Array.from(indexes).sort((left, right) => left - right);
+}
+
+function renderCityLineGrid({ width, height, left, right, top, bottom, rows }) {
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const horizontalLines = [0, 0.25, 0.5, 0.75, 1]
+    .map((ratio) => {
+      const y = top + plotHeight * ratio;
+
+      return `<line class="city-line-grid" x1="${cityLinePoint(left)}" y1="${cityLinePoint(y)}" x2="${cityLinePoint(width - right)}" y2="${cityLinePoint(y)}"></line>`;
+    })
+    .join('');
+  const ticks = cityLineTickIndexes(rows.length)
+    .map((index) => {
+      const x = cityLineX(index, rows.length, left, plotWidth);
+      const label = String(rows[index].period || '').slice(5) || String(rows[index].period || '');
+
+      return `<g>
+  <line class="city-line-grid" x1="${cityLinePoint(x)}" y1="${cityLinePoint(top)}" x2="${cityLinePoint(x)}" y2="${cityLinePoint(top + plotHeight)}"></line>
+  <text class="city-line-label" x="${cityLinePoint(x)}" y="${cityLinePoint(height - 14)}" text-anchor="middle">${escapeHtml(label)}</text>
+</g>`;
+    })
+    .join('');
+
+  return `${horizontalLines}${ticks}
+<line class="city-line-axis" x1="${cityLinePoint(left)}" y1="${cityLinePoint(top + plotHeight)}" x2="${cityLinePoint(width - right)}" y2="${cityLinePoint(top + plotHeight)}"></line>
+<line class="city-line-axis" x1="${cityLinePoint(left)}" y1="${cityLinePoint(top)}" x2="${cityLinePoint(left)}" y2="${cityLinePoint(top + plotHeight)}"></line>`;
+}
+
+function renderCityLineSeries(rows, metric, dimensions) {
+  const maxValue = Math.max(...rows.map((row) => cityLineValue(row, metric)), 0);
+  const points = rows
+    .map((row, index) => {
+      const x = cityLineX(index, rows.length, dimensions.left, dimensions.plotWidth);
+      const y = cityLineY(cityLineValue(row, metric), maxValue, dimensions.top, dimensions.plotHeight);
+
+      return `${cityLinePoint(x)},${cityLinePoint(y)}`;
+    })
+    .join(' ');
+  const pointMarkers = rows
+    .map((row, index) => {
+      const value = cityLineValue(row, metric);
+      const x = cityLineX(index, rows.length, dimensions.left, dimensions.plotWidth);
+      const y = cityLineY(value, maxValue, dimensions.top, dimensions.plotHeight);
+
+      return `<circle class="city-line-point ${escapeHtml(metric.className)}" data-city-dynamic-series="${escapeHtml(metric.key)}" cx="${cityLinePoint(x)}" cy="${cityLinePoint(y)}" r="3.5">
+  <title>${escapeHtml(`${row.period}: ${metric.label} ${formatNumber(value, metric.digits)}`)}</title>
+</circle>`;
+    })
+    .join('');
+
+  return `<polyline class="city-line-series ${escapeHtml(metric.className)}" data-city-dynamic-series="${escapeHtml(metric.key)}" points="${escapeHtml(points)}">
+  <title>${escapeHtml(metric.label)}</title>
+</polyline>${pointMarkers}`;
+}
+
+function renderCityLineLegend(rows, currentUser) {
+  return `<div class="city-line-legend">${CITY_LINE_DYNAMIC_METRICS
+    .map((metric) => {
+      const lastRow = rows[rows.length - 1] || {};
+      const lastValue = cityLineValue(lastRow, metric);
+
+      return renderMetricInfoScope({
+        className: 'city-line-legend-item',
+        metricId: metric.metricId,
+        currentUser,
+        attributes: `data-city-dynamic-legend-item="${escapeHtml(metric.key)}"`,
+        content: `<button type="button" class="city-series-toggle" data-city-dynamic-series-toggle="${escapeHtml(metric.key)}" aria-pressed="false">
+<span class="city-line-swatch ${escapeHtml(metric.className)}"></span>
+<span>${escapeHtml(metric.label)}</span>
+<span class="city-line-legend-value">${escapeHtml(formatNumber(lastValue, metric.digits))}</span>
+</button>`
+      });
+    })
+    .join('')}</div>`;
+}
+
+function renderCityLineChart(rows, currentUser) {
+  if (rows.length === 0) {
+    return `<article class="mini-panel city-line-chart">
+  <h3>По дням</h3>
+  ${renderEmptyDashboardTable()}
+</article>`;
+  }
+
+  const width = 760;
+  const height = 280;
+  const dimensions = {
+    left: 54,
+    right: 24,
+    top: 18,
+    bottom: 44
+  };
+
+  dimensions.plotWidth = width - dimensions.left - dimensions.right;
+  dimensions.plotHeight = height - dimensions.top - dimensions.bottom;
+
+  return `<article class="mini-panel city-line-chart">
+  <h3>По дням</h3>
+  <span hidden>${escapeHtml(rows.map(cityDynamicsMeta).join(' | '))}</span>
+  <div class="city-line-chart-scroll">
+    <svg class="city-line-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Динамика города по показателям">
+      ${renderCityLineGrid({ width, height, rows, ...dimensions })}
+      ${CITY_LINE_DYNAMIC_METRICS.map((metric) => renderCityLineSeries(rows, metric, dimensions)).join('')}
+    </svg>
+  </div>
+  ${renderCityLineLegend(rows, currentUser)}
+</article>`;
+}
+
+function renderCityBarLegend(rows, currentUser) {
+  return `<div class="city-bar-legend">${CITY_BAR_DYNAMIC_METRICS
+    .map((metric) => {
+      const lastRow = rows[rows.length - 1] || {};
+      const lastValue = cityLineValue(lastRow, metric);
+
+      return renderMetricInfoScope({
+        className: 'city-bar-legend-item',
+        metricId: metric.metricId,
+        currentUser,
+        attributes: `data-city-dynamic-legend-item="${escapeHtml(metric.key)}"`,
+        content: `<button type="button" class="city-series-toggle" data-city-dynamic-series-toggle="${escapeHtml(metric.key)}" aria-pressed="false">
+<span class="city-bar-swatch ${escapeHtml(metric.className)}"></span>
+<span>${escapeHtml(metric.label)}</span>
+<span class="city-bar-legend-value">${escapeHtml(formatNumber(lastValue, metric.digits))}</span>
+</button>`
+      });
+    })
+    .join('')}</div>`;
+}
+
+function renderCityBarChart(rows, currentUser) {
+  if (rows.length === 0) {
+    return `<article class="mini-panel city-bar-chart">
+  <h3>По дням</h3>
+  ${renderEmptyDashboardTable()}
+</article>`;
+  }
+
+  const maxByMetric = new Map(
+    CITY_BAR_DYNAMIC_METRICS.map((metric) => [
+      metric.key,
+      Math.max(...rows.map((row) => cityLineValue(row, metric)), 0)
+    ])
+  );
+  const dayColumns = rows
+    .map((row) => {
+      const period = String(row.period || '');
+      const dateLabel = period.slice(5) || period;
+      const columns = CITY_BAR_DYNAMIC_METRICS.map((metric) => {
+        const value = cityLineValue(row, metric);
+        const maxValue = maxByMetric.get(metric.key) || 0;
+        const height = maxValue > 0 ? (value / maxValue) * 100 : 0;
+        const title = `${period}: ${metric.label} ${formatNumber(value, metric.digits)}`;
+        const emptyClass = value > 0 ? '' : ' city-bar-fill-empty';
+
+        return `<div class="city-bar-column" data-city-dynamic-series="${escapeHtml(metric.key)}" title="${escapeHtml(title)}">
+  <span class="city-bar-fill ${escapeHtml(metric.className)}${emptyClass}" style="height: ${cssPercent(height)}%"></span>
+</div>`;
+      }).join('');
+
+      return `<div class="city-bar-day">
+  <span hidden>${escapeHtml(cityDynamicsMeta(row))}</span>
+  <div class="city-bar-series">${columns}</div>
+  <div class="city-bar-date">${escapeHtml(dateLabel)}</div>
+</div>`;
+    })
+    .join('');
+
+  return `<article class="mini-panel city-bar-chart">
+  <h3>По дням</h3>
+  <div class="city-bar-chart-scroll">
+    <div class="city-bar-chart-grid">${dayColumns}</div>
+  </div>
+  ${renderCityBarLegend(rows, currentUser)}
+</article>`;
 }
 
 function cityHeatmapLevel(value, maxValue) {
@@ -9100,59 +10216,26 @@ function renderCityComposition(composition, currentUser) {
 </section>`;
 }
 
-function renderCityDynamics(dynamics, currentUser, filters = {}) {
+function renderCityDynamics(dynamics, currentUser) {
   const rows = safeRows(dynamics).map((row) => ({
     ...row,
     label: row.period
   }));
 
-  if (rows.length === 0) {
-    return `<section class="section">
-  ${renderMetricPanelHead('Динамика', 'city-analysis.dynamics', currentUser)}
-  ${renderMiniBarPanel({
-    title: 'По дням',
-    rows,
-    valueForWidth: (row) => row.orderedShifts,
-    metaForRow: cityDynamicsMeta,
-    metricId: 'city-analysis.dynamics',
-    currentUser
-  })}
-</section>`;
-  }
-
   return `<section class="section">
   ${renderMetricPanelHead('Динамика', 'city-analysis.dynamics', currentUser)}
-  <div class="city-dynamics-tabs">
-    <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-combo" name="city-dynamics-tab" checked>
-    <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-multiples" name="city-dynamics-tab">
-    <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-heatmap" name="city-dynamics-tab">
-    <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-funnel" name="city-dynamics-tab">
-    <input class="city-dynamics-tab-input" type="radio" id="city-dynamics-tab-index" name="city-dynamics-tab">
-    <div class="city-dynamics-tab-list" role="tablist" aria-label="Варианты динамики">
-      <label class="city-dynamics-tab" for="city-dynamics-tab-combo">Спрос vs исполнители</label>
-      <label class="city-dynamics-tab" for="city-dynamics-tab-multiples">Small multiples</label>
-      <label class="city-dynamics-tab" for="city-dynamics-tab-heatmap">Тепловая карта</label>
-      <label class="city-dynamics-tab" for="city-dynamics-tab-funnel">Воронка</label>
-      <label class="city-dynamics-tab" for="city-dynamics-tab-index">Индексы</label>
+  <div class="city-chart-variant-tabs" data-city-dynamic-chart data-city-dynamic-has-selection="0" data-city-dynamic-selected-series="">
+    <input class="city-chart-variant-input" type="radio" id="city-dynamics-chart-line" name="city-dynamics-chart-variant" checked>
+    <input class="city-chart-variant-input" type="radio" id="city-dynamics-chart-bar" name="city-dynamics-chart-variant">
+    <div class="city-chart-variant-list" role="tablist" aria-label="Вариант графика динамики">
+      <label class="city-chart-variant-tab" for="city-dynamics-chart-line">Линии</label>
+      <label class="city-chart-variant-tab" for="city-dynamics-chart-bar">Столбцы</label>
     </div>
-    <div class="city-dynamics-panels">
-      <div class="city-dynamics-panel city-dynamics-panel-combo">${renderCityComboDynamics(rows, currentUser, filters)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-multiples">${renderCitySmallMultiples(rows, currentUser, filters)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-heatmap">${renderCityHeatmap(rows, currentUser)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-funnel">${renderCityFunnel(rows, currentUser, filters)}</div>
-      <div class="city-dynamics-panel city-dynamics-panel-index">${renderCityIndexDynamics(rows, currentUser)}</div>
+    <div class="city-chart-variant-panels">
+      <div class="city-chart-variant-panel city-chart-variant-panel-line">${renderCityLineChart(rows, currentUser)}</div>
+      <div class="city-chart-variant-panel city-chart-variant-panel-bar">${renderCityBarChart(rows, currentUser)}</div>
     </div>
   </div>
-</section>`;
-
-  return `<section class="section">
-  <h2>Динамика</h2>
-  ${renderMiniBarPanel({
-    title: 'По дням',
-    rows,
-    valueForWidth: (row) => row.orderedShifts,
-    metaForRow: cityDynamicsMeta
-  })}
 </section>`;
 }
 
@@ -9175,7 +10258,7 @@ function renderCityAnalysisResultSections(dashboard, currentUser) {
 </section>`
       : '';
 
-  return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition, currentUser)}${renderCityDynamics(dashboard.dynamics, currentUser, filters)}`;
+  return `${noCoordinatesWarning}${renderCityComposition(dashboard.composition, currentUser)}${renderCityDynamics(dashboard.dynamics, currentUser)}`;
 }
 
 function renderCityRankingPeriodForm(filters) {
@@ -9903,6 +10986,8 @@ function renderCityAnalysisDashboardPage(options) {
 module.exports = {
   escapeHtml,
   renderAccountManagement,
+  renderBrandAnalysisDashboard,
+  renderBrandAnalysisDashboardSection,
   renderDashboardSectionError,
   renderError,
   renderGigerDetails,

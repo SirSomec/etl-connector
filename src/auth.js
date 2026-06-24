@@ -34,6 +34,11 @@ const PERMISSION_DEFINITIONS = [
     description: 'Дашборд продаж и выполнения смен по проектам.'
   },
   {
+    id: 'brand-analysis',
+    label: 'Анализ брендов',
+    description: 'Дашборд анализа выбранного бренда, его точек, специальностей и выполнения смен.'
+  },
+  {
     id: 'workplace-analysis',
     label: 'Анализ точек',
     description: 'Дашборды стабильности заказа и детализации рабочих мест.'

@@ -2,6 +2,11 @@ const path = require('node:path');
 
 const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sqlite');
 const DEFAULT_USER_ACTIVITY_STORE_PATH = path.join(process.cwd(), 'data', 'user-activity.sqlite');
+const DEFAULT_REQUEST_REPORT_STATUS_STORE_PATH = path.join(
+  process.cwd(),
+  'data',
+  'request-report-shift-statuses.json'
+);
 
 class ConfigError extends Error {
   constructor(message) {
@@ -88,6 +93,9 @@ function loadConfig(env = process.env) {
     },
     activity: {
       storePath: env.USER_ACTIVITY_STORE_PATH || DEFAULT_USER_ACTIVITY_STORE_PATH
+    },
+    requestReportStatus: {
+      storePath: env.REQUEST_REPORT_STATUS_STORE_PATH || DEFAULT_REQUEST_REPORT_STATUS_STORE_PATH
     },
     auth: {
       enabled: authEnabled,

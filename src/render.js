@@ -623,6 +623,26 @@ function layout({
       min-width: 150px;
     }
 
+    .request-report-row > td {
+      transition: background 160ms ease;
+    }
+
+    .request-report-row-verified > td {
+      background: rgba(34, 197, 94, 0.14);
+    }
+
+    .request-report-row-return-later > td {
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    .request-report-row-verified:hover > td {
+      background: rgba(34, 197, 94, 0.2);
+    }
+
+    .request-report-row-return-later:hover > td {
+      background: rgba(239, 68, 68, 0.18);
+    }
+
     .request-report-progress-panel {
       display: grid;
       gap: 8px;
@@ -3561,6 +3581,21 @@ function renderRequestReportDurationFilterScript() {
     }
   }
 
+  function applyRequestReportReviewStatusStyle(row, status) {
+    if (!row || !row.classList) {
+      return;
+    }
+
+    row.classList.add('request-report-row');
+    row.classList.remove('request-report-row-verified', 'request-report-row-return-later');
+
+    if (status === 'verified') {
+      row.classList.add('request-report-row-verified');
+    } else if (status === 'return-later') {
+      row.classList.add('request-report-row-return-later');
+    }
+  }
+
   function clampPercent(value) {
     var number = Number(value);
 
@@ -3954,6 +3989,7 @@ function renderRequestReportDurationFilterScript() {
     }
 
     row.setAttribute('data-request-review-status', nextStatus);
+    applyRequestReportReviewStatusStyle(row, nextStatus);
     control.disabled = true;
     updateRequestReportFilters(root);
 
@@ -3979,17 +4015,22 @@ function renderRequestReportDurationFilterScript() {
 
       control.setAttribute('data-saved-status', savedStatus);
       row.setAttribute('data-request-review-status', savedStatus);
+      applyRequestReportReviewStatusStyle(row, savedStatus);
       control.value = savedStatus;
       updateRequestReportFilters(root);
     }).catch(function () {
       control.value = previousStatus;
       row.setAttribute('data-request-review-status', previousStatus);
+      applyRequestReportReviewStatusStyle(row, previousStatus);
       updateRequestReportFilters(root);
     }).finally(function () {
       control.disabled = false;
     });
   });
 
+  document.querySelectorAll('[data-request-review-status]').forEach(function (row) {
+    applyRequestReportReviewStatusStyle(row, row.getAttribute('data-request-review-status') || '');
+  });
   document.querySelectorAll('[data-request-report-result]').forEach(updateRequestReportFilters);
 })();
 </script>`;
@@ -5876,6 +5917,20 @@ ${body}`;
   });
 }
 
+function requestReportReviewStatusRowClass(status) {
+  const safeStatus = String(status || '');
+
+  if (safeStatus === 'verified') {
+    return 'request-report-row request-report-row-verified';
+  }
+
+  if (safeStatus === 'return-later') {
+    return 'request-report-row request-report-row-return-later';
+  }
+
+  return 'request-report-row';
+}
+
 function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
   const safeRows = Array.isArray(rows) ? rows : [];
 
@@ -5900,12 +5955,13 @@ function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
       const durationCategory = requestReportDurationCategory(durationText);
       const reviewStatus = String(row.reviewStatus || '');
       const reviewStatusKey = String(row.reviewStatusKey || '');
+      const rowClass = requestReportReviewStatusRowClass(reviewStatus);
       const statusDisabled = reviewStatusKey ? '' : ' disabled';
       const actualDuration = row.crmUrl
         ? `<a href="${escapeHtml(row.crmUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(durationText)}</a>`
         : escapeHtml(durationText);
 
-      return `<tr data-request-duration-category="${escapeHtml(durationCategory)}" data-request-review-status="${escapeHtml(reviewStatus)}">
+      return `<tr class="${escapeHtml(rowClass)}" data-request-duration-category="${escapeHtml(durationCategory)}" data-request-review-status="${escapeHtml(reviewStatus)}">
   <td>${escapeHtml(row.organization || '')}</td>
   <td>${escapeHtml(row.workplace || '')}</td>
   <td>${escapeHtml(row.address || '')}</td>

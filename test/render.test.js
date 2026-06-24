@@ -190,6 +190,10 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
   assert.match(html, /data-request-report-status-key="lkk:101"/);
   assert.match(html, /data-request-review-status="verified"/);
   assert.match(html, /data-request-review-status="return-later"/);
+  assert.match(html, /class="request-report-row request-report-row-verified"/);
+  assert.match(html, /class="request-report-row request-report-row-return-later"/);
+  assert.match(html, /\.request-report-row-verified > td \{\s*background: rgba\(34, 197, 94, 0\.14\);/);
+  assert.match(html, /\.request-report-row-return-later > td \{\s*background: rgba\(239, 68, 68, 0\.12\);/);
   assert.match(html, /data-request-review-status=""/);
   assert.match(html, /option value="verified" selected>Проверена<\/option>/);
   assert.match(html, /option value="return-later" selected>Вернуться позже<\/option>/);

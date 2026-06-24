@@ -23,6 +23,12 @@ const {
   parseRequestsReportWorkbook
 } = require('./requestReportMissingConfirmed');
 const {
+  createRequestReportJobStore
+} = require('./requestReportJobStore');
+const {
+  runRequestReportConfirmedCheckJob
+} = require('./requestReportJobRunner');
+const {
   createRequestReportShiftStatusStore
 } = require('./requestReportShiftStatusStore');
 const {
@@ -453,7 +459,10 @@ function createApp({
   sessionManager = null,
   activityStore = null,
   buildInfo = config && config.app ? config.app : defaultBuildInfo(),
-  now = () => new Date()
+  now = () => new Date(),
+  requestReportJobStore = createRequestReportJobStore({ now: () => now().getTime() }),
+  requestReportJobRunner = runRequestReportConfirmedCheckJob,
+  setImmediateFn = setImmediate
 }) {
   const app = express();
   const database = config.clickhouse.database;
@@ -673,6 +682,12 @@ function createApp({
       );
   }
 
+  function sendJsonError(res, statusCode, message) {
+    res.status(statusCode).json({
+      error: sanitizeForResponse(message, config)
+    });
+  }
+
   function asyncRoute(handler) {
     return (req, res, next) => {
       Promise.resolve(handler(req, res, next)).catch(next);
@@ -793,6 +808,34 @@ function createApp({
     });
   }
 
+  function requireJsonAuth(permission = null) {
+    return asyncRoute(async (req, res, next) => {
+      if (!authEnabled) {
+        next();
+        return;
+      }
+
+      const auth = await loadRequestAuth(req);
+
+      if (!auth) {
+        sendJsonError(res, 401, 'Требуется вход в систему');
+        return;
+      }
+
+      if (passwordChangeRequired(auth.user)) {
+        sendJsonError(res, 403, 'Сначала смените временный пароль.');
+        return;
+      }
+
+      if (permission && !hasPermission(auth.user, permission)) {
+        sendJsonError(res, 403, 'Недостаточно прав для выбранного раздела.');
+        return;
+      }
+
+      next();
+    });
+  }
+
   function requireAdmin() {
     return asyncRoute(async (req, res, next) => {
       if (!authEnabled) {
@@ -842,6 +885,24 @@ function createApp({
     }
 
     sendError(res, 403, 'Forbidden', 'Неверный CSRF-токен', activeNav, viewContext(req));
+
+    return false;
+  }
+
+  function verifyJsonCsrf(req, res) {
+    if (!authEnabled) {
+      return true;
+    }
+
+    try {
+      if (sessions.verifyCsrf(req, String((req.body && req.body.csrfToken) || ''))) {
+        return true;
+      }
+    } catch {
+      // Fall through to a JSON 403 below.
+    }
+
+    sendJsonError(res, 403, 'Неверный CSRF-токен');
 
     return false;
   }
@@ -2060,6 +2121,114 @@ function createApp({
   );
 
   app.post(
+    '/tools/request-report-confirmed-check/jobs',
+    requireJsonAuth('request-report-matching'),
+    asyncRoute(async (req, res) => {
+      let form;
+
+      try {
+        form = await parseMultipartFormData(req, { maxBytes: 10 * 1024 * 1024 });
+      } catch (error) {
+        sendJsonError(res, statusCodeFromError(error), error && error.message);
+        return;
+      }
+
+      req.body = form.fields || {};
+
+      if (!verifyJsonCsrf(req, res)) {
+        return;
+      }
+
+      const file = form.files && form.files.reportFile;
+      const filename = file && file.filename ? file.filename : '';
+
+      if (!file || !file.buffer || file.buffer.length === 0) {
+        sendJsonError(res, 400, 'Выберите XLSX-файл.');
+        return;
+      }
+
+      if (!filename.toLowerCase().endsWith('.xlsx')) {
+        sendJsonError(res, 400, 'Поддерживаются только XLSX-файлы.');
+        return;
+      }
+
+      const job = requestReportJobStore.createJob();
+      const context = viewContext(req);
+      const csrfToken = context.csrfToken || String((form.fields && form.fields.csrfToken) || '');
+      const statusUserId = requestReportStatusUserId(req);
+
+      requestReportJobStore.updateJob(job.id, {
+        status: 'queued',
+        progress: 0,
+        stage: 'Ожидает запуска',
+        detail: 'Файл принят'
+      });
+
+      setImmediateFn(async () => {
+        try {
+          requestReportJobStore.updateJob(job.id, {
+            status: 'running',
+            progress: 0,
+            stage: 'Подготовка',
+            detail: 'Проверка запущена'
+          });
+
+          const html = await requestReportJobRunner({
+            client,
+            file,
+            fileBuffer: file.buffer,
+            filename,
+            csrfToken,
+            statusUserId,
+            attachStatuses: (userId, rows) => requestReportShiftStatusStore.attachStatuses(userId, rows),
+            onProgress: (event = {}) => {
+              requestReportJobStore.updateJob(job.id, {
+                status: 'running',
+                progress: event.progress,
+                stage: event.stage,
+                detail: event.detail,
+                counters: event.counts
+              });
+            }
+          });
+
+          requestReportJobStore.completeJob(job.id, {
+            html,
+            detail: 'Проверка завершена'
+          });
+        } catch (error) {
+          requestReportJobStore.failJob(
+            job.id,
+            sanitizeForResponse(error && error.message, config)
+          );
+        }
+      });
+
+      res.status(202).json({
+        jobId: job.id,
+        id: job.id
+      });
+    })
+  );
+
+  app.get(
+    '/tools/request-report-confirmed-check/jobs/:jobId',
+    requireJsonAuth('request-report-matching'),
+    asyncRoute(async (req, res) => {
+      requestReportJobStore.pruneExpired();
+
+      const snapshot = requestReportJobStore.getSnapshot(req.params.jobId);
+
+      if (!snapshot) {
+        sendJsonError(res, 404, 'Задача проверки не найдена.');
+        return;
+      }
+
+      res.status(200).json(snapshot);
+    })
+  );
+
+  app.post(
     '/tools/request-report-confirmed-check',
     requireAuth('request-report-matching'),
     asyncRoute(async (req, res) => {
@@ -2194,6 +2363,11 @@ function createApp({
 
     const statusCode = statusCodeFromError(error);
     const title = statusCode === 502 ? 'Upstream Error' : STATUS_CODES[statusCode] || 'Bad Request';
+
+    if ((req.path || '').startsWith('/tools/request-report-confirmed-check/jobs')) {
+      sendJsonError(res, statusCode, error && error.message);
+      return;
+    }
 
     sendError(res, statusCode, title, error && error.message, activeNavForPath(req.path), viewContext(req));
   });

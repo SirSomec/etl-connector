@@ -487,6 +487,37 @@ function formBody(values) {
   return params.toString();
 }
 
+function multipartBody({ boundary, fields = {}, files = [] }) {
+  const parts = [];
+
+  for (const [name, value] of Object.entries(fields)) {
+    parts.push(Buffer.from([
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="${name}"`,
+      '',
+      String(value)
+    ].join('\r\n'), 'utf8'));
+  }
+
+  for (const file of files) {
+    parts.push(Buffer.concat([
+      Buffer.from([
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="${file.name}"; filename="${file.filename}"`,
+        `Content-Type: ${file.contentType || 'application/octet-stream'}`,
+        '',
+        ''
+      ].join('\r\n'), 'utf8'),
+      Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer || ''),
+    ]));
+  }
+
+  return Buffer.concat([
+    ...parts.flatMap((part) => [part, Buffer.from('\r\n', 'utf8')]),
+    Buffer.from(`--${boundary}--\r\n`, 'utf8')
+  ]);
+}
+
 function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
 }
@@ -495,6 +526,26 @@ function flushMicrotasks() {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+async function pollRequestReportJob(baseUrl, jobId, { attempts = 10 } = {}) {
+  let lastSnapshot = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await fetch(`${baseUrl}/tools/request-report-confirmed-check/jobs/${encodeURIComponent(jobId)}`);
+    const snapshot = await response.json();
+
+    assert.equal(response.status, 200);
+    lastSnapshot = snapshot;
+
+    if (snapshot.status === 'done' || snapshot.status === 'failed') {
+      return snapshot;
+    }
+
+    await flushMicrotasks();
+  }
+
+  return lastSnapshot;
 }
 
 test('millisecondsUntilNextUtcDay returns delay to next UTC midnight', () => {
@@ -605,6 +656,226 @@ test('request report confirmed check page renders upload form and handles empty 
 
     assert.equal(emptyUpload.response.status, 400);
     assert.match(emptyUpload.text, /Выберите XLSX-файл/);
+  });
+
+  assert.deepEqual(client.calls, []);
+});
+
+test('POST /tools/request-report-confirmed-check/jobs starts async job and exposes completed status', async () => {
+  const client = createFakeClient();
+  const runnerCalls = [];
+  const attached = [];
+  const requestReportShiftStatusStore = {
+    async attachStatuses(userId, rows) {
+      attached.push({ userId, rows });
+
+      return rows.map((row) => ({
+        ...row,
+        reviewStatus: 'verified'
+      }));
+    },
+    async setStatus() {
+      throw new Error('not used');
+    }
+  };
+  const reportBuffer = Buffer.from('xlsx bytes');
+  const boundary = '----request-report-async-boundary';
+  const body = multipartBody({
+    boundary,
+    fields: {
+      csrfToken: ''
+    },
+    files: [
+      {
+        name: 'reportFile',
+        filename: 'requests-report.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: reportBuffer
+      }
+    ]
+  });
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/tools/request-report-confirmed-check/jobs`, {
+        method: 'POST',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`
+        },
+        body
+      });
+      const accepted = await response.json();
+
+      assert.equal(response.status, 202);
+      assert.match(accepted.jobId, /^request-report-/);
+
+      const done = await pollRequestReportJob(baseUrl, accepted.jobId);
+
+      assert.equal(done.status, 'done');
+      assert.equal(done.progress, 100);
+      assert.match(done.html, /async result fragment/);
+      assert.equal(done.detail, 'Проверка завершена');
+      assert.deepEqual(done.counters, {
+        total: 3,
+        processed: 2,
+        missing: 1
+      });
+    },
+    baseConfig(),
+    {
+      requestReportShiftStatusStore,
+      setImmediateFn(callback) {
+        callback();
+      },
+      requestReportJobRunner: async (options) => {
+        runnerCalls.push(options);
+        options.onProgress({
+          status: 'running',
+          progress: 45,
+          stage: 'lookup',
+          detail: 'Проверяем смены',
+          counts: {
+            total: 3,
+            processed: 2,
+            missing: 1
+          }
+        });
+
+        const rows = await options.attachStatuses(options.statusUserId, [{ idLkk: '101' }]);
+
+        assert.equal(rows[0].reviewStatus, 'verified');
+
+        return '<section>async result fragment</section>';
+      }
+    }
+  );
+
+  assert.equal(runnerCalls.length, 1);
+  assert.equal(runnerCalls[0].client, client);
+  assert.equal(runnerCalls[0].filename, 'requests-report.xlsx');
+  assert.equal(runnerCalls[0].statusUserId, 'anonymous');
+  assert.deepEqual(runnerCalls[0].fileBuffer, reportBuffer);
+  assert.deepEqual(runnerCalls[0].file.buffer, reportBuffer);
+  assert.deepEqual(attached, [
+    {
+      userId: 'anonymous',
+      rows: [{ idLkk: '101' }]
+    }
+  ]);
+});
+
+test('POST /tools/request-report-confirmed-check/jobs returns JSON validation errors', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const missingBoundary = '----request-report-missing-file-boundary';
+    const missingFile = await fetch(`${baseUrl}/tools/request-report-confirmed-check/jobs`, {
+      method: 'POST',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${missingBoundary}`
+      },
+      body: multipartBody({
+        boundary: missingBoundary,
+        fields: {
+          csrfToken: ''
+        }
+      })
+    });
+
+    assert.equal(missingFile.status, 400);
+    assert.deepEqual(await missingFile.json(), {
+      error: 'Выберите XLSX-файл.'
+    });
+
+    const nonXlsxBoundary = '----request-report-non-xlsx-boundary';
+    const nonXlsx = await fetch(`${baseUrl}/tools/request-report-confirmed-check/jobs`, {
+      method: 'POST',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${nonXlsxBoundary}`
+      },
+      body: multipartBody({
+        boundary: nonXlsxBoundary,
+        fields: {
+          csrfToken: ''
+        },
+        files: [
+          {
+            name: 'reportFile',
+            filename: 'requests-report.csv',
+            contentType: 'text/csv',
+            buffer: Buffer.from('id,name\n1,test\n')
+          }
+        ]
+      })
+    });
+
+    assert.equal(nonXlsx.status, 400);
+    assert.deepEqual(await nonXlsx.json(), {
+      error: 'Поддерживаются только XLSX-файлы.'
+    });
+  });
+
+  assert.deepEqual(client.calls, []);
+});
+
+test('POST /tools/request-report-confirmed-check/jobs exposes failed snapshot when runner rejects', async () => {
+  const client = createFakeClient();
+  const boundary = '----request-report-async-failure-boundary';
+  const body = multipartBody({
+    boundary,
+    fields: {
+      csrfToken: ''
+    },
+    files: [
+      {
+        name: 'reportFile',
+        filename: 'requests-report.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('xlsx bytes')
+      }
+    ]
+  });
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/tools/request-report-confirmed-check/jobs`, {
+        method: 'POST',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`
+        },
+        body
+      });
+      const accepted = await response.json();
+      const failed = await pollRequestReportJob(baseUrl, accepted.jobId);
+
+      assert.equal(response.status, 202);
+      assert.equal(failed.status, 'failed');
+      assert.equal(failed.progress, 100);
+      assert.equal(failed.error, 'ClickHouse boom');
+      assert.equal(failed.detail, 'ClickHouse boom');
+    },
+    baseConfig(),
+    {
+      requestReportJobRunner: async () => {
+        await flushMicrotasks();
+        throw new Error('ClickHouse boom');
+      }
+    }
+  );
+});
+
+test('GET /tools/request-report-confirmed-check/jobs/:jobId returns JSON 404 for unknown job', async () => {
+  const client = createFakeClient();
+
+  await withServer(client, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/tools/request-report-confirmed-check/jobs/missing-job`);
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), {
+      error: 'Задача проверки не найдена.'
+    });
   });
 
   assert.deepEqual(client.calls, []);

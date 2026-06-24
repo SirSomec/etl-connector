@@ -26,6 +26,14 @@ function calculateEta({ now, startedAt, progress, status }) {
   return Math.max(0, Math.round((elapsedMs * (100 - progress)) / progress));
 }
 
+function normalizeCounters(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return { ...value };
+}
+
 function snapshotJob(job, now) {
   if (!job) {
     return null;
@@ -45,6 +53,7 @@ function snapshotJob(job, now) {
       progress,
       status: job.status
     }),
+    counters: job.counters ? { ...job.counters } : undefined,
     html: job.html,
     error: job.error
   };
@@ -69,6 +78,7 @@ function createRequestReportJobStore({
       progress: 0,
       stage: 'Задача создана',
       detail: '',
+      counters: undefined,
       html: undefined,
       error: undefined
     };
@@ -99,12 +109,13 @@ function createRequestReportJobStore({
     job.progress = clampProgress(patch.progress ?? job.progress);
     job.stage = String(patch.stage ?? job.stage ?? '');
     job.detail = String(patch.detail ?? job.detail ?? '');
+    job.counters = normalizeCounters(patch.counters) || normalizeCounters(patch.counts) || job.counters;
     job.updatedAt = current;
 
     return snapshotJob(job, current);
   }
 
-  function completeJob(id, { html = '', detail = '' } = {}) {
+  function completeJob(id, { html = '', detail = '', counters, counts } = {}) {
     const job = getJob(id);
 
     if (!job) {
@@ -118,6 +129,7 @@ function createRequestReportJobStore({
     job.stage = 'Готово';
     job.detail = String(detail ?? '');
     job.html = String(html ?? '');
+    job.counters = normalizeCounters(counters) || normalizeCounters(counts) || job.counters;
     job.error = undefined;
     job.updatedAt = current;
 

@@ -147,3 +147,27 @@ test('request report job store preserves detail when patch omits it', () => {
   assert.equal(snapshot.progress, 50);
   assert.equal(snapshot.detail, 'Батч 1 из 4');
 });
+
+test('request report job store preserves counters through completion', () => {
+  const store = createRequestReportJobStore();
+  const job = store.createJob();
+  const counters = { total: 10, processed: 5, missing: 2 };
+
+  store.updateJob(job.id, {
+    status: 'running',
+    progress: 50,
+    counts: counters
+  });
+  counters.processed = 99;
+
+  const running = store.getSnapshot(job.id);
+
+  assert.deepEqual(running.counters, { total: 10, processed: 5, missing: 2 });
+
+  store.completeJob(job.id, { html: '<section>Готово</section>' });
+
+  const done = store.getSnapshot(job.id);
+
+  assert.equal(done.status, 'done');
+  assert.deepEqual(done.counters, { total: 10, processed: 5, missing: 2 });
+});

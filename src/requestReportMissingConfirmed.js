@@ -1023,7 +1023,14 @@ function compositeKey(date, time, technicalName) {
 }
 
 function normalizeCompositeEmployee(value) {
-  return normalizeCellText(value).toLowerCase();
+  const text = normalizeCellText(value).toLowerCase();
+  const parts = text.split(' ').filter(Boolean);
+
+  if (parts.length >= 2) {
+    return parts.slice(0, 2).join(' ');
+  }
+
+  return text;
 }
 
 function compositeEmployeeKey(date, time, technicalName, employeeName) {
@@ -1263,6 +1270,12 @@ function normalizedClickHouseTechnicalNameExpression(expression) {
   return `replaceRegexpAll(${normalizedClickHouseTextExpression(expression)}, '^(мк|мм)\\\\s+', '')`;
 }
 
+function normalizedClickHouseEmployeeNameExpression(expression) {
+  const normalized = normalizedClickHouseTextExpression(expression);
+
+  return `arrayStringConcat(arraySlice(splitByChar(' ', ${normalized}), 1, 2), ' ')`;
+}
+
 async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
   const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
@@ -1297,8 +1310,8 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
       ])
       .map((parts) => `(${parts.join(', ')})`)
       .join(', ');
-    const workerNameExpression = normalizedClickHouseTextExpression('wr.full_name');
-    const userNameExpression = normalizedClickHouseTextExpression("concat(toString(u.lastname), ' ', toString(u.firstname), ' ', toString(u.middlename))");
+    const workerNameExpression = normalizedClickHouseEmployeeNameExpression('wr.full_name');
+    const userNameExpression = normalizedClickHouseEmployeeNameExpression("concat(toString(u.lastname), ' ', toString(u.firstname), ' ', toString(u.middlename))");
     const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('w.technical_name');
     const query = [
       'SELECT',
@@ -1390,8 +1403,8 @@ async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, 
       ])
       .map((parts) => `(${parts.join(', ')})`)
       .join(', ');
-    const workerNameExpression = normalizedClickHouseTextExpression('wr.full_name');
-    const userNameExpression = normalizedClickHouseTextExpression("concat(toString(u.lastname), ' ', toString(u.firstname), ' ', toString(u.middlename))");
+    const workerNameExpression = normalizedClickHouseEmployeeNameExpression('wr.full_name');
+    const userNameExpression = normalizedClickHouseEmployeeNameExpression("concat(toString(u.lastname), ' ', toString(u.firstname), ' ', toString(u.middlename))");
     const technicalNameExpression = normalizedClickHouseTechnicalNameExpression('w.technical_name');
     const query = [
       'SELECT',

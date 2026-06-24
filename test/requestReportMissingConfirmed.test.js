@@ -394,7 +394,8 @@ test('findRequestReportRowsWithoutConfirmedShift resolves ambiguous composite fa
   ]);
   assert.match(calls[2].query, /LEFT JOIN mg_workers AS wr/);
   assert.match(calls[2].query, /LEFT JOIN mg_users AS u/);
-  assert.match(calls[2].query, /ляликова мария александровна/);
+  assert.match(calls[2].query, /ляликова мария/);
+  assert.doesNotMatch(calls[2].query, /ляликова мария александровна/);
   assert.deepEqual(result.rows.map((row) => row.idLkk), ['7838734']);
   assert.equal(
     result.rows[0].crmUrl,
@@ -463,6 +464,59 @@ test('findRequestReportRowsWithoutConfirmedShift resolves time mismatch by uniqu
   assert.match(calls[3].query, /GROUP BY start_date, technical_name, employee_name/);
   assert.doesNotMatch(calls[3].query, /start_time/);
   assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.summary, {
+    totalRows: 1,
+    rowsWithId: 1,
+    checkedExternalIds: 1,
+    confirmedRows: 1,
+    missingConfirmedRows: 0
+  });
+});
+
+test('findRequestReportRowsWithoutConfirmedShift matches two-part employee name to full employee name', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'request report confirmed employee date lookup') {
+        return [
+          {
+            start_date: '2026-06-07',
+            technical_name: 'Kazikha',
+            employee_name: 'Galyamov Egor Dmitrievich',
+            resolved_job_id: '6a217d070f9abb8d86537476',
+            resolved_workplace_id: '64c2115d0dfa650008ac1cc1',
+            confirmed_jobs: 1
+          }
+        ];
+      }
+
+      return [];
+    }
+  };
+  const rows = [
+    {
+      idLkk: '7784680',
+      dateFrom: '2026-06-07',
+      startText: '2026-06-07 10:00',
+      timeFrom: '10:00',
+      workplace: 'Kazikha',
+      employee: 'Galyamov Egor'
+    }
+  ];
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, rows, { batchSize: 10 });
+
+  const employeeDateCall = calls.find((call) => call.operation === 'request report confirmed employee date lookup');
+  assert.ok(employeeDateCall);
+  assert.deepEqual(result.rows, []);
+  assert.match(employeeDateCall.query, /arraySlice\(splitByChar/);
+  assert.equal(result.checkedRows[0].matchedShiftId, '6a217d070f9abb8d86537476');
+  assert.equal(
+    result.checkedRows[0].shiftUrl,
+    'https://crm.mygig.ru/coordination?searchDate[]=2026-06-07&searchDate[]=2026-06-07&workplaceIds[]=64c2115d0dfa650008ac1cc1'
+  );
   assert.deepEqual(result.summary, {
     totalRows: 1,
     rowsWithId: 1,

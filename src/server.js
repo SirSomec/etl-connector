@@ -18,6 +18,7 @@ const {
 } = require('./analyticsDomainSql');
 const { parseMultipartFormData } = require('./multipartFormData');
 const {
+  buildRequestReportCheckWorkbook,
   findRequestReportRowsWithoutConfirmedShift,
   parseRequestsReportWorkbook
 } = require('./requestReportMissingConfirmed');
@@ -156,6 +157,14 @@ function sendGigerDetailsWorkbook(res, details, filename) {
     .set('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
     .set('Content-Disposition', `attachment; filename="${filename}"`)
     .send(renderGigerDetailsWorkbook({ details }));
+}
+
+function sendRequestReportCheckWorkbook(res, workbook) {
+  res
+    .status(200)
+    .set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    .set('Content-Disposition', 'attachment; filename="request-report-check.xlsx"')
+    .send(workbook);
 }
 
 function normalizePathForNav(path) {
@@ -2130,8 +2139,25 @@ function createApp({
       }
 
       const lookup = await findRequestReportRowsWithoutConfirmedShift(client, parsed.rows);
+      const action = String((form.fields && form.fields.action) || '');
+      const statusUserId = requestReportStatusUserId(req);
+
+      if (action === 'export') {
+        const checkedRowsWithReviewStatuses = await requestReportShiftStatusStore.attachStatuses(
+          statusUserId,
+          lookup.checkedRows || []
+        );
+        const workbook = buildRequestReportCheckWorkbook({
+          sourceSheet: parsed.sourceSheet,
+          rows: checkedRowsWithReviewStatuses
+        });
+
+        sendRequestReportCheckWorkbook(res, workbook);
+        return;
+      }
+
       const rowsWithReviewStatuses = await requestReportShiftStatusStore.attachStatuses(
-        requestReportStatusUserId(req),
+        statusUserId,
         lookup.rows
       );
       const result = {

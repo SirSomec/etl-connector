@@ -2,8 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildRequestReportCheckWorkbook,
   extractRequestsReportRowsFromSheetRows,
-  findRequestReportRowsWithoutConfirmedShift
+  findRequestReportRowsWithoutConfirmedShift,
+  parseRequestsReportWorkbook
 } = require('../src/requestReportMissingConfirmed');
 
 test('extractRequestsReportRowsFromSheetRows maps request report columns', () => {
@@ -119,7 +121,7 @@ test('findRequestReportRowsWithoutConfirmedShift does not query ClickHouse when 
   });
 });
 
-test('findRequestReportRowsWithoutConfirmedShift uses unique confirmed composite fallback only without direct job', async () => {
+test('findRequestReportRowsWithoutConfirmedShift uses unique confirmed composite fallback without confirmed direct job', async () => {
   const calls = [];
   const client = {
     async queryJSONEachRow(query, params, operation) {
@@ -193,17 +195,17 @@ test('findRequestReportRowsWithoutConfirmedShift uses unique confirmed composite
   ]);
   assert.match(calls[2].query, /any\(workplace_id\) AS resolved_workplace_id/);
   assert.doesNotMatch(calls[2].query, /any\(workplace_id\) AS workplace_id/);
-  assert.deepEqual(result.rows.map((row) => row.idLkk), ['cancelled-id', 'ambiguous-id']);
+  assert.deepEqual(result.rows.map((row) => row.idLkk), ['ambiguous-id']);
   assert.equal(
-    result.rows[1].crmUrl,
+    result.rows[0].crmUrl,
     'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-b'
   );
   assert.deepEqual(result.summary, {
     totalRows: 3,
     rowsWithId: 3,
     checkedExternalIds: 3,
-    confirmedRows: 1,
-    missingConfirmedRows: 2
+    confirmedRows: 2,
+    missingConfirmedRows: 1
   });
 });
 
@@ -277,6 +279,7 @@ test('findRequestReportRowsWithoutConfirmedShift resolves ambiguous composite fa
     'request report confirmed shift lookup',
     'request report confirmed composite lookup',
     'request report confirmed employee composite lookup',
+    'request report confirmed employee date lookup',
     'request report workplace lookup'
   ]);
   assert.match(calls[2].query, /LEFT JOIN mg_workers AS wr/);
@@ -349,6 +352,76 @@ test('findRequestReportRowsWithoutConfirmedShift resolves time mismatch by uniqu
   ]);
   assert.match(calls[3].query, /GROUP BY start_date, technical_name, employee_name/);
   assert.doesNotMatch(calls[3].query, /start_time/);
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.summary, {
+    totalRows: 1,
+    rowsWithId: 1,
+    checkedExternalIds: 1,
+    confirmedRows: 1,
+    missingConfirmedRows: 0
+  });
+});
+
+test('findRequestReportRowsWithoutConfirmedShift uses employee date fallback after ambiguous exact-time workplace match', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'request report confirmed shift lookup') {
+        return [
+          { external_id: '7771582', status: 'cancelled', workplace_id: 'wp-traun' }
+        ];
+      }
+
+      if (operation === 'request report confirmed composite lookup') {
+        return [
+          {
+            start_date: '2026-06-03',
+            start_time: '09:00',
+            technical_name: 'Traun',
+            confirmed_jobs: 2
+          }
+        ];
+      }
+
+      if (operation === 'request report confirmed employee composite lookup') {
+        return [];
+      }
+
+      if (operation === 'request report confirmed employee date lookup') {
+        return [
+          {
+            start_date: '2026-06-03',
+            technical_name: 'Traun',
+            employee_name: 'Magomedova Oksana Anatolyevna',
+            confirmed_jobs: 1
+          }
+        ];
+      }
+
+      return [];
+    }
+  };
+  const rows = [
+    {
+      idLkk: '7771582',
+      dateFrom: '2026-06-03',
+      startText: '2026-06-03 09:00',
+      timeFrom: '09:00',
+      workplace: 'Traun',
+      employee: 'Magomedova Oksana Anatolyevna'
+    }
+  ];
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, rows, { batchSize: 10 });
+
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'request report confirmed shift lookup',
+    'request report confirmed composite lookup',
+    'request report confirmed employee composite lookup',
+    'request report confirmed employee date lookup'
+  ]);
   assert.deepEqual(result.rows, []);
   assert.deepEqual(result.summary, {
     totalRows: 1,
@@ -515,4 +588,124 @@ test('findRequestReportRowsWithoutConfirmedShift normalizes technical name prefi
     confirmedRows: 1,
     missingConfirmedRows: 1
   });
+});
+
+test('findRequestReportRowsWithoutConfirmedShift returns checked rows with matched shift metadata for export', async () => {
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      if (operation === 'request report confirmed shift lookup') {
+        return [
+          {
+            external_id: '101',
+            job_id: 'job-101',
+            status: 'confirmed',
+            workplace_id: 'wp-101'
+          }
+        ];
+      }
+
+      return [];
+    }
+  };
+  const rows = [
+    {
+      sourceRowNumber: 2,
+      idLkk: '101',
+      dateFrom: '2026-06-01',
+      startText: '2026-06-01 09:00',
+      timeFrom: '09:00',
+      workplace: 'Point A'
+    },
+    {
+      sourceRowNumber: 3,
+      idLkk: '102',
+      dateFrom: '2026-06-01',
+      startText: '2026-06-01 10:00',
+      timeFrom: '10:00',
+      workplace: 'Point B'
+    }
+  ];
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, rows, { batchSize: 10 });
+
+  assert.equal(result.checkedRows.length, 2);
+  assert.deepEqual(
+    result.checkedRows.map((row) => ({
+      idLkk: row.idLkk,
+      checkResult: row.checkResult,
+      matchedShiftId: row.matchedShiftId,
+      shiftUrl: row.shiftUrl
+    })),
+    [
+      {
+        idLkk: '101',
+        checkResult: 'confirmed-found',
+        matchedShiftId: 'job-101',
+        shiftUrl: 'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101'
+      },
+      {
+        idLkk: '102',
+        checkResult: 'confirmed-missing',
+        matchedShiftId: '',
+        shiftUrl: ''
+      }
+    ]
+  );
+});
+
+test('buildRequestReportCheckWorkbook preserves source columns and appends check result columns', () => {
+  const workbook = buildRequestReportCheckWorkbook({
+    sourceSheet: {
+      headers: [
+        'ID ЛКК',
+        'Организация',
+        'Рабочая точка',
+        'Адрес',
+        'Сотрудник',
+        'Дата запроса "с"',
+        'Время запроса "с"',
+        'Фактическая продолжительность запроса за вычетом перерыва'
+      ],
+      rows: [
+        {
+          sourceRowNumber: 2,
+          cells: ['101', 'АО "Тандер"', 'Point A', 'Address 1', 'Ivan Ivanov', '2026-06-01', '09:00', '7.5']
+        }
+      ]
+    },
+    rows: [
+      {
+        sourceRowNumber: 2,
+        checkResultLabel: 'Найдена confirmed-смена',
+        matchedShiftId: 'job-101',
+        shiftUrl: 'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101',
+        reviewStatusLabel: 'Проверена'
+      }
+    ]
+  });
+  const parsed = parseRequestsReportWorkbook(workbook);
+  const exportedRow = parsed.sourceSheet.rows[0];
+
+  assert.deepEqual(parsed.sourceSheet.headers.slice(-4), [
+    'Результат проверки',
+    'ID смены если найдена',
+    'Ссылка на смену',
+    'Статус проверки'
+  ]);
+  assert.deepEqual(exportedRow.cells.slice(0, 8), [
+    '101',
+    'АО "Тандер"',
+    'Point A',
+    'Address 1',
+    'Ivan Ivanov',
+    '2026-06-01',
+    '09:00',
+    '7.5'
+  ]);
+  assert.deepEqual(exportedRow.cells.slice(-4), [
+    'Найдена confirmed-смена',
+    'job-101',
+    'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101',
+    'Проверена'
+  ]);
 });

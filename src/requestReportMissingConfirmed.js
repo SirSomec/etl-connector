@@ -5,6 +5,18 @@ const DEFAULT_BATCH_SIZE = 500;
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CRM_COORDINATION_URL = 'https://crm.mygig.ru/coordination';
+const REQUEST_REPORT_EXPORT_HEADERS = [
+  'Результат проверки',
+  'ID смены если найдена',
+  'Ссылка на смену',
+  'Статус проверки'
+];
+const CHECK_RESULT_FOUND = 'confirmed-found';
+const CHECK_RESULT_MISSING = 'confirmed-missing';
+const CHECK_RESULT_LABELS = {
+  [CHECK_RESULT_FOUND]: 'Найдена confirmed-смена',
+  [CHECK_RESULT_MISSING]: 'Confirmed-смена не найдена'
+};
 
 const REPORT_HEADERS = {
   idLkk: ['ID ЛКК'],
@@ -265,6 +277,222 @@ function resolveWorkbookSheetPath(entries) {
   return normalizedTarget;
 }
 
+function crc32(buffer) {
+  let crc = 0xffffffff;
+
+  for (const byte of buffer) {
+    crc ^= byte;
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+
+  return { dosDate, dosTime };
+}
+
+function zipLocalHeader(nameBuffer, data, crc, dateTime) {
+  const header = Buffer.alloc(30);
+
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(0x0800, 6);
+  header.writeUInt16LE(0, 8);
+  header.writeUInt16LE(dateTime.dosTime, 10);
+  header.writeUInt16LE(dateTime.dosDate, 12);
+  header.writeUInt32LE(crc, 14);
+  header.writeUInt32LE(data.length, 18);
+  header.writeUInt32LE(data.length, 22);
+  header.writeUInt16LE(nameBuffer.length, 26);
+  header.writeUInt16LE(0, 28);
+
+  return Buffer.concat([header, nameBuffer, data]);
+}
+
+function zipCentralHeader(nameBuffer, data, crc, offset, dateTime) {
+  const header = Buffer.alloc(46);
+
+  header.writeUInt32LE(0x02014b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(20, 6);
+  header.writeUInt16LE(0x0800, 8);
+  header.writeUInt16LE(0, 10);
+  header.writeUInt16LE(dateTime.dosTime, 12);
+  header.writeUInt16LE(dateTime.dosDate, 14);
+  header.writeUInt32LE(crc, 16);
+  header.writeUInt32LE(data.length, 20);
+  header.writeUInt32LE(data.length, 24);
+  header.writeUInt16LE(nameBuffer.length, 28);
+  header.writeUInt16LE(0, 30);
+  header.writeUInt16LE(0, 32);
+  header.writeUInt16LE(0, 34);
+  header.writeUInt16LE(0, 36);
+  header.writeUInt32LE(0, 38);
+  header.writeUInt32LE(offset, 42);
+
+  return Buffer.concat([header, nameBuffer]);
+}
+
+function zipEndOfCentralDirectory(entryCount, centralSize, centralOffset) {
+  const footer = Buffer.alloc(22);
+
+  footer.writeUInt32LE(0x06054b50, 0);
+  footer.writeUInt16LE(0, 4);
+  footer.writeUInt16LE(0, 6);
+  footer.writeUInt16LE(entryCount, 8);
+  footer.writeUInt16LE(entryCount, 10);
+  footer.writeUInt32LE(centralSize, 12);
+  footer.writeUInt32LE(centralOffset, 16);
+  footer.writeUInt16LE(0, 20);
+
+  return footer;
+}
+
+function buildZip(entries) {
+  const dateTime = dosDateTime();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBuffer = Buffer.from(entry.name, 'utf8');
+    const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(String(entry.data), 'utf8');
+    const crc = crc32(data);
+    const localHeader = zipLocalHeader(nameBuffer, data, crc, dateTime);
+    const centralHeader = zipCentralHeader(nameBuffer, data, crc, offset, dateTime);
+
+    localParts.push(localHeader);
+    centralParts.push(centralHeader);
+    offset += localHeader.length;
+  }
+
+  const centralOffset = offset;
+  const centralDirectory = Buffer.concat(centralParts);
+  const footer = zipEndOfCentralDirectory(entries.length, centralDirectory.length, centralOffset);
+
+  return Buffer.concat([...localParts, centralDirectory, footer]);
+}
+
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function columnName(index) {
+  let value = index + 1;
+  let name = '';
+
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+
+    name = String.fromCharCode(65 + remainder) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+
+  return name || 'A';
+}
+
+function worksheetCellXml(value, rowNumber, columnIndex) {
+  const ref = `${columnName(columnIndex)}${rowNumber}`;
+  const text = escapeXml(value);
+
+  return `<c r="${ref}" t="inlineStr"><is><t>${text}</t></is></c>`;
+}
+
+function worksheetRowXml(cells, rowNumber) {
+  return `<row r="${rowNumber}">${cells.map((cell, index) => worksheetCellXml(cell, rowNumber, index)).join('')}</row>`;
+}
+
+function workbookXmlRows(rows) {
+  return rows.map((cells, index) => worksheetRowXml(cells, index + 1)).join('');
+}
+
+function buildXlsxWorkbook(rows, sheetName = 'Запросы') {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const columnCount = safeRows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 1);
+  const rowCount = Math.max(safeRows.length, 1);
+  const dimension = `A1:${columnName(columnCount - 1)}${rowCount}`;
+  const sheetRows = safeRows.length > 0 ? workbookXmlRows(safeRows) : worksheetRowXml([''], 1);
+  const worksheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="${dimension}"/>
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <sheetData>${sheetRows}</sheetData>
+</worksheet>`;
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="${escapeXml(sheetName)}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`;
+
+  return buildZip([
+    {
+      name: '[Content_Types].xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`
+    },
+    {
+      name: '_rels/.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`
+    },
+    {
+      name: 'xl/workbook.xml',
+      data: workbookXml
+    },
+    {
+      name: 'xl/_rels/workbook.xml.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`
+    },
+    {
+      name: 'xl/worksheets/sheet1.xml',
+      data: worksheetXml
+    },
+    {
+      name: 'docProps/core.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:creator>ETL Analytics</dc:creator>
+  <cp:lastModifiedBy>ETL Analytics</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:modified>
+</cp:coreProperties>`
+    },
+    {
+      name: 'docProps/app.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>ETL Analytics</Application>
+</Properties>`
+    }
+  ]);
+}
+
 function parseRequestsReportWorkbook(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error('Загруженный файл пустой.');
@@ -399,6 +627,34 @@ function reportRowValue(row, columnIndex) {
   return columnIndex >= 0 ? row[columnIndex] : '';
 }
 
+function sourceCellValue(row, index, columnIndexes) {
+  const value = reportRowValue(row, index);
+
+  if (index === columnIndexes.dateFrom) {
+    return formatExcelDateValue(value);
+  }
+
+  if (index === columnIndexes.timeFrom) {
+    return formatExcelTimeValue(value);
+  }
+
+  if (index === columnIndexes.actualDuration) {
+    return formatDurationValue(value);
+  }
+
+  return normalizeCellText(value);
+}
+
+function sourceCellsForRow(row, columnIndexes, columnCount) {
+  const cells = [];
+
+  for (let index = 0; index < columnCount; index += 1) {
+    cells.push(sourceCellValue(row, index, columnIndexes));
+  }
+
+  return cells;
+}
+
 function extractRequestsReportRowsFromSheetRows(sheetRows) {
   const header = findHeaderRow(Array.isArray(sheetRows) ? sheetRows : []);
 
@@ -424,7 +680,10 @@ function extractRequestsReportRowsFromSheetRows(sheetRows) {
   }
 
   const rows = [];
+  const sourceRows = [];
   const warnings = [];
+  const sourceHeaders = sourceCellsForRow(sheetRows[header.rowIndex] || [], columnIndexes, (sheetRows[header.rowIndex] || []).length);
+  const sourceColumnCount = sourceHeaders.length;
 
   for (let index = header.rowIndex + 1; index < sheetRows.length; index += 1) {
     const source = sheetRows[index] || [];
@@ -436,9 +695,10 @@ function extractRequestsReportRowsFromSheetRows(sheetRows) {
     const dateFrom = formatExcelDateValue(reportRowValue(source, columnIndexes.dateFrom));
     const timeFrom = formatExcelTimeValue(reportRowValue(source, columnIndexes.timeFrom));
     const startText = [dateFrom, timeFrom].filter(Boolean).join(' ');
+    const sourceRowNumber = index + 1;
 
     rows.push({
-      sourceRowNumber: index + 1,
+      sourceRowNumber,
       idLkk: normalizeExternalId(reportRowValue(source, columnIndexes.idLkk)),
       organization: normalizeCellText(reportRowValue(source, columnIndexes.organization)),
       workplace: normalizeCellText(reportRowValue(source, columnIndexes.workplace)),
@@ -449,13 +709,24 @@ function extractRequestsReportRowsFromSheetRows(sheetRows) {
       startText,
       actualDuration: formatDurationValue(reportRowValue(source, columnIndexes.actualDuration))
     });
+    sourceRows.push({
+      sourceRowNumber,
+      cells: sourceCellsForRow(source, columnIndexes, sourceColumnCount)
+    });
   }
 
   if (rows.length === 0) {
     warnings.push('В отчете не найдено строк с запросами после строки заголовков.');
   }
 
-  return { rows, warnings };
+  return {
+    rows,
+    warnings,
+    sourceSheet: {
+      headers: sourceHeaders,
+      rows: sourceRows
+    }
+  };
 }
 
 function uniqueExternalIds(rows) {
@@ -517,6 +788,29 @@ function buildConfirmedExternalIdSet(jobs) {
   return confirmed;
 }
 
+function buildConfirmedJobByExternalId(jobs) {
+  const confirmed = new Map();
+
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    if (String(job && job.status).toLowerCase() !== 'confirmed') {
+      continue;
+    }
+
+    const externalId = normalizeExternalId(job && job.external_id);
+
+    if (!externalId || confirmed.has(externalId)) {
+      continue;
+    }
+
+    confirmed.set(externalId, {
+      jobId: normalizeCellText(job && job.job_id),
+      workplaceId: normalizeCellText(job && job.workplace_id)
+    });
+  }
+
+  return confirmed;
+}
+
 function groupJobsByExternalId(jobs) {
   const grouped = new Map();
 
@@ -542,12 +836,6 @@ function uniqueWorkplaceIdFromJobs(jobs) {
     .filter(Boolean))];
 
   return workplaceIds.length === 1 ? workplaceIds[0] : '';
-}
-
-function buildDirectExternalIdSet(jobs) {
-  return new Set((Array.isArray(jobs) ? jobs : [])
-    .map((job) => normalizeExternalId(job && job.external_id))
-    .filter(Boolean));
 }
 
 function normalizeCompositeDate(value) {
@@ -733,7 +1021,7 @@ function uniqueWorkplaceDateCandidates(rows) {
 
 async function loadConfirmedCompositeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
   const uniqueKeys = new Set();
-  const matchedKeys = new Set();
+  const uniqueMatches = new Map();
 
   for (const batch of chunkValues(candidates, batchSize)) {
     const tuplesSql = batch
@@ -745,9 +1033,13 @@ async function loadConfirmedCompositeKeys(client, candidates, batchSize = DEFAUL
       '  start_date,',
       '  start_time,',
       '  technical_name,',
+      '  any(job_id) AS job_id,',
+      '  any(workplace_id) AS workplace_id,',
       '  count() AS confirmed_jobs',
       'FROM (',
       '  SELECT',
+      '    toString(j._id) AS job_id,',
+      '    toString(j.workplace) AS workplace_id,',
       '    toString(toDate(j.start)) AS start_date,',
       '    left(toString(j.start_time), 5) AS start_time,',
       `    ${technicalNameExpression} AS technical_name`,
@@ -768,17 +1060,17 @@ async function loadConfirmedCompositeKeys(client, candidates, batchSize = DEFAUL
         normalizeTechnicalName(row.technical_name)
       );
 
-      if (key) {
-        matchedKeys.add(key);
-      }
-
       if (Number(row && row.confirmed_jobs) === 1) {
         uniqueKeys.add(key);
+        uniqueMatches.set(key, {
+          jobId: normalizeCellText(row && row.job_id),
+          workplaceId: normalizeCellText(row && row.workplace_id)
+        });
       }
     }
   }
 
-  return { uniqueKeys, matchedKeys };
+  return { uniqueKeys, uniqueMatches };
 }
 
 function normalizedClickHouseTextExpression(expression) {
@@ -790,7 +1082,7 @@ function normalizedClickHouseTechnicalNameExpression(expression) {
 }
 
 async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
-  const keys = new Set();
+  const keys = new Map();
 
   for (const batch of chunkValues(candidates, batchSize)) {
     const tuplesSql = batch
@@ -811,10 +1103,13 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
       '  start_time,',
       '  technical_name,',
       '  employee_name,',
+      '  any(job_id) AS resolved_job_id,',
+      '  any(workplace_id) AS resolved_workplace_id,',
       '  uniqExact(job_id) AS confirmed_jobs',
       'FROM (',
       '  SELECT',
       '    toString(j._id) AS job_id,',
+      '    toString(j.workplace) AS workplace_id,',
       '    toString(toDate(j.start)) AS start_date,',
       '    left(toString(j.start_time), 5) AS start_time,',
       `    ${technicalNameExpression} AS technical_name,`,
@@ -834,12 +1129,17 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
 
     for (const row of rows) {
       if (Number(row && row.confirmed_jobs) === 1) {
-        keys.add(compositeEmployeeKey(
+        const key = compositeEmployeeKey(
           normalizeCompositeDate(row.start_date),
           normalizeCompositeTime(row.start_time),
           normalizeTechnicalName(row.technical_name),
           normalizeCompositeEmployee(row.employee_name)
-        ));
+        );
+
+        keys.set(key, {
+          jobId: normalizeCellText(row && row.resolved_job_id),
+          workplaceId: normalizeCellText(row && row.resolved_workplace_id)
+        });
       }
     }
   }
@@ -848,7 +1148,7 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
 }
 
 async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, batchSize = DEFAULT_BATCH_SIZE) {
-  const keys = new Set();
+  const keys = new Map();
 
   for (const batch of chunkValues(candidates, batchSize)) {
     const tuplesSql = batch
@@ -867,10 +1167,13 @@ async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, 
       '  start_date,',
       '  technical_name,',
       '  employee_name,',
+      '  any(job_id) AS resolved_job_id,',
+      '  any(workplace_id) AS resolved_workplace_id,',
       '  uniqExact(job_id) AS confirmed_jobs',
       'FROM (',
       '  SELECT',
       '    toString(j._id) AS job_id,',
+      '    toString(j.workplace) AS workplace_id,',
       '    toString(toDate(j.start)) AS start_date,',
       `    ${technicalNameExpression} AS technical_name,`,
       `    arrayJoin([${workerNameExpression}, ${userNameExpression}]) AS employee_name`,
@@ -889,11 +1192,16 @@ async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, 
 
     for (const row of rows) {
       if (Number(row && row.confirmed_jobs) === 1) {
-        keys.add(compositeEmployeeDateKey(
+        const key = compositeEmployeeDateKey(
           normalizeCompositeDate(row.start_date),
           normalizeTechnicalName(row.technical_name),
           normalizeCompositeEmployee(row.employee_name)
-        ));
+        );
+
+        keys.set(key, {
+          jobId: normalizeCellText(row && row.resolved_job_id),
+          workplaceId: normalizeCellText(row && row.resolved_workplace_id)
+        });
       }
     }
   }
@@ -1022,27 +1330,27 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
     ? await loadJobsForExternalIds(client, externalIds, batchSize)
     : [];
   const confirmedExternalIds = buildConfirmedExternalIdSet(jobs);
-  const directExternalIds = buildDirectExternalIdSet(jobs);
+  const confirmedJobByExternalId = buildConfirmedJobByExternalId(jobs);
   const jobsByExternalId = groupJobsByExternalId(jobs);
   const rowsForCompositeFallback = safeRows.filter((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
 
-    return !externalId || !directExternalIds.has(externalId);
+    return !externalId || !confirmedExternalIds.has(externalId);
   });
   const compositeCandidates = uniqueCompositeCandidates(rowsForCompositeFallback);
   const confirmedCompositeKeys = compositeCandidates.length > 0
     ? await loadConfirmedCompositeKeys(client, compositeCandidates, batchSize)
-    : { uniqueKeys: new Set(), matchedKeys: new Set() };
+    : { uniqueKeys: new Set(), uniqueMatches: new Map() };
   const uniqueConfirmedCompositeKeys = confirmedCompositeKeys.uniqueKeys;
-  const matchedConfirmedCompositeKeys = confirmedCompositeKeys.matchedKeys;
+  const uniqueConfirmedCompositeMatches = confirmedCompositeKeys.uniqueMatches || new Map();
   const compositeEmployeeCandidates = uniqueCompositeEmployeeCandidates(rowsForCompositeFallback);
   const uniqueConfirmedCompositeEmployeeKeys = compositeEmployeeCandidates.length > 0
     ? await loadUniqueConfirmedCompositeEmployeeKeys(client, compositeEmployeeCandidates, batchSize)
-    : new Set();
+    : new Map();
   const rowsForCompositeEmployeeDateFallback = rowsForCompositeFallback.filter((row) => {
     const candidate = compositeCandidateForRow(row);
 
-    if (candidate && (uniqueConfirmedCompositeKeys.has(candidate.key) || matchedConfirmedCompositeKeys.has(candidate.key))) {
+    if (candidate && uniqueConfirmedCompositeKeys.has(candidate.key)) {
       return false;
     }
 
@@ -1057,16 +1365,12 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
   const compositeEmployeeDateCandidates = uniqueCompositeEmployeeDateCandidates(rowsForCompositeEmployeeDateFallback);
   const uniqueConfirmedCompositeEmployeeDateKeys = compositeEmployeeDateCandidates.length > 0
     ? await loadUniqueConfirmedCompositeEmployeeDateKeys(client, compositeEmployeeDateCandidates, batchSize)
-    : new Set();
+    : new Map();
   const missingRows = safeRows.filter((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
 
     if (confirmedExternalIds.has(externalId)) {
       return false;
-    }
-
-    if (externalId && directExternalIds.has(externalId)) {
-      return true;
     }
 
     const candidate = compositeCandidateForRow(row);
@@ -1115,10 +1419,32 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
 
     return addCrmUrl(row, directWorkplaceId || fallbackWorkplaceId || fallbackWorkplaceIdByDate);
   });
+  const checkedRows = safeRows.map((row) => {
+    const externalId = normalizeExternalId(row && row.idLkk);
+    const candidate = compositeCandidateForRow(row);
+    const employeeCandidate = compositeEmployeeCandidateForRow(row);
+    const employeeDateCandidate = compositeEmployeeDateCandidateForRow(row);
+    const match = confirmedJobByExternalId.get(externalId)
+      || (candidate && uniqueConfirmedCompositeMatches.get(candidate.key))
+      || (employeeCandidate && uniqueConfirmedCompositeEmployeeKeys.get(employeeCandidate.key))
+      || (employeeDateCandidate && uniqueConfirmedCompositeEmployeeDateKeys.get(employeeDateCandidate.key))
+      || null;
+    const checkResult = match ? CHECK_RESULT_FOUND : CHECK_RESULT_MISSING;
+    const shiftUrl = match ? crmCoordinationUrl(row && row.startText, match.workplaceId) : '';
+
+    return {
+      ...row,
+      checkResult,
+      checkResultLabel: CHECK_RESULT_LABELS[checkResult],
+      matchedShiftId: match ? normalizeCellText(match.jobId) : '',
+      shiftUrl
+    };
+  });
   const confirmedRows = safeRows.length - missingRows.length;
 
   return {
     rows: enrichedMissingRows,
+    checkedRows,
     summary: {
       totalRows: safeRows.length,
       rowsWithId: safeRows.filter((row) => normalizeExternalId(row && row.idLkk)).length,
@@ -1129,7 +1455,40 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
   };
 }
 
+function buildRequestReportCheckWorkbook(input = {}) {
+  const sourceSheet = input.sourceSheet || {};
+  const sourceHeaders = Array.isArray(sourceSheet.headers) ? sourceSheet.headers : [];
+  const sourceRows = Array.isArray(sourceSheet.rows) ? sourceSheet.rows : [];
+  const checkedRows = new Map(
+    (Array.isArray(input.rows) ? input.rows : [])
+      .map((row) => [Number(row && row.sourceRowNumber), row])
+      .filter(([sourceRowNumber]) => Number.isFinite(sourceRowNumber))
+  );
+  const workbookRows = [
+    [...sourceHeaders.map(normalizeCellText), ...REQUEST_REPORT_EXPORT_HEADERS]
+  ];
+
+  for (const sourceRow of sourceRows) {
+    const row = checkedRows.get(Number(sourceRow && sourceRow.sourceRowNumber)) || {};
+    const checkResult = normalizeCellText(row.checkResult);
+    const checkResultLabel = normalizeCellText(row.checkResultLabel)
+      || CHECK_RESULT_LABELS[checkResult]
+      || '';
+
+    workbookRows.push([
+      ...(Array.isArray(sourceRow && sourceRow.cells) ? sourceRow.cells.map(normalizeCellText) : []),
+      checkResultLabel,
+      normalizeCellText(row.matchedShiftId),
+      normalizeCellText(row.shiftUrl),
+      normalizeCellText(row.reviewStatusLabel || row.reviewStatus)
+    ]);
+  }
+
+  return buildXlsxWorkbook(workbookRows);
+}
+
 module.exports = {
+  buildRequestReportCheckWorkbook,
   extractRequestsReportRowsFromSheetRows,
   findRequestReportRowsWithoutConfirmedShift,
   parseRequestsReportWorkbook

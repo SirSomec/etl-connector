@@ -5571,7 +5571,8 @@ function renderRequestReportMissingConfirmedPage({
       <label for="reportFile">Файл отчета</label>
       <input id="reportFile" name="reportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
     </div>
-    <button type="submit">Проверить</button>
+    <button type="submit" name="action" value="check">Проверить</button>
+    <button type="submit" name="action" value="export">Проверить и скачать Excel</button>
   </form>
 </section>
 ${resultHtml}`;

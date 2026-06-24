@@ -143,6 +143,8 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
 
   assert.match(html, /action="\/tools\/request-report-confirmed-check"/);
   assert.match(html, /enctype="multipart\/form-data"/);
+  assert.match(html, /name="action" value="export"/);
+  assert.match(html, /Проверить и скачать Excel/);
   assert.match(html, /name="csrfToken" value="csrf-token"/);
   assert.match(html, /Организация/);
   assert.match(html, /Рабочая точка/);

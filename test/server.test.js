@@ -6,6 +6,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
+  buildRequestReportCheckWorkbook,
+  parseRequestsReportWorkbook
+} = require('../src/requestReportMissingConfirmed');
+
+const {
   activeNavForPath,
   createApp,
   millisecondsUntilNextUtcDay,
@@ -603,6 +608,126 @@ test('request report confirmed check page renders upload form and handles empty 
   });
 
   assert.deepEqual(client.calls, []);
+});
+
+test('POST /tools/request-report-confirmed-check exports checked report as xlsx', async () => {
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'request report confirmed shift lookup') {
+        return [
+          {
+            external_id: '101',
+            job_id: 'job-101',
+            status: 'confirmed',
+            workplace_id: 'wp-101'
+          }
+        ];
+      }
+
+      return [];
+    }
+  });
+  const requestReportShiftStatusStore = {
+    async attachStatuses(userId, rows) {
+      return rows.map((row) => ({
+        ...row,
+        reviewStatusKey: `lkk:${row.idLkk}`,
+        reviewStatus: 'verified',
+        reviewStatusLabel: 'Проверена'
+      }));
+    },
+    async setStatus() {
+      throw new Error('not used');
+    }
+  };
+  const workbook = buildRequestReportCheckWorkbook({
+    sourceSheet: {
+      headers: [
+        'ID ЛКК',
+        'Организация',
+        'Рабочая точка',
+        'Адрес',
+        'Сотрудник',
+        'Дата запроса "с"',
+        'Время запроса "с"',
+        'Фактическая продолжительность запроса за вычетом перерыва'
+      ],
+      rows: [
+        {
+          sourceRowNumber: 2,
+          cells: ['101', 'АО "Тандер"', 'Point A', 'Address 1', 'Ivan Ivanov', '2026-06-01', '09:00', '7.5']
+        }
+      ]
+    },
+    rows: [
+      {
+        sourceRowNumber: 2,
+        checkResultLabel: '',
+        matchedShiftId: '',
+        shiftUrl: '',
+        reviewStatusLabel: ''
+      }
+    ]
+  });
+  const boundary = '----request-report-export-boundary';
+  const body = Buffer.concat([
+    Buffer.from([
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="csrfToken"',
+      '',
+      '',
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="action"',
+      '',
+      'export',
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="reportFile"; filename="requests-report.xlsx"',
+      'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '',
+      ''
+    ].join('\r\n'), 'utf8'),
+    workbook,
+    Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+  ]);
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/tools/request-report-confirmed-check`, {
+        method: 'POST',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`
+        },
+        body
+      });
+      const output = Buffer.from(await response.arrayBuffer());
+      const parsed = parseRequestsReportWorkbook(output);
+      const row = parsed.sourceSheet.rows[0];
+
+      assert.equal(response.status, 200);
+      assert.match(
+        response.headers.get('content-type'),
+        /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet\b/
+      );
+      assert.match(response.headers.get('content-disposition'), /attachment; filename="request-report-check\.xlsx"/);
+      assert.deepEqual(parsed.sourceSheet.headers.slice(-4), [
+        'Результат проверки',
+        'ID смены если найдена',
+        'Ссылка на смену',
+        'Статус проверки'
+      ]);
+      assert.deepEqual(row.cells.slice(-4), [
+        'Найдена confirmed-смена',
+        'job-101',
+        'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101',
+        'Проверена'
+      ]);
+    },
+    baseConfig(),
+    { requestReportShiftStatusStore }
+  );
 });
 
 test('POST /tools/request-report-confirmed-check/status saves row status for current user', async () => {

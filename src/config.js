@@ -7,6 +7,16 @@ const DEFAULT_REQUEST_REPORT_STATUS_STORE_PATH = path.join(
   'data',
   'request-report-shift-statuses.json'
 );
+const DEFAULT_SCHEDULED_REPORT_STORE_PATH = path.join(
+  process.cwd(),
+  'data',
+  'scheduled-reports.sqlite'
+);
+const DEFAULT_SCHEDULED_REPORT_FILE_DIR = path.join(
+  process.cwd(),
+  'data',
+  'scheduled-report-files'
+);
 
 class ConfigError extends Error {
   constructor(message) {
@@ -96,6 +106,15 @@ function loadConfig(env = process.env) {
     },
     requestReportStatus: {
       storePath: env.REQUEST_REPORT_STATUS_STORE_PATH || DEFAULT_REQUEST_REPORT_STATUS_STORE_PATH
+    },
+    scheduledReports: {
+      storePath: env.SCHEDULED_REPORT_STORE_PATH || DEFAULT_SCHEDULED_REPORT_STORE_PATH,
+      fileDir: env.SCHEDULED_REPORT_FILE_DIR || DEFAULT_SCHEDULED_REPORT_FILE_DIR,
+      retentionDays: readPositiveInt(env, 'SCHEDULED_REPORT_RETENTION_DAYS', 60, 3650),
+      defaultRowLimit: readPositiveInt(env, 'SCHEDULED_REPORT_DEFAULT_ROW_LIMIT', 10000, 1000000),
+      maxRowLimit: readPositiveInt(env, 'SCHEDULED_REPORT_MAX_ROW_LIMIT', 100000, 1000000),
+      maxFileSizeBytes: readPositiveInt(env, 'SCHEDULED_REPORT_MAX_FILE_SIZE_BYTES', 10485760, 104857600),
+      queryTimeoutMs: readPositiveInt(env, 'SCHEDULED_REPORT_QUERY_TIMEOUT_MS', 120000, 600000)
     },
     auth: {
       enabled: authEnabled,

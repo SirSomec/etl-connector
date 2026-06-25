@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   renderAccountManagement,
+  renderHome,
   renderLogin,
   renderPasswordChange
 } = require('../src/render');
@@ -153,4 +154,37 @@ test('layout shows password change link only for managed users', () => {
 
   assert.match(managedHtml, /href="\/account\/password"/);
   assert.doesNotMatch(envHtml, /href="\/account\/password"/);
+});
+
+test('navigation shows scheduled reports based on report permissions and hides SMTP from analysts', () => {
+  const authorHtml = renderHome({
+    database: 'etl',
+    tables: [],
+    currentUser: { role: 'analyst', permissions: ['scheduled-report-author'] }
+  });
+  const deliveryHtml = renderHome({
+    database: 'etl',
+    tables: [],
+    currentUser: { role: 'analyst', permissions: ['scheduled-report-delivery'] }
+  });
+  const analystHtml = renderHome({
+    database: 'etl',
+    tables: [],
+    currentUser: {
+      role: 'analyst',
+      permissions: ['scheduled-report-author', 'scheduled-report-delivery', 'mail-settings-admin']
+    }
+  });
+  const adminHtml = renderHome({
+    database: 'etl',
+    tables: [],
+    currentUser: { role: 'admin', permissions: [] }
+  });
+
+  assert.match(authorHtml, /href="\/reports\/scheduled"/);
+  assert.match(authorHtml, /Регулярные отчеты/);
+  assert.match(deliveryHtml, /href="\/reports\/scheduled"/);
+  assert.doesNotMatch(analystHtml, /href="\/admin\/mail-settings"/);
+  assert.match(adminHtml, /href="\/admin\/mail-settings"/);
+  assert.match(adminHtml, />SMTP<\/a>/);
 });

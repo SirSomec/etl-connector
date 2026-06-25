@@ -1,5 +1,7 @@
 const express = require('express');
+const fs = require('node:fs/promises');
 const { STATUS_CODES } = require('node:http');
+const path = require('node:path');
 
 const {
   createSessionManager,
@@ -10,6 +12,16 @@ const { ClickHouseClient } = require('./clickhouseClient');
 const { loadConfig } = require('./config');
 const { createWorkplaceDirectoryCache } = require('./workplaceDirectoryCache');
 const { createPreloadService } = require('./preloadService');
+const { createScheduledReportStore } = require('./scheduledReportStore');
+const { createScheduledReportMailer, sanitizeMailError } = require('./scheduledReportMailer');
+const { createScheduledReportRunner } = require('./scheduledReportRunner');
+const { createScheduledReportScheduler } = require('./scheduledReportScheduler');
+const { createScheduledReportService } = require('./scheduledReportService');
+const {
+  assertSafeReportSql,
+  normalizeReportLimits,
+  wrapReportSql
+} = require('./scheduledReportSql');
 const { buildSalesByProjectPreloadQueries } = require('./preloadSalesByProject');
 const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
 const {
@@ -25,6 +37,7 @@ const {
 const {
   createRequestReportJobStore
 } = require('./requestReportJobStore');
+const { buildXlsxWorkbook } = require('./xlsxWorkbook');
 const {
   runRequestReportConfirmedCheckJob
 } = require('./requestReportJobRunner');
@@ -91,11 +104,13 @@ const {
   renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
+  renderMailSettingsPage,
   renderPasswordChange,
   renderPreloadManagement,
   renderRequestReportMissingConfirmedPage,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
+  renderScheduledReportsPage,
   renderTable,
   renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
@@ -183,6 +198,7 @@ function activeNavForPath(path) {
   const normalized = normalizePathForNav(path);
   const navByPath = {
     '/admin/activity': 'activity',
+    '/admin/mail-settings': 'mail-settings',
     '/admin/preload': 'preload-admin',
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
@@ -191,6 +207,7 @@ function activeNavForPath(path) {
     '/dashboards/sales-by-project': 'sales-by-project',
     '/dashboards/workplace-analysis': 'workplace-analysis',
     '/dashboards/worker-cancellations': 'worker-cancellations',
+    '/reports/scheduled': 'scheduled-reports',
     '/tools/request-report-confirmed-check': 'request-report-matching'
   };
 
@@ -204,6 +221,14 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/admin/preload/')) {
     return 'preload-admin';
+  }
+
+  if (normalized.startsWith('/admin/mail-settings/')) {
+    return 'mail-settings';
+  }
+
+  if (normalized.startsWith('/reports/scheduled/')) {
+    return 'scheduled-reports';
   }
 
   if (normalized.startsWith('/dashboards/workplace-analysis/')) {
@@ -452,6 +477,7 @@ function createApp({
   dashboardSectionCache = null,
   workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null, disabled: true }),
   preloadService = null,
+  scheduledReportService = null,
   requestReportShiftStatusStore = createRequestReportShiftStatusStore({
     filePath: config.requestReportStatus && config.requestReportStatus.storePath
   }),
@@ -467,6 +493,7 @@ function createApp({
   const app = express();
   const database = config.clickhouse.database;
   const preloads = preloadService;
+  const scheduledReports = scheduledReportService;
   const authConfig = config.auth || { enabled: false };
   const authEnabled = authConfig.enabled === true;
   const accounts = userStore || (authEnabled
@@ -522,6 +549,14 @@ function createApp({
 
     if (pathName === '/admin/preload' || pathName.startsWith('/admin/preload/')) {
       return 'preload-admin';
+    }
+
+    if (pathName === '/admin/mail-settings' || pathName.startsWith('/admin/mail-settings/')) {
+      return 'mail-settings';
+    }
+
+    if (pathName === '/reports/scheduled' || pathName.startsWith('/reports/scheduled/')) {
+      return 'scheduled-reports';
     }
 
     if (pathName === '/' || pathName === '/tables' || pathName.startsWith('/tables/')) {
@@ -602,8 +637,16 @@ function createApp({
       return 'admin_action';
     }
 
+    if (method === 'POST' && pathName.startsWith('/reports/scheduled')) {
+      return 'admin_action';
+    }
+
     if (method !== 'GET') {
       return '';
+    }
+
+    if (/^\/reports\/scheduled\/runs\/[^/]+\/download$/.test(pathName)) {
+      return 'export';
     }
 
     if (isProgressiveSectionPath(pathName)) {
@@ -808,6 +851,48 @@ function createApp({
     });
   }
 
+  function requireAnyReportPermission() {
+    return asyncRoute(async (req, res, next) => {
+      if (!authEnabled) {
+        next();
+        return;
+      }
+
+      const auth = await loadRequestAuth(req);
+
+      if (!auth) {
+        if (req.method === 'GET') {
+          res.redirect(302, `/login?returnTo=${encodeURIComponent(req.originalUrl || '/')}`);
+          return;
+        }
+
+        sendError(res, 401, 'Unauthorized', 'Требуется вход в систему');
+        return;
+      }
+
+      if (!enforcePasswordChange(req, res, auth)) {
+        return;
+      }
+
+      if (
+        !hasPermission(auth.user, 'scheduled-report-author')
+        && !hasPermission(auth.user, 'scheduled-report-delivery')
+      ) {
+        sendError(
+          res,
+          403,
+          'Недостаточно прав',
+          'Недостаточно прав для выбранного раздела.',
+          activeNavForPath(req.path),
+          viewContext(req)
+        );
+        return;
+      }
+
+      next();
+    });
+  }
+
   function requireJsonAuth(permission = null) {
     return asyncRoute(async (req, res, next) => {
       if (!authEnabled) {
@@ -953,6 +1038,333 @@ function createApp({
       ...input,
       refreshDays: parseRefreshDaysFromBody(safeBody.refreshDays)
     };
+  }
+
+  function currentUserId(req) {
+    return (req && req.auth && req.auth.user && req.auth.user.id) || 'anonymous';
+  }
+
+  function parsePositiveIntegerFromBody(value, fallback) {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+
+    const integer = Math.floor(parsed);
+
+    return integer > 0 ? integer : fallback;
+  }
+
+  function booleanFromBody(value) {
+    return value === true || value === '1' || value === 'on' || value === 'true';
+  }
+
+  function scheduledReportsConfig() {
+    return config.scheduledReports || {};
+  }
+
+  function scheduledReportMessage(code) {
+    const messages = {
+      'report-created': 'Отчет создан',
+      'report-updated': 'Отчет сохранен',
+      'schedule-created': 'Расписание создано',
+      'schedule-updated': 'Расписание сохранено',
+      'run-started': 'Запуск отчета начат',
+      'already-running': 'Отчет уже выполняется',
+      saved: 'SMTP настройки сохранены',
+      'test-sent': 'Тестовое письмо отправлено'
+    };
+
+    return messages[String(code || '')] || '';
+  }
+
+  function scheduledReportsUrl(reportId, message) {
+    const params = new URLSearchParams();
+
+    if (reportId !== undefined && reportId !== null && String(reportId) !== '') {
+      params.set('reportId', String(reportId));
+    }
+    if (message) {
+      params.set('message', message);
+    }
+
+    const query = params.toString();
+
+    return query ? `/reports/scheduled?${query}` : '/reports/scheduled';
+  }
+
+  function normalizeScheduledReportBody(body) {
+    const safeBody = body || {};
+    const reportConfig = scheduledReportsConfig();
+    const rowLimit = parsePositiveIntegerFromBody(safeBody.rowLimit, reportConfig.defaultRowLimit || 10000);
+    const timeoutMs = parsePositiveIntegerFromBody(safeBody.timeoutMs, reportConfig.queryTimeoutMs || 120000);
+    const sql = String(safeBody.sql || '').trim();
+
+    assertSafeReportSql(sql);
+
+    return {
+      title: String(safeBody.title || '').trim(),
+      description: String(safeBody.description || '').trim(),
+      sql,
+      rowLimit,
+      timeoutMs,
+      enabled: booleanFromBody(safeBody.enabled)
+    };
+  }
+
+  function normalizeRecipientsFromBody(value) {
+    const values = Array.isArray(value)
+      ? value
+      : String(value || '').split(/[\n,;]/);
+
+    return values
+      .map((recipient) => String(recipient || '').trim())
+      .filter(Boolean);
+  }
+
+  function parseScheduledReportTime(value) {
+    return parseScheduleTimeFromBody(value || '09:00');
+  }
+
+  function normalizeScheduledScheduleBody(reportId, body) {
+    const safeBody = body || {};
+
+    return {
+      reportId: String(reportId),
+      enabled: booleanFromBody(safeBody.enabled),
+      scheduleTime: parseScheduledReportTime(safeBody.scheduleTime),
+      timezone: 'Europe/Moscow',
+      recipients: normalizeRecipientsFromBody(safeBody.recipients),
+      emailSubject: String(safeBody.emailSubject || '').trim(),
+      emailBody: String(safeBody.emailBody || '').trim()
+    };
+  }
+
+  function normalizeMailSettingsBody(body) {
+    const safeBody = body || {};
+    const secureMode = String(safeBody.secureMode || 'starttls').trim();
+
+    return {
+      host: String(safeBody.host || '').trim(),
+      port: parsePositiveIntegerFromBody(safeBody.port, 587),
+      secureMode: secureMode === 'ssl' ? 'ssl' : 'starttls',
+      username: String(safeBody.username || '').trim(),
+      password: String(safeBody.password || ''),
+      fromEmail: String(safeBody.fromEmail || '').trim(),
+      fromName: String(safeBody.fromName || '').trim(),
+      clearPassword: booleanFromBody(safeBody.clearPassword)
+    };
+  }
+
+  function selectedScheduledReportId(req, reports) {
+    const explicit = (req.params && req.params.reportId)
+      || (req.body && (req.body.reportId || req.body.selectedReportId))
+      || (req.query && (req.query.reportId || req.query.selectedReportId));
+
+    if (explicit !== undefined && explicit !== null && String(explicit) !== '') {
+      return String(explicit);
+    }
+
+    const firstReport = Array.isArray(reports) && reports.length > 0 ? reports[0] : null;
+
+    return firstReport && firstReport.id !== undefined && firstReport.id !== null ? String(firstReport.id) : '';
+  }
+
+  function canDownloadScheduledRun(run) {
+    return Boolean(
+      run
+      && run.filePath
+      && (run.status === 'success' || run.status === 'failed')
+      && isScheduledRunWithinRetention(run)
+    );
+  }
+
+  function scheduledScheduleForReport(reportId, scheduleId) {
+    if (!scheduledReports || typeof scheduledReports.getSchedule !== 'function') {
+      return null;
+    }
+
+    const schedule = scheduledReports.getSchedule(scheduleId);
+
+    if (!schedule || String(schedule.reportId) !== String(reportId)) {
+      return null;
+    }
+
+    return schedule;
+  }
+
+  function sendScheduledScheduleNotFound(req, res) {
+    sendError(
+      res,
+      404,
+      'Not Found',
+      'Schedule not found for selected report.',
+      'scheduled-reports',
+      viewContext(req)
+    );
+  }
+
+  function scheduledReportCapabilities(req) {
+    if (!authEnabled) {
+      return {
+        canAuthor: true,
+        canDeliver: true
+      };
+    }
+
+    const user = req.auth && req.auth.user;
+
+    return {
+      canAuthor: hasPermission(user, 'scheduled-report-author'),
+      canDeliver: hasPermission(user, 'scheduled-report-delivery')
+    };
+  }
+
+  async function scheduledReportPageModel(req, options = {}) {
+    if (!scheduledReports) {
+      const error = new Error('Scheduled reports are not configured');
+
+      error.status = 503;
+      throw error;
+    }
+
+    const reports = scheduledReports.listReports();
+    const selectedId = options.selectedReportId || selectedScheduledReportId(req, reports);
+    const selectedReport = selectedId
+      ? reports.find((report) => String(report.id) === String(selectedId))
+        || (typeof scheduledReports.getReport === 'function' ? scheduledReports.getReport(selectedId) : null)
+      : null;
+    const reportId = selectedReport && selectedReport.id;
+    const schedules = selectedReport && typeof scheduledReports.listSchedules === 'function'
+      ? scheduledReports.listSchedules(reportId)
+      : [];
+    const runs = selectedReport && typeof scheduledReports.listRuns === 'function'
+      ? scheduledReports.listRuns({ reportId, limit: 50 }).map((run) => ({
+          ...run,
+          canDownload: canDownloadScheduledRun(run)
+        }))
+      : [];
+
+    return {
+      reports,
+      selectedReport,
+      schedules,
+      runs
+    };
+  }
+
+  async function sendScheduledReportsPage(req, res, statusCode = 200, options = {}) {
+    const model = await scheduledReportPageModel(req, options);
+    const capabilities = scheduledReportCapabilities(req);
+
+    if (options.recordActivity) {
+      recordCurrentUserActivity(req, activityEventType(req));
+    }
+
+    res
+      .status(statusCode)
+      .type('html')
+      .send(
+        renderScheduledReportsPage({
+          database,
+          ...model,
+          ...capabilities,
+          message: options.message || '',
+          error: options.error || '',
+          preview: options.preview,
+          ...viewContext(req)
+        })
+      );
+  }
+
+  async function previewScheduledReport(body) {
+    const reportConfig = scheduledReportsConfig();
+    const input = normalizeScheduledReportBody(body);
+    const limits = normalizeReportLimits(input, {
+      ...reportConfig,
+      defaultRowLimit: Math.min(Number(reportConfig.defaultRowLimit) || 50, 50),
+      maxRowLimit: 50
+    });
+    const wrapped = wrapReportSql(input.sql, { rowLimit: Math.min(limits.rowLimit, 50) });
+    const rows = await client.queryJSONEachRow(
+      `${wrapped.query}\nFORMAT JSONEachRow`,
+      {
+        ...wrapped.params,
+        ...wrapped.settings
+      },
+      'scheduled report preview'
+    );
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const columns = safeRows.length > 0 ? Object.keys(safeRows[0]) : [];
+
+    return { rows: safeRows, columns };
+  }
+
+  function scheduledReportFileDir() {
+    return path.resolve(scheduledReportsConfig().fileDir || path.join(process.cwd(), 'data', 'scheduled-report-files'));
+  }
+
+  function isPathInsideDir(filePath, directory) {
+    const relative = path.relative(directory, filePath);
+
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+
+  function safeScheduledReportFilename(runId) {
+    const safeRunId = String(runId || 'report').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'report';
+
+    return `scheduled-report-${safeRunId}.xlsx`;
+  }
+
+  function scheduledReportRetentionDays() {
+    const days = Number(scheduledReportsConfig().retentionDays);
+
+    return Number.isFinite(days) && days > 0 ? Math.floor(days) : 60;
+  }
+
+  function isScheduledRunWithinRetention(run) {
+    const finishedTime = Date.parse(String(run && run.finishedAt || ''));
+
+    if (!Number.isFinite(finishedTime)) {
+      return false;
+    }
+
+    const cutoff = now().getTime() - scheduledReportRetentionDays() * 24 * 60 * 60 * 1000;
+
+    return finishedTime >= cutoff;
+  }
+
+  async function readScheduledRunFile(run) {
+    if (!canDownloadScheduledRun(run) || !isScheduledRunWithinRetention(run)) {
+      return null;
+    }
+
+    const fileDir = scheduledReportFileDir();
+    const filePath = path.resolve(String(run.filePath || ''));
+
+    if (!isPathInsideDir(filePath, fileDir)) {
+      return null;
+    }
+
+    try {
+      const stat = await fs.stat(filePath);
+
+      if (!stat.isFile()) {
+        return null;
+      }
+
+      return {
+        buffer: await fs.readFile(filePath),
+        filename: safeScheduledReportFilename(run.id)
+      };
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        return null;
+      }
+
+      throw error;
+    }
   }
 
   function accountMessage(code) {
@@ -1471,6 +1883,300 @@ function createApp({
           'activity',
           viewContext(req)
         );
+      }
+    })
+  );
+
+  app.get(
+    '/reports/scheduled',
+    requireAnyReportPermission(),
+    asyncRoute(async (req, res) => {
+      await sendScheduledReportsPage(req, res, 200, {
+        message: scheduledReportMessage(req.query.message),
+        recordActivity: true
+      });
+    })
+  );
+
+  app.post(
+    '/reports/scheduled/create',
+    requireAuth('scheduled-report-author'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'scheduled-reports')) {
+        return;
+      }
+
+      try {
+        const saved = scheduledReports.createReport({
+          ...normalizeScheduledReportBody(req.body),
+          userId: currentUserId(req)
+        });
+
+        recordCurrentUserActivity(req, 'admin_action');
+        res.redirect(303, scheduledReportsUrl(saved && saved.id, 'report-created'));
+      } catch (error) {
+        await sendScheduledReportsPage(req, res, 400, {
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.post(
+    '/reports/scheduled/:reportId/update',
+    requireAuth('scheduled-report-author'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'scheduled-reports')) {
+        return;
+      }
+
+      try {
+        scheduledReports.updateReport(req.params.reportId, {
+          ...normalizeScheduledReportBody(req.body),
+          userId: currentUserId(req)
+        });
+
+        recordCurrentUserActivity(req, 'admin_action');
+        res.redirect(303, scheduledReportsUrl(req.params.reportId, 'report-updated'));
+      } catch (error) {
+        await sendScheduledReportsPage(req, res, 400, {
+          selectedReportId: req.params.reportId,
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.post(
+    '/reports/scheduled/:reportId/preview',
+    requireAuth('scheduled-report-author'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'scheduled-reports')) {
+        return;
+      }
+
+      try {
+        const preview = await previewScheduledReport(req.body);
+
+        await sendScheduledReportsPage(req, res, 200, {
+          selectedReportId: req.params.reportId,
+          preview
+        });
+      } catch (error) {
+        await sendScheduledReportsPage(req, res, 400, {
+          selectedReportId: req.params.reportId,
+          preview: { error: sanitizeForResponse(error && error.message, config) },
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.post(
+    '/reports/scheduled/:reportId/schedules/create',
+    requireAuth('scheduled-report-delivery'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'scheduled-reports')) {
+        return;
+      }
+
+      try {
+        scheduledReports.createSchedule({
+          ...normalizeScheduledScheduleBody(req.params.reportId, req.body),
+          userId: currentUserId(req)
+        });
+
+        recordCurrentUserActivity(req, 'admin_action');
+        res.redirect(303, scheduledReportsUrl(req.params.reportId, 'schedule-created'));
+      } catch (error) {
+        await sendScheduledReportsPage(req, res, 400, {
+          selectedReportId: req.params.reportId,
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.post(
+    '/reports/scheduled/:reportId/schedules/:scheduleId/update',
+    requireAuth('scheduled-report-delivery'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'scheduled-reports')) {
+        return;
+      }
+
+      if (!scheduledScheduleForReport(req.params.reportId, req.params.scheduleId)) {
+        sendScheduledScheduleNotFound(req, res);
+        return;
+      }
+
+      try {
+        scheduledReports.updateSchedule(req.params.scheduleId, {
+          ...normalizeScheduledScheduleBody(req.params.reportId, req.body),
+          userId: currentUserId(req)
+        });
+
+        recordCurrentUserActivity(req, 'admin_action');
+        res.redirect(303, scheduledReportsUrl(req.params.reportId, 'schedule-updated'));
+      } catch (error) {
+        await sendScheduledReportsPage(req, res, 400, {
+          selectedReportId: req.params.reportId,
+          error: sanitizeForResponse(error && error.message, config)
+        });
+      }
+    })
+  );
+
+  app.post(
+    '/reports/scheduled/:reportId/schedules/:scheduleId/run',
+    requireAuth('scheduled-report-delivery'),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'scheduled-reports')) {
+        return;
+      }
+
+      if (!scheduledScheduleForReport(req.params.reportId, req.params.scheduleId)) {
+        sendScheduledScheduleNotFound(req, res);
+        return;
+      }
+
+      const result = await scheduledReports.runSchedule({
+        reportId: req.params.reportId,
+        scheduleId: req.params.scheduleId,
+        trigger: 'manual',
+        userId: currentUserId(req)
+      });
+      const message = result && (result.status === 'running' || result.alreadyRunning)
+        ? 'already-running'
+        : 'run-started';
+
+      recordCurrentUserActivity(req, 'admin_action');
+      res.redirect(303, scheduledReportsUrl(req.params.reportId, message));
+    })
+  );
+
+  app.get(
+    '/reports/scheduled/runs/:runId/download',
+    requireAuth('scheduled-report-delivery'),
+    asyncRoute(async (req, res) => {
+      const run = scheduledReports && typeof scheduledReports.getRun === 'function'
+        ? scheduledReports.getRun(req.params.runId)
+        : null;
+      const file = await readScheduledRunFile(run);
+
+      if (!file) {
+        sendError(
+          res,
+          404,
+          'Not Found',
+          'Файл отчета не найден.',
+          'scheduled-reports',
+          viewContext(req)
+        );
+        return;
+      }
+
+      recordCurrentUserActivity(req, 'export');
+      res
+        .status(200)
+        .set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .set('Content-Disposition', `attachment; filename="${file.filename}"`)
+        .send(file.buffer);
+    })
+  );
+
+  app.get(
+    '/admin/mail-settings',
+    requireAdmin(),
+    asyncRoute(async (req, res) => {
+      const settings = scheduledReports && typeof scheduledReports.getMailSettings === 'function'
+        ? scheduledReports.getMailSettings()
+        : { hasPassword: false };
+
+      recordCurrentUserActivity(req, activityEventType(req));
+      res
+        .status(200)
+        .type('html')
+        .send(renderMailSettingsPage({
+          database,
+          settings,
+          message: scheduledReportMessage(req.query.message),
+          ...viewContext(req)
+        }));
+    })
+  );
+
+  app.post(
+    '/admin/mail-settings',
+    requireAdmin(),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'mail-settings')) {
+        return;
+      }
+
+      try {
+        scheduledReports.saveMailSettings({
+          ...normalizeMailSettingsBody(req.body),
+          userId: currentUserId(req)
+        });
+
+        recordCurrentUserActivity(req, 'admin_action');
+        res.redirect(303, '/admin/mail-settings?message=saved');
+      } catch (error) {
+        const settings = scheduledReports && typeof scheduledReports.getMailSettings === 'function'
+          ? scheduledReports.getMailSettings()
+          : { hasPassword: false };
+
+        res
+          .status(400)
+          .type('html')
+          .send(renderMailSettingsPage({
+            database,
+            settings,
+            error: sanitizeForResponse(error && error.message, config),
+            ...viewContext(req)
+          }));
+      }
+    })
+  );
+
+  app.post(
+    '/admin/mail-settings/test',
+    requireAdmin(),
+    asyncRoute(async (req, res) => {
+      if (!verifyCsrf(req, res, 'mail-settings')) {
+        return;
+      }
+
+      const recipient = String((req.body && req.body.testRecipient) || '').trim();
+
+      try {
+        if (scheduledReports && typeof scheduledReports.sendTestMail === 'function') {
+          await scheduledReports.sendTestMail({
+            recipient,
+            userId: currentUserId(req)
+          });
+        } else if (!scheduledReports || !scheduledReports.getMailSettings || !scheduledReports.getMailSettings().host) {
+          throw new Error('SMTP is not configured');
+        }
+
+        recordCurrentUserActivity(req, 'admin_action');
+        res.redirect(303, '/admin/mail-settings?message=test-sent');
+      } catch (error) {
+        const settings = scheduledReports && typeof scheduledReports.getMailSettings === 'function'
+          ? scheduledReports.getMailSettings()
+          : { hasPassword: false };
+
+        res
+          .status(400)
+          .type('html')
+          .send(renderMailSettingsPage({
+            database,
+            settings,
+            testRecipient: recipient,
+            error: sanitizeForResponse(error && error.message, config),
+            ...viewContext(req)
+          }));
       }
     })
   );
@@ -2382,6 +3088,11 @@ function start(options = {}) {
     ClientClass = ClickHouseClient,
     createAppFn = createApp,
     createPreloadServiceFn = createPreloadService,
+    createScheduledReportStoreFn = createScheduledReportStore,
+    createScheduledReportMailerFn = createScheduledReportMailer,
+    createScheduledReportRunnerFn = createScheduledReportRunner,
+    createScheduledReportSchedulerFn = createScheduledReportScheduler,
+    createScheduledReportServiceFn = createScheduledReportService,
     createUserActivityStoreFn = createUserActivityStore,
     logger = console
   } = options;
@@ -2395,6 +3106,9 @@ function start(options = {}) {
     disabled: true
   });
   let preloadService = null;
+  let scheduledReportService = null;
+  let scheduledReportStore = null;
+  let scheduledReportScheduler = null;
   let activityStore = null;
 
   function warn(message) {
@@ -2436,6 +3150,52 @@ function start(options = {}) {
     }
   }
 
+  function closeScheduledReportScheduler() {
+    if (!scheduledReportScheduler) {
+      return null;
+    }
+
+    if (typeof scheduledReportScheduler.stop === 'function') {
+      try {
+        scheduledReportScheduler.stop();
+      } catch (error) {
+        warn(`Scheduled report scheduler stop failed: ${sanitizeForResponse(error && error.message, config)}`);
+      }
+    }
+
+    if (typeof scheduledReportScheduler.drain !== 'function') {
+      return null;
+    }
+
+    try {
+      const drainResult = scheduledReportScheduler.drain();
+
+      if (drainResult && typeof drainResult.catch === 'function') {
+        return drainResult.catch((error) => {
+          warn(`Scheduled report scheduler drain failed: ${sanitizeForResponse(error && error.message, config)}`);
+        });
+      }
+    } catch (error) {
+      warn(`Scheduled report scheduler drain failed: ${sanitizeForResponse(error && error.message, config)}`);
+    }
+
+    return null;
+  }
+
+  function closeScheduledReportResources() {
+    if (scheduledReportService && typeof scheduledReportService.close === 'function') {
+      return closeResource(scheduledReportService, 'Scheduled report service');
+    }
+
+    const schedulerCleanup = closeScheduledReportScheduler();
+
+    if (schedulerCleanup && typeof schedulerCleanup.then === 'function') {
+      return schedulerCleanup.then(() => closeResource(scheduledReportStore, 'Scheduled report store'));
+    }
+
+    return closeResource(scheduledReportStore, 'Scheduled report store');
+  }
+
   try {
     preloadService = createPreloadServiceFn({
       client,
@@ -2448,15 +3208,67 @@ function start(options = {}) {
   }
 
   try {
+    if (config.scheduledReports) {
+      scheduledReportStore = createScheduledReportStoreFn({
+        filePath: config.scheduledReports.storePath,
+        fileDir: config.scheduledReports.fileDir
+      });
+      const scheduledReportMailer = createScheduledReportMailerFn({});
+      const scheduledReportRunner = createScheduledReportRunnerFn({
+        client,
+        store: scheduledReportStore,
+        fileDir: config.scheduledReports.fileDir,
+        config: config.scheduledReports,
+        mailer: scheduledReportMailer,
+        sanitizeError: (error) => sanitizeForResponse(
+          sanitizeMailError(error, scheduledReportStore.getMailSettingsSecret()),
+          config
+        )
+      });
+      scheduledReportScheduler = createScheduledReportSchedulerFn({
+        store: scheduledReportStore,
+        runner: scheduledReportRunner
+      });
+
+      scheduledReportService = createScheduledReportServiceFn({
+        store: scheduledReportStore,
+        scheduler: scheduledReportScheduler
+      });
+
+      if (scheduledReportService && typeof scheduledReportService.sendTestMail !== 'function') {
+        scheduledReportService.sendTestMail = ({ recipient }) => scheduledReportMailer.sendReport({
+          settings: scheduledReportStore.getMailSettingsSecret(),
+          recipients: [recipient],
+          subject: 'SMTP test',
+          body: 'SMTP settings test',
+          filename: 'smtp-test.xlsx',
+          fileBuffer: buildXlsxWorkbook({
+            sheetName: 'SMTP',
+            headers: ['status'],
+            rows: [['ok']]
+          })
+        });
+      }
+    }
+  } catch (error) {
+    const scheduledCleanup = closeScheduledReportResources();
+    const preloadCleanup = closeResource(preloadService, 'Preload service');
+
+    attachStartupCleanup(error, [scheduledCleanup, preloadCleanup]);
+    throw error;
+  }
+
+  try {
     activityStore = config.auth && config.auth.enabled === true
       ? createUserActivityStoreFn({
           filePath: config.activity && config.activity.storePath
         })
       : null;
   } catch (error) {
+    const scheduledCleanup = closeScheduledReportResources();
     const cleanup = closeResource(preloadService, 'Preload service');
 
-    attachStartupCleanup(error, [cleanup]);
+    attachStartupCleanup(error, [scheduledCleanup, cleanup]);
     throw error;
   }
 
@@ -2471,14 +3283,16 @@ function start(options = {}) {
       dashboardSectionCache,
       workplaceDirectoryCache,
       preloadService,
+      scheduledReportService,
       activityStore,
       buildInfo: config.app || defaultBuildInfo(env)
     });
   } catch (error) {
     const activityCleanup = closeResource(activityStore, 'User activity store');
+    const scheduledCleanup = closeScheduledReportResources();
     const preloadCleanup = closeResource(preloadService, 'Preload service');
 
-    attachStartupCleanup(error, [activityCleanup, preloadCleanup]);
+    attachStartupCleanup(error, [activityCleanup, scheduledCleanup, preloadCleanup]);
     throw error;
   }
 
@@ -2499,6 +3313,7 @@ function start(options = {}) {
     cacheCleanup.stop();
 
     closeResource(activityStore, 'User activity store');
+    closeScheduledReportResources();
     closeResource(preloadService, 'Preload service');
   });
 

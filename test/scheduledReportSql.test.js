@@ -18,14 +18,13 @@ test('scheduled report SQL rejects mutations and multiple statements', () => {
   assert.throws(() => assertSafeReportSql('SELECT * FROM mg_jobs FORMAT JSONEachRow'), /FORMAT clause is managed by the application/);
 });
 
-test('wrapReportSql applies external limit without changing readonly setting', () => {
+test('wrapReportSql applies external limit without ClickHouse settings', () => {
   const wrapped = wrapReportSql('SELECT _id, status FROM mg_jobs', { rowLimit: 100 });
 
   assert.match(wrapped.query, /SELECT \* FROM \(/);
   assert.match(wrapped.query, /LIMIT 100/);
   assert.deepEqual(wrapped.params, {});
-  assert.deepEqual(wrapped.settings, { max_result_rows: 100 });
-  assert.equal(Object.hasOwn(wrapped.settings, 'readonly'), false);
+  assert.deepEqual(wrapped.settings, {});
 });
 
 test('wrapReportSql normalizes unsafe row limits', () => {
@@ -42,7 +41,7 @@ test('wrapReportSql normalizes unsafe row limits', () => {
     const wrapped = wrapReportSql('SELECT _id FROM mg_jobs', { rowLimit });
 
     assert.match(wrapped.query, new RegExp(`LIMIT ${expected}$`));
-    assert.equal(wrapped.settings.max_result_rows, expected);
+    assert.deepEqual(wrapped.settings, {});
   }
 });
 
@@ -50,7 +49,7 @@ test('wrapReportSql preserves pre-normalized safe row limits above default max',
   const wrapped = wrapReportSql('SELECT 1', { rowLimit: 200000 });
 
   assert.match(wrapped.query, /LIMIT 200000$/);
-  assert.equal(wrapped.settings.max_result_rows, 200000);
+  assert.deepEqual(wrapped.settings, {});
 });
 
 test('normalizeReportLimits clamps unsafe values', () => {

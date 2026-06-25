@@ -41,10 +41,6 @@ function maxFileSize(config) {
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_FILE_SIZE_BYTES;
 }
 
-function maxExecutionTimeSeconds(limits) {
-  return Math.max(1, Math.ceil(Number(limits && limits.timeoutMs) / 1000));
-}
-
 function retentionDays(config) {
   const value = Number(config && config.retentionDays);
 
@@ -132,8 +128,7 @@ function createScheduledReportRunner({
       const query = `${wrapped.query}\nFORMAT JSONEachRow`;
       const params = {
         ...wrapped.params,
-        ...wrapped.settings,
-        max_execution_time: maxExecutionTimeSeconds(limits)
+        ...wrapped.settings
       };
 
       rows = await client.queryJSONEachRow(query, params, 'scheduled report SQL');

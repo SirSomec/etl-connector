@@ -66,9 +66,7 @@ function wrapReportSql(sql, { rowLimit }) {
   return {
     query: `SELECT * FROM (\n${normalizeSql(sql)}\n) AS scheduled_report_result\nLIMIT ${safeRowLimit}`,
     params: {},
-    settings: {
-      max_result_rows: safeRowLimit
-    }
+    settings: {}
   };
 }
 

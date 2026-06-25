@@ -1278,10 +1278,6 @@ function createApp({
       );
   }
 
-  function maxExecutionTimeSeconds(timeoutMs) {
-    return Math.max(1, Math.ceil(Number(timeoutMs || 120000) / 1000));
-  }
-
   async function previewScheduledReport(body) {
     const reportConfig = scheduledReportsConfig();
     const input = normalizeScheduledReportBody(body);
@@ -1295,8 +1291,7 @@ function createApp({
       `${wrapped.query}\nFORMAT JSONEachRow`,
       {
         ...wrapped.params,
-        ...wrapped.settings,
-        max_execution_time: maxExecutionTimeSeconds(limits.timeoutMs)
+        ...wrapped.settings
       },
       'scheduled report preview'
     );

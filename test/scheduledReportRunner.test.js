@@ -176,11 +176,7 @@ test('runner executes query writes xlsx sends mail and records success', async (
     assert.equal(queries[0].operation, 'scheduled report SQL');
     assert.match(queries[0].query, /SELECT \* FROM \(/);
     assert.match(queries[0].query, /LIMIT 100\nFORMAT JSONEachRow$/);
-    assert.deepEqual(queries[0].params, {
-      max_result_rows: 100,
-      max_execution_time: 60
-    });
-    assert.equal(Object.hasOwn(queries[0].params, 'readonly'), false);
+    assert.deepEqual(queries[0].params, {});
     assert.equal(sent.length, 1);
     assert.equal(sent[0].settings.password, 'Secret123!');
     assert.deepEqual(sent[0].recipients, ['a@example.test']);

@@ -9,6 +9,7 @@ const {
   buildRequestReportCheckWorkbook,
   parseRequestsReportWorkbook
 } = require('../src/requestReportMissingConfirmed');
+const { createSessionManager, createUserStore } = require('../src/auth');
 
 const {
   activeNavForPath,
@@ -428,6 +429,149 @@ function createFakePreloadService(overrides = {}) {
   return Object.assign(service, overrides);
 }
 
+function createActivitySpy() {
+  return {
+    events: [],
+    prunedRetentions: [],
+    recordEvent(event) {
+      this.events.push(event);
+    },
+    pruneOldEvents(retentionDays) {
+      this.prunedRetentions.push(retentionDays);
+      return 0;
+    },
+    getActivityOverview() {
+      return { from: '2026-03-08', to: '2026-06-05', retentionDays: 90, users: [] };
+    },
+    close() {}
+  };
+}
+
+function createFakeScheduledReportService(options = {}) {
+  const calls = [];
+  const reports = Object.prototype.hasOwnProperty.call(options, 'reports')
+    ? options.reports
+    : [{
+        id: 1,
+        title: 'Daily report',
+        description: 'Current daily report',
+        sql: 'SELECT 1 AS answer',
+        rowLimit: 100,
+        timeoutMs: 120000,
+        enabled: true,
+        updatedAt: '2026-06-25T06:00:00.000Z'
+      }];
+  const schedules = Object.prototype.hasOwnProperty.call(options, 'schedules')
+    ? options.schedules
+    : [{
+        id: 2,
+        reportId: 1,
+        enabled: true,
+        scheduleTime: '09:00',
+        timezone: 'Europe/Moscow',
+        recipients: ['team@example.test'],
+        emailSubject: 'Daily report',
+        emailBody: 'Body'
+      }];
+  const runs = Object.prototype.hasOwnProperty.call(options, 'runs')
+    ? options.runs
+    : [];
+  let settings = options.settings || { hasPassword: false };
+  const nextReportId = options.nextReportId || 10;
+  const nextScheduleId = options.nextScheduleId || 20;
+  const service = {
+    calls,
+    listReports() {
+      calls.push(['listReports']);
+      return reports;
+    },
+    getReport(reportId) {
+      calls.push(['getReport', reportId]);
+      return reports.find((report) => String(report.id) === String(reportId)) || null;
+    },
+    createReport(input) {
+      calls.push(['createReport', input]);
+      const report = { id: nextReportId, ...input };
+      reports.push(report);
+      return report;
+    },
+    updateReport(reportId, input) {
+      calls.push(['updateReport', reportId, input]);
+      const index = reports.findIndex((report) => String(report.id) === String(reportId));
+      const report = { id: Number(reportId), ...(index >= 0 ? reports[index] : {}), ...input };
+
+      if (index >= 0) {
+        reports[index] = report;
+      }
+
+      return report;
+    },
+    listSchedules(reportId) {
+      calls.push(['listSchedules', reportId]);
+      return schedules.filter((schedule) => (
+        !reportId || String(schedule.reportId) === String(reportId)
+      ));
+    },
+    getSchedule(scheduleId) {
+      calls.push(['getSchedule', scheduleId]);
+      return schedules.find((schedule) => String(schedule.id) === String(scheduleId)) || null;
+    },
+    createSchedule(input) {
+      calls.push(['createSchedule', input]);
+      const schedule = { id: nextScheduleId, ...input };
+      schedules.push(schedule);
+      return schedule;
+    },
+    updateSchedule(scheduleId, input) {
+      calls.push(['updateSchedule', scheduleId, input]);
+      const index = schedules.findIndex((schedule) => String(schedule.id) === String(scheduleId));
+      const schedule = { id: Number(scheduleId), ...(index >= 0 ? schedules[index] : {}), ...input };
+
+      if (index >= 0) {
+        schedules[index] = schedule;
+      }
+
+      return schedule;
+    },
+    listRuns(input = {}) {
+      calls.push(['listRuns', input]);
+      return runs.filter((run) => (
+        !input.reportId || String(run.reportId) === String(input.reportId)
+      ));
+    },
+    getRun(runId) {
+      calls.push(['getRun', runId]);
+      return runs.find((run) => String(run.id) === String(runId)) || null;
+    },
+    getMailSettings() {
+      calls.push(['getMailSettings']);
+      return settings;
+    },
+    saveMailSettings(input) {
+      calls.push(['saveMailSettings', input]);
+      settings = {
+        ...settings,
+        ...input,
+        hasPassword: Boolean(input && input.password) || (settings.hasPassword && !(input && input.clearPassword))
+      };
+      return settings;
+    },
+    async sendTestMail(input) {
+      calls.push(['sendTestMail', input]);
+      return { accepted: [input && input.recipient].filter(Boolean) };
+    },
+    async runSchedule(input) {
+      calls.push(['runSchedule', input]);
+      return { status: 'success' };
+    },
+    close() {
+      calls.push(['close']);
+    }
+  };
+
+  return Object.assign(service, options.methods || {});
+}
+
 async function withServer(client, callback, config = baseConfig(), options = {}) {
   const app = createApp({ config, client, ...options });
   const server = app.listen(0);
@@ -439,6 +583,81 @@ async function withServer(client, callback, config = baseConfig(), options = {})
     await callback(`http://127.0.0.1:${port}`);
   } finally {
     await closeServer(server);
+  }
+}
+
+async function withAuthenticatedServer(callback, options = {}) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'server-auth-route-test-'));
+  const userStorePath = path.join(tempDir, 'users.json');
+  const scheduledFileDir = options.scheduledFileDir || path.join(tempDir, 'scheduled-files');
+  const config = {
+    ...baseConfig(),
+    auth: {
+      enabled: true,
+      adminEmail: 'admin@example.test',
+      adminPassword: 'EnvAdminPass123',
+      userStorePath,
+      sessionSecret: 'session-secret',
+      sessionCookieName: 'server_test_session',
+      sessionTtlMs: 12 * 60 * 60 * 1000,
+      passwordHashIterations: 1000
+    },
+    activity: {
+      storePath: path.join(tempDir, 'activity.sqlite')
+    },
+    scheduledReports: {
+      storePath: path.join(tempDir, 'scheduled-reports.sqlite'),
+      fileDir: scheduledFileDir,
+      retentionDays: 60,
+      defaultRowLimit: 10000,
+      maxRowLimit: 100000,
+      maxFileSizeBytes: 10485760,
+      queryTimeoutMs: 120000
+    }
+  };
+  const userStore = createUserStore({
+    filePath: userStorePath,
+    adminEmail: config.auth.adminEmail,
+    adminPassword: config.auth.adminPassword,
+    passwordHashOptions: {
+      iterations: config.auth.passwordHashIterations,
+      salt: '0123456789abcdef'
+    }
+  });
+  const sessionManager = createSessionManager({
+    cookieName: config.auth.sessionCookieName,
+    ttlMs: config.auth.sessionTtlMs,
+    secret: config.auth.sessionSecret
+  });
+  const client = options.client || createFakeClient();
+  const activityStore = options.activityStore || createActivitySpy();
+  const scheduledReportService = options.scheduledReportService || createFakeScheduledReportService();
+  const app = createApp({
+    config,
+    client,
+    userStore,
+    sessionManager,
+    activityStore,
+    scheduledReportService,
+    preloadService: options.preloadService || createFakePreloadService()
+  });
+  const server = app.listen(0);
+
+  try {
+    await waitForListening(server);
+
+    const { port } = server.address();
+    await callback({
+      baseUrl: `http://127.0.0.1:${port}`,
+      client,
+      userStore,
+      activityStore,
+      scheduledReportService,
+      config
+    });
+  } finally {
+    await closeServer(server);
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -485,6 +704,30 @@ function formBody(values) {
   }
 
   return params.toString();
+}
+
+function cookieFrom(response) {
+  return String(response.headers.get('set-cookie') || '').split(';')[0];
+}
+
+function csrfFrom(html) {
+  const match = html.match(/name="csrfToken" value="([^"]+)"/);
+
+  assert.ok(match, 'csrf token should be rendered');
+  return match[1];
+}
+
+async function login(baseUrl, email = 'admin@example.test', password = 'EnvAdminPass123') {
+  const { response } = await fetchText(baseUrl, '/login', {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: formBody({ email, password, returnTo: '/' })
+  });
+
+  return response;
 }
 
 function multipartBody({ boundary, fields = {}, files = [] }) {
@@ -2407,6 +2650,9 @@ test('GET /dashboards/worker-cancellations keeps navigation active and redacts u
 test('activeNavForPath normalizes dashboard trailing slashes', () => {
   assert.equal(activeNavForPath('/admin/preload'), 'preload-admin');
   assert.equal(activeNavForPath('/admin/preload/run'), 'preload-admin');
+  assert.equal(activeNavForPath('/reports/scheduled'), 'scheduled-reports');
+  assert.equal(activeNavForPath('/reports/scheduled/runs/3/download'), 'scheduled-reports');
+  assert.equal(activeNavForPath('/admin/mail-settings'), 'mail-settings');
   assert.equal(activeNavForPath('/dashboards/workplace-analysis/'), 'workplace-analysis');
   assert.equal(activeNavForPath('/dashboards/sales-by-project/'), 'sales-by-project');
   assert.equal(activeNavForPath('/dashboards/brand-analysis'), 'brand-analysis');
@@ -2418,6 +2664,560 @@ test('activeNavForPath normalizes dashboard trailing slashes', () => {
   assert.equal(activeNavForPath('/dashboards/worker-cancellations'), 'worker-cancellations');
   assert.equal(activeNavForPath('/dashboards/worker-cancellations/'), 'worker-cancellations');
   assert.equal(activeNavForPath('/'), 'tables');
+});
+
+test('scheduled report routes render save update preview run and download xlsx', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-report-routes-'));
+  const fileDir = path.join(tempDir, 'files');
+  const filePath = path.join(fileDir, 'daily.xlsx');
+
+  await fs.mkdir(fileDir, { recursive: true });
+  await fs.writeFile(filePath, Buffer.from('xlsx-body'));
+
+  const scheduledReports = createFakeScheduledReportService({
+    runs: [{
+      id: 3,
+      reportId: 1,
+      status: 'success',
+      trigger: 'manual',
+      rowCount: 1,
+      fileSizeBytes: 9,
+      filePath,
+      recipients: ['team@example.test'],
+      finishedAt: '2026-06-25T07:00:00.000Z'
+    }]
+  });
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+
+      if (operation === 'scheduled report preview') {
+        return [{ answer: 1 }];
+      }
+
+      return [];
+    }
+  });
+
+  try {
+    await withServer(
+      client,
+      async (baseUrl) => {
+        const page = await fetchText(baseUrl, '/reports/scheduled?reportId=1');
+
+        assert.equal(page.response.status, 200);
+        assert.match(page.text, /Daily report/);
+        assert.match(page.text, /team@example.test/);
+        assert.match(page.text, /\/reports\/scheduled\/runs\/3\/download/);
+
+        const created = await fetchText(baseUrl, '/reports/scheduled/create', {
+          method: 'POST',
+          redirect: 'manual',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({
+            title: 'New report',
+            description: 'New description',
+            sql: 'SELECT 2 AS value',
+            rowLimit: '55',
+            timeoutMs: '1500',
+            enabled: '1'
+          })
+        });
+
+        assert.equal(created.response.status, 303);
+        assert.equal(created.response.headers.get('location'), '/reports/scheduled?reportId=10&message=report-created');
+
+        const updated = await fetchText(baseUrl, '/reports/scheduled/1/update', {
+          method: 'POST',
+          redirect: 'manual',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({
+            title: 'Daily updated',
+            description: 'Updated description',
+            sql: 'SELECT 3 AS value',
+            rowLimit: '60',
+            timeoutMs: '2000',
+            enabled: '1'
+          })
+        });
+
+        assert.equal(updated.response.status, 303);
+        assert.equal(updated.response.headers.get('location'), '/reports/scheduled?reportId=1&message=report-updated');
+
+        const updateCallsBeforePreview = scheduledReports.calls.filter((call) => call[0] === 'updateReport').length;
+        const preview = await fetchText(baseUrl, '/reports/scheduled/1/preview', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({
+            title: 'Preview only',
+            description: 'Not persisted',
+            sql: 'SELECT 4 AS answer',
+            rowLimit: '5000',
+            timeoutMs: '120000',
+            enabled: '1'
+          })
+        });
+
+        assert.equal(preview.response.status, 200);
+        assert.match(preview.text, /answer/);
+        assert.match(preview.text, />1</);
+        assert.equal(
+          scheduledReports.calls.filter((call) => call[0] === 'updateReport').length,
+          updateCallsBeforePreview
+        );
+        const previewQuery = client.calls.find((call) => call[0] === 'queryJSONEachRow' && call[1] === 'scheduled report preview');
+
+        assert.ok(previewQuery);
+        assert.equal(previewQuery[2].readonly, 1);
+        assert.equal(previewQuery[2].max_result_rows, 50);
+        assert.equal(previewQuery[2].max_execution_time, 120);
+        assert.match(previewQuery[3], /SELECT \* FROM \(\nSELECT 4 AS answer\n\) AS scheduled_report_result\nLIMIT 50\nFORMAT JSONEachRow/);
+
+        const scheduleCreated = await fetchText(baseUrl, '/reports/scheduled/1/schedules/create', {
+          method: 'POST',
+          redirect: 'manual',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({
+            enabled: '1',
+            scheduleTime: '10:30',
+            timezone: 'Europe/Moscow',
+            recipients: 'a@example.test\nb@example.test',
+            emailSubject: 'Subject',
+            emailBody: 'Email body'
+          })
+        });
+
+        assert.equal(scheduleCreated.response.status, 303);
+        assert.equal(scheduleCreated.response.headers.get('location'), '/reports/scheduled?reportId=1&message=schedule-created');
+
+        const scheduleUpdated = await fetchText(baseUrl, '/reports/scheduled/1/schedules/2/update', {
+          method: 'POST',
+          redirect: 'manual',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({
+            scheduleTime: '11:00',
+            timezone: 'Europe/Moscow',
+            recipients: 'team@example.test',
+            emailSubject: 'Updated subject',
+            emailBody: 'Updated body'
+          })
+        });
+
+        assert.equal(scheduleUpdated.response.status, 303);
+        assert.equal(scheduleUpdated.response.headers.get('location'), '/reports/scheduled?reportId=1&message=schedule-updated');
+
+        const run = await fetchText(baseUrl, '/reports/scheduled/1/schedules/2/run', {
+          method: 'POST',
+          redirect: 'manual',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded'
+          },
+          body: formBody({})
+        });
+
+        assert.equal(run.response.status, 303);
+        assert.equal(run.response.headers.get('location'), '/reports/scheduled?reportId=1&message=run-started');
+
+        const download = await fetch(`${baseUrl}/reports/scheduled/runs/3/download`);
+        const downloaded = Buffer.from(await download.arrayBuffer());
+
+        assert.equal(download.status, 200);
+        assert.match(download.headers.get('content-type'), /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet\b/);
+        assert.match(download.headers.get('content-disposition'), /filename="scheduled-report-3\.xlsx"/);
+        assert.deepEqual(downloaded, Buffer.from('xlsx-body'));
+      },
+      {
+        ...baseConfig(),
+        scheduledReports: {
+          fileDir,
+          defaultRowLimit: 10000,
+          maxRowLimit: 100000,
+          queryTimeoutMs: 120000
+        }
+      },
+      { scheduledReportService: scheduledReports }
+    );
+
+    assert.deepEqual(
+      scheduledReports.calls.filter((call) => [
+        'createReport',
+        'updateReport',
+        'createSchedule',
+        'updateSchedule',
+        'runSchedule',
+        'getRun'
+      ].includes(call[0])),
+      [
+        [
+          'createReport',
+          {
+            title: 'New report',
+            description: 'New description',
+            sql: 'SELECT 2 AS value',
+            rowLimit: 55,
+            timeoutMs: 1500,
+            enabled: true,
+            userId: 'anonymous'
+          }
+        ],
+        [
+          'updateReport',
+          '1',
+          {
+            title: 'Daily updated',
+            description: 'Updated description',
+            sql: 'SELECT 3 AS value',
+            rowLimit: 60,
+            timeoutMs: 2000,
+            enabled: true,
+            userId: 'anonymous'
+          }
+        ],
+        [
+          'createSchedule',
+          {
+            reportId: '1',
+            enabled: true,
+            scheduleTime: '10:30',
+            timezone: 'Europe/Moscow',
+            recipients: ['a@example.test', 'b@example.test'],
+            emailSubject: 'Subject',
+            emailBody: 'Email body',
+            userId: 'anonymous'
+          }
+        ],
+        [
+          'updateSchedule',
+          '2',
+          {
+            reportId: '1',
+            enabled: false,
+            scheduleTime: '11:00',
+            timezone: 'Europe/Moscow',
+            recipients: ['team@example.test'],
+            emailSubject: 'Updated subject',
+            emailBody: 'Updated body',
+            userId: 'anonymous'
+          }
+        ],
+        [
+          'runSchedule',
+          {
+            reportId: '1',
+            scheduleId: '2',
+            trigger: 'manual',
+            userId: 'anonymous'
+          }
+        ],
+        ['getRun', '3']
+      ]
+    );
+    assert.equal(client.calls.some((call) => call[0] === 'queryJSONEachRow' && call[1] === 'scheduled report preview'), true);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('scheduled report schedule update and run reject schedule from another report', async () => {
+  const scheduledReports = createFakeScheduledReportService({
+    reports: [
+      { id: 1, title: 'Report 1', sql: 'SELECT 1', enabled: true },
+      { id: 2, title: 'Report 2', sql: 'SELECT 2', enabled: true }
+    ],
+    schedules: [{
+      id: 22,
+      reportId: 2,
+      enabled: true,
+      scheduleTime: '09:00',
+      timezone: 'Europe/Moscow',
+      recipients: ['team@example.test'],
+      emailSubject: 'Report 2',
+      emailBody: 'Body'
+    }]
+  });
+
+  await withServer(
+    createFakeClient(),
+    async (baseUrl) => {
+      const update = await fetchText(baseUrl, '/reports/scheduled/1/schedules/22/update', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          enabled: '1',
+          scheduleTime: '10:00',
+          timezone: 'Europe/Moscow',
+          recipients: 'other@example.test',
+          emailSubject: 'Wrong report',
+          emailBody: 'Wrong body'
+        })
+      });
+      const run = await fetchText(baseUrl, '/reports/scheduled/1/schedules/22/run', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({})
+      });
+
+      assert.equal(update.response.status, 404);
+      assert.equal(run.response.status, 404);
+      assert.equal(
+        scheduledReports.calls.some((call) => call[0] === 'updateSchedule' || call[0] === 'runSchedule'),
+        false
+      );
+    },
+    {
+      ...baseConfig(),
+      scheduledReports: {
+        fileDir: path.join(os.tmpdir(), 'scheduled-report-mismatch-files')
+      }
+    },
+    { scheduledReportService: scheduledReports }
+  );
+});
+
+test('scheduled report download returns sanitized 404 for missing or unsafe files', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-report-download-'));
+  const fileDir = path.join(tempDir, 'files');
+  const outsidePath = path.join(tempDir, 'outside.xlsx');
+  const missingPath = path.join(fileDir, 'missing.xlsx');
+  const scheduledReports = createFakeScheduledReportService({
+    runs: [
+      { id: 7, reportId: 1, status: 'success', filePath: outsidePath },
+      { id: 8, reportId: 1, status: 'success', filePath: missingPath }
+    ]
+  });
+
+  try {
+    await withServer(
+      createFakeClient(),
+      async (baseUrl) => {
+        const unsafe = await fetchText(baseUrl, '/reports/scheduled/runs/7/download');
+        const missing = await fetchText(baseUrl, '/reports/scheduled/runs/8/download');
+        const unknown = await fetchText(baseUrl, '/reports/scheduled/runs/404/download');
+
+        assert.equal(unsafe.response.status, 404);
+        assert.equal(missing.response.status, 404);
+        assert.equal(unknown.response.status, 404);
+        assert.doesNotMatch(unsafe.text, /outside\.xlsx/);
+        assert.doesNotMatch(missing.text, /missing\.xlsx/);
+      },
+      {
+        ...baseConfig(),
+        scheduledReports: {
+          fileDir
+        }
+      },
+      { scheduledReportService: scheduledReports }
+    );
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('SMTP settings routes render save and send admin test mail', async () => {
+  const scheduledReports = createFakeScheduledReportService({
+    settings: {
+      host: 'smtp.example.test',
+      port: 587,
+      secureMode: 'starttls',
+      username: 'smtp-user',
+      password: 'SecretSmtpPass123!',
+      fromEmail: 'reports@example.test',
+      fromName: 'Reports',
+      hasPassword: true
+    }
+  });
+
+  await withServer(
+    createFakeClient(),
+    async (baseUrl) => {
+      const page = await fetchText(baseUrl, '/admin/mail-settings');
+
+      assert.equal(page.response.status, 200);
+      assert.match(page.text, /smtp.example.test/);
+      assert.doesNotMatch(page.text, /SecretSmtpPass123!/);
+
+      const saved = await fetchText(baseUrl, '/admin/mail-settings', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          host: 'smtp2.example.test',
+          port: '465',
+          secureMode: 'ssl',
+          username: 'smtp-user',
+          password: 'SecretSmtpPass123!',
+          fromEmail: 'reports@example.test',
+          fromName: 'Reports'
+        })
+      });
+      const tested = await fetchText(baseUrl, '/admin/mail-settings/test', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          testRecipient: 'admin@example.test'
+        })
+      });
+
+      assert.equal(saved.response.status, 303);
+      assert.equal(saved.response.headers.get('location'), '/admin/mail-settings?message=saved');
+      assert.equal(tested.response.status, 303);
+      assert.equal(tested.response.headers.get('location'), '/admin/mail-settings?message=test-sent');
+    },
+    baseConfig(),
+    { scheduledReportService: scheduledReports }
+  );
+
+  assert.deepEqual(scheduledReports.calls.filter((call) => ['saveMailSettings', 'sendTestMail'].includes(call[0])), [
+    [
+      'saveMailSettings',
+      {
+        host: 'smtp2.example.test',
+        port: 465,
+        secureMode: 'ssl',
+        username: 'smtp-user',
+        password: 'SecretSmtpPass123!',
+        fromEmail: 'reports@example.test',
+        fromName: 'Reports',
+        clearPassword: false,
+        userId: 'anonymous'
+      }
+    ],
+    [
+      'sendTestMail',
+      {
+        recipient: 'admin@example.test',
+        userId: 'anonymous'
+      }
+    ]
+  ]);
+});
+
+test('scheduled report routes record page admin action and export activity without secrets', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-report-activity-'));
+  const fileDir = path.join(tempDir, 'files');
+  const filePath = path.join(fileDir, 'activity.xlsx');
+  const activityStore = createActivitySpy();
+  const scheduledReports = createFakeScheduledReportService({
+    settings: {
+      host: 'smtp.example.test',
+      port: 587,
+      secureMode: 'starttls',
+      username: 'smtp-user',
+      fromEmail: 'reports@example.test',
+      fromName: 'Reports',
+      hasPassword: true
+    },
+    runs: [{
+      id: 3,
+      reportId: 1,
+      status: 'success',
+      filePath,
+      fileSizeBytes: 9,
+      rowCount: 1
+    }]
+  });
+
+  await fs.mkdir(fileDir, { recursive: true });
+  await fs.writeFile(filePath, Buffer.from('xlsx-body'));
+
+  try {
+    await withAuthenticatedServer(async ({ baseUrl }) => {
+      const loginResponse = await login(baseUrl);
+      const cookie = cookieFrom(loginResponse);
+      const reportsPage = await fetchText(baseUrl, '/reports/scheduled', {
+        headers: { cookie }
+      });
+
+      assert.equal(reportsPage.response.status, 200);
+      const reportCsrf = csrfFrom(reportsPage.text);
+      const created = await fetchText(baseUrl, '/reports/scheduled/create', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          cookie,
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          csrfToken: reportCsrf,
+          title: 'Secret SQL report',
+          sql: 'SELECT 123 AS secret_value',
+          rowLimit: '50',
+          timeoutMs: '1000',
+          enabled: '1'
+        })
+      });
+      const downloaded = await fetch(`${baseUrl}/reports/scheduled/runs/3/download`, {
+        headers: { cookie }
+      });
+      const mailPage = await fetchText(baseUrl, '/admin/mail-settings', {
+        headers: { cookie }
+      });
+
+      assert.equal(mailPage.response.status, 200);
+      const mailCsrf = csrfFrom(mailPage.text);
+      const tested = await fetchText(baseUrl, '/admin/mail-settings/test', {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          cookie,
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: formBody({
+          csrfToken: mailCsrf,
+          testRecipient: 'team@example.test'
+        })
+      });
+
+      assert.equal(created.response.status, 303);
+      assert.equal(downloaded.status, 200);
+      assert.equal(tested.response.status, 303);
+    }, {
+      activityStore,
+      scheduledReportService: scheduledReports,
+      scheduledFileDir: fileDir
+    });
+
+    assert.deepEqual(activityStore.events.map((event) => event.eventType), [
+      'login',
+      'page_view',
+      'admin_action',
+      'export',
+      'page_view',
+      'admin_action'
+    ]);
+    assert.deepEqual(activityStore.events.map((event) => event.section), [
+      'auth',
+      'scheduled-reports',
+      'scheduled-reports',
+      'scheduled-reports',
+      'mail-settings',
+      'mail-settings'
+    ]);
+    assert.doesNotMatch(JSON.stringify(activityStore.events), /SELECT 123|team@example\.test|smtp-user|smtp-pass/);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('GET /tables renders columns and preview rows for a known table', async () => {
@@ -2896,6 +3696,15 @@ test('start uses injectable dependencies and logs the listening port without sec
     },
     preload: {
       storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    scheduledReports: {
+      storePath: 'C:\\runtime\\scheduled-reports.sqlite',
+      fileDir: 'C:\\runtime\\scheduled-report-files',
+      retentionDays: 60,
+      defaultRowLimit: 10000,
+      maxRowLimit: 100000,
+      maxFileSizeBytes: 10485760,
+      queryTimeoutMs: 120000
     }
   };
   const clientConfigs = [];
@@ -2904,6 +3713,17 @@ test('start uses injectable dependencies and logs the listening port without sec
   let preloadServiceArgs;
   let fakePreloadService;
   let preloadServiceClosed = false;
+  let scheduledReportStoreArgs;
+  let scheduledReportMailerArgs;
+  let scheduledReportRunnerArgs;
+  let scheduledReportSchedulerArgs;
+  let scheduledReportServiceArgs;
+  let fakeScheduledReportStore;
+  let fakeScheduledReportMailer;
+  let fakeScheduledReportRunner;
+  let fakeScheduledReportScheduler;
+  let fakeScheduledReportService;
+  let scheduledReportServiceClosed = false;
 
   class FakeClient {
     constructor(clickhouseConfig) {
@@ -2925,6 +3745,44 @@ test('start uses injectable dependencies and logs the listening port without sec
       };
 
       return fakePreloadService;
+    },
+    createScheduledReportStoreFn: (args) => {
+      scheduledReportStoreArgs = args;
+      fakeScheduledReportStore = {
+        getMailSettingsSecret() {
+          return { username: 'smtp-user', password: 'smtp-pass' };
+        }
+      };
+
+      return fakeScheduledReportStore;
+    },
+    createScheduledReportMailerFn: (args) => {
+      scheduledReportMailerArgs = args;
+      fakeScheduledReportMailer = {};
+
+      return fakeScheduledReportMailer;
+    },
+    createScheduledReportRunnerFn: (args) => {
+      scheduledReportRunnerArgs = args;
+      fakeScheduledReportRunner = {};
+
+      return fakeScheduledReportRunner;
+    },
+    createScheduledReportSchedulerFn: (args) => {
+      scheduledReportSchedulerArgs = args;
+      fakeScheduledReportScheduler = {};
+
+      return fakeScheduledReportScheduler;
+    },
+    createScheduledReportServiceFn: (args) => {
+      scheduledReportServiceArgs = args;
+      fakeScheduledReportService = {
+        close() {
+          scheduledReportServiceClosed = true;
+        }
+      };
+
+      return fakeScheduledReportService;
     },
     createAppFn: (args) => {
       createAppArgs = args;
@@ -2953,8 +3811,31 @@ test('start uses injectable dependencies and logs the listening port without sec
     assert.equal(createAppArgs.config, config);
     assert.ok(createAppArgs.client instanceof FakeClient);
     assert.equal(createAppArgs.preloadService, fakePreloadService);
+    assert.equal(createAppArgs.scheduledReportService, fakeScheduledReportService);
     assert.equal(preloadServiceArgs.client, createAppArgs.client);
     assert.equal(preloadServiceArgs.storePath, config.preload.storePath);
+    assert.deepEqual(scheduledReportStoreArgs, {
+      filePath: config.scheduledReports.storePath,
+      fileDir: config.scheduledReports.fileDir
+    });
+    assert.deepEqual(scheduledReportMailerArgs, {});
+    assert.equal(scheduledReportRunnerArgs.client, createAppArgs.client);
+    assert.equal(scheduledReportRunnerArgs.store, fakeScheduledReportStore);
+    assert.equal(scheduledReportRunnerArgs.fileDir, config.scheduledReports.fileDir);
+    assert.equal(scheduledReportRunnerArgs.config, config.scheduledReports);
+    assert.equal(scheduledReportRunnerArgs.mailer, fakeScheduledReportMailer);
+    assert.equal(
+      scheduledReportRunnerArgs.sanitizeError(new Error('failed smtp-pass super-secret')),
+      'failed [redacted] [redacted]'
+    );
+    assert.deepEqual(scheduledReportSchedulerArgs, {
+      store: fakeScheduledReportStore,
+      runner: fakeScheduledReportRunner
+    });
+    assert.deepEqual(scheduledReportServiceArgs, {
+      store: fakeScheduledReportStore,
+      scheduler: fakeScheduledReportScheduler
+    });
     assert.equal(createAppArgs.activeGigersCache, null);
     assert.equal(createAppArgs.cityAnalysisCache, null);
     assert.equal(createAppArgs.dashboardSectionCache, null);
@@ -2966,6 +3847,106 @@ test('start uses injectable dependencies and logs the listening port without sec
   }
 
   assert.equal(preloadServiceClosed, true);
+  assert.equal(scheduledReportServiceClosed, true);
+});
+
+test('start cleans partially created scheduled report resources when scheduled wiring fails', async () => {
+  const config = {
+    port: 0,
+    clickhouse: {
+      host: 'clickhouse.example.test',
+      database: 'etl',
+      user: 'rouser',
+      password: 'super-secret'
+    },
+    preload: {
+      storePath: 'C:\\runtime\\preload.sqlite'
+    },
+    scheduledReports: {
+      storePath: 'C:\\runtime\\scheduled-reports.sqlite',
+      fileDir: 'C:\\runtime\\scheduled-report-files'
+    }
+  };
+  let preloadServiceClosed = false;
+  let scheduledReportStoreClosed = false;
+  let scheduledReportSchedulerStopped = false;
+  let scheduledReportSchedulerDrained = false;
+  let thrownError = null;
+
+  class FakeClient {
+    constructor(clickhouseConfig) {
+      this.clickhouseConfig = clickhouseConfig;
+    }
+  }
+
+  try {
+    start({
+      loadConfigFn: () => config,
+      ClientClass: FakeClient,
+      createPreloadServiceFn: () => ({
+        close() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              preloadServiceClosed = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createScheduledReportStoreFn: () => ({
+        getMailSettingsSecret() {
+          return {};
+        },
+        close() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              scheduledReportStoreClosed = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createScheduledReportMailerFn: () => ({}),
+      createScheduledReportRunnerFn: () => ({}),
+      createScheduledReportSchedulerFn: () => ({
+        stop() {
+          scheduledReportSchedulerStopped = true;
+        },
+        drain() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              scheduledReportSchedulerDrained = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createScheduledReportServiceFn: () => {
+        throw new Error('scheduled service failed with password super-secret');
+      },
+      createAppFn: () => http.createServer(),
+      logger: {
+        log() {},
+        warn() {}
+      }
+    });
+  } catch (error) {
+    thrownError = error;
+  }
+
+  assert.match(thrownError && thrownError.message, /scheduled service failed with password super-secret/);
+  assert.equal(preloadServiceClosed, false);
+  assert.equal(scheduledReportStoreClosed, false);
+  assert.equal(scheduledReportSchedulerStopped, true);
+  assert.equal(scheduledReportSchedulerDrained, false);
+  assert.equal(typeof thrownError.startupCleanup.then, 'function');
+
+  await thrownError.startupCleanup;
+
+  assert.equal(preloadServiceClosed, true);
+  assert.equal(scheduledReportStoreClosed, true);
+  assert.equal(scheduledReportSchedulerStopped, true);
+  assert.equal(scheduledReportSchedulerDrained, true);
 });
 
 test('start wires user activity store path and closes it with server', async () => {
@@ -3056,6 +4037,10 @@ test('start logs sanitized activity close failures and still closes preload serv
     preload: {
       storePath: 'C:\\runtime\\preload.sqlite'
     },
+    scheduledReports: {
+      storePath: 'C:\\runtime\\scheduled-reports.sqlite',
+      fileDir: 'C:\\runtime\\scheduled-report-files'
+    },
     auth: {
       enabled: true
     },
@@ -3065,6 +4050,7 @@ test('start logs sanitized activity close failures and still closes preload serv
   };
   const warningMessages = [];
   let preloadServiceClosed = false;
+  let scheduledReportServiceClosed = false;
 
   class FakeClient {
     constructor(clickhouseConfig) {
@@ -3078,6 +4064,19 @@ test('start logs sanitized activity close failures and still closes preload serv
     createPreloadServiceFn: () => ({
       close() {
         preloadServiceClosed = true;
+      }
+    }),
+    createScheduledReportStoreFn: () => ({
+      getMailSettingsSecret() {
+        return {};
+      }
+    }),
+    createScheduledReportMailerFn: () => ({}),
+    createScheduledReportRunnerFn: () => ({}),
+    createScheduledReportSchedulerFn: () => ({}),
+    createScheduledReportServiceFn: () => ({
+      close() {
+        scheduledReportServiceClosed = true;
       }
     }),
     createUserActivityStoreFn: () => ({
@@ -3104,6 +4103,7 @@ test('start logs sanitized activity close failures and still closes preload serv
   }
 
   assert.equal(preloadServiceClosed, true);
+  assert.equal(scheduledReportServiceClosed, true);
   assert.equal(warningMessages.length, 1);
   assert.match(warningMessages[0], /User activity store close failed: activity close failed with password \[redacted\]/);
   assert.doesNotMatch(warningMessages[0], /super-secret/);
@@ -3121,6 +4121,10 @@ test('start closes preload service when user activity store creation fails', () 
     preload: {
       storePath: 'C:\\runtime\\preload.sqlite'
     },
+    scheduledReports: {
+      storePath: 'C:\\runtime\\scheduled-reports.sqlite',
+      fileDir: 'C:\\runtime\\scheduled-report-files'
+    },
     auth: {
       enabled: true
     },
@@ -3130,6 +4134,7 @@ test('start closes preload service when user activity store creation fails', () 
   };
   const warningMessages = [];
   let preloadServiceClosed = false;
+  let scheduledReportServiceClosed = false;
 
   class FakeClient {
     constructor(clickhouseConfig) {
@@ -3147,6 +4152,19 @@ test('start closes preload service when user activity store creation fails', () 
           throw new Error('preload close failed with password super-secret');
         }
       }),
+      createScheduledReportStoreFn: () => ({
+        getMailSettingsSecret() {
+          return {};
+        }
+      }),
+      createScheduledReportMailerFn: () => ({}),
+      createScheduledReportRunnerFn: () => ({}),
+      createScheduledReportSchedulerFn: () => ({}),
+      createScheduledReportServiceFn: () => ({
+        close() {
+          scheduledReportServiceClosed = true;
+        }
+      }),
       createUserActivityStoreFn: () => {
         throw new Error('activity store open failed with password super-secret');
       },
@@ -3162,6 +4180,7 @@ test('start closes preload service when user activity store creation fails', () 
   );
 
   assert.equal(preloadServiceClosed, true);
+  assert.equal(scheduledReportServiceClosed, true);
   assert.equal(warningMessages.length, 1);
   assert.match(warningMessages[0], /Preload service close failed: preload close failed with password \[redacted\]/);
   assert.doesNotMatch(warningMessages[0], /super-secret/);
@@ -3243,6 +4262,10 @@ test('start closes activity and preload services when app creation fails', () =>
     preload: {
       storePath: 'C:\\runtime\\preload.sqlite'
     },
+    scheduledReports: {
+      storePath: 'C:\\runtime\\scheduled-reports.sqlite',
+      fileDir: 'C:\\runtime\\scheduled-report-files'
+    },
     auth: {
       enabled: true
     },
@@ -3252,6 +4275,7 @@ test('start closes activity and preload services when app creation fails', () =>
   };
   let activityStoreClosed = false;
   let preloadServiceClosed = false;
+  let scheduledReportServiceClosed = false;
 
   class FakeClient {
     constructor(clickhouseConfig) {
@@ -3266,6 +4290,19 @@ test('start closes activity and preload services when app creation fails', () =>
       createPreloadServiceFn: () => ({
         close() {
           preloadServiceClosed = true;
+        }
+      }),
+      createScheduledReportStoreFn: () => ({
+        getMailSettingsSecret() {
+          return {};
+        }
+      }),
+      createScheduledReportMailerFn: () => ({}),
+      createScheduledReportRunnerFn: () => ({}),
+      createScheduledReportSchedulerFn: () => ({}),
+      createScheduledReportServiceFn: () => ({
+        close() {
+          scheduledReportServiceClosed = true;
         }
       }),
       createUserActivityStoreFn: () => ({
@@ -3286,6 +4323,7 @@ test('start closes activity and preload services when app creation fails', () =>
 
   assert.equal(activityStoreClosed, true);
   assert.equal(preloadServiceClosed, true);
+  assert.equal(scheduledReportServiceClosed, true);
 });
 
 test('start exposes async activity and preload cleanup when app creation fails', async () => {
@@ -3300,6 +4338,10 @@ test('start exposes async activity and preload cleanup when app creation fails',
     preload: {
       storePath: 'C:\\runtime\\preload.sqlite'
     },
+    scheduledReports: {
+      storePath: 'C:\\runtime\\scheduled-reports.sqlite',
+      fileDir: 'C:\\runtime\\scheduled-report-files'
+    },
     auth: {
       enabled: true
     },
@@ -3309,6 +4351,7 @@ test('start exposes async activity and preload cleanup when app creation fails',
   };
   let activityStoreClosed = false;
   let preloadServiceClosed = false;
+  let scheduledReportServiceClosed = false;
   let thrownError = null;
 
   class FakeClient {
@@ -3326,6 +4369,24 @@ test('start exposes async activity and preload cleanup when app creation fails',
           return new Promise((resolve) => {
             setTimeout(() => {
               preloadServiceClosed = true;
+              resolve();
+            }, 0);
+          });
+        }
+      }),
+      createScheduledReportStoreFn: () => ({
+        getMailSettingsSecret() {
+          return {};
+        }
+      }),
+      createScheduledReportMailerFn: () => ({}),
+      createScheduledReportRunnerFn: () => ({}),
+      createScheduledReportSchedulerFn: () => ({}),
+      createScheduledReportServiceFn: () => ({
+        close() {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              scheduledReportServiceClosed = true;
               resolve();
             }, 0);
           });
@@ -3356,12 +4417,14 @@ test('start exposes async activity and preload cleanup when app creation fails',
   assert.match(thrownError && thrownError.message, /app creation failed with password super-secret/);
   assert.equal(activityStoreClosed, false);
   assert.equal(preloadServiceClosed, false);
+  assert.equal(scheduledReportServiceClosed, false);
   assert.equal(typeof thrownError.startupCleanup.then, 'function');
 
   await thrownError.startupCleanup;
 
   assert.equal(activityStoreClosed, true);
   assert.equal(preloadServiceClosed, true);
+  assert.equal(scheduledReportServiceClosed, true);
 });
 
 test('start does not create user activity store when auth is disabled', async () => {

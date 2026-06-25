@@ -514,6 +514,168 @@ test('managed users only access granted sections', async () => {
   });
 });
 
+test('scheduled report routes enforce author delivery and admin SMTP permissions', async () => {
+  const scheduledReports = {
+    listReports: () => [],
+    getReport: () => null,
+    listSchedules: () => [],
+    listRuns: () => [],
+    getMailSettings: () => ({ hasPassword: false }),
+    close() {}
+  };
+
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await createReadyUser(userStore, {
+      email: 'author@example.test',
+      name: 'Author',
+      role: 'analyst',
+      permissions: ['scheduled-report-author'],
+      password: 'AuthorPass123!'
+    }, 'AuthorReady123!');
+    await createReadyUser(userStore, {
+      email: 'delivery@example.test',
+      name: 'Delivery',
+      role: 'analyst',
+      permissions: ['scheduled-report-delivery'],
+      password: 'DeliveryPass123!'
+    }, 'DeliveryReady123!');
+
+    const authorCookie = cookieFrom(await login(baseUrl, 'author@example.test', 'AuthorReady123!'));
+    const deliveryCookie = cookieFrom(await login(baseUrl, 'delivery@example.test', 'DeliveryReady123!'));
+    const adminCookie = cookieFrom(await login(baseUrl, 'admin@example.test', 'EnvAdminPass123'));
+
+    const authorReports = await fetchText(baseUrl, '/reports/scheduled', {
+      headers: { cookie: authorCookie }
+    });
+    const deliveryReports = await fetchText(baseUrl, '/reports/scheduled', {
+      headers: { cookie: deliveryCookie }
+    });
+    const deliverySmtp = await fetchText(baseUrl, '/admin/mail-settings', {
+      headers: { cookie: deliveryCookie }
+    });
+    const adminSmtp = await fetchText(baseUrl, '/admin/mail-settings', {
+      headers: { cookie: adminCookie }
+    });
+
+    assert.equal(authorReports.response.status, 200);
+    assert.equal(deliveryReports.response.status, 200);
+    assert.equal(deliverySmtp.response.status, 403);
+    assert.equal(adminSmtp.response.status, 200);
+  }, { scheduledReportService: scheduledReports });
+});
+
+test('scheduled report author and delivery posts require csrf', async () => {
+  const calls = [];
+  const scheduledReports = {
+    listReports: () => [{ id: 1, title: 'Daily', sql: 'SELECT 1', enabled: true }],
+    getReport: (id) => (Number(id) === 1 ? { id: 1, title: 'Daily', sql: 'SELECT 1', enabled: true } : null),
+    listSchedules: () => [],
+    listRuns: () => [],
+    createReport(input) {
+      calls.push(['createReport', input]);
+    },
+    createSchedule(input) {
+      calls.push(['createSchedule', input]);
+    },
+    getMailSettings: () => ({ hasPassword: false }),
+    close() {}
+  };
+
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await createReadyUser(userStore, {
+      email: 'author@example.test',
+      name: 'Author',
+      role: 'analyst',
+      permissions: ['scheduled-report-author'],
+      password: 'AuthorPass123!'
+    }, 'AuthorReady123!');
+    await createReadyUser(userStore, {
+      email: 'delivery@example.test',
+      name: 'Delivery',
+      role: 'analyst',
+      permissions: ['scheduled-report-delivery'],
+      password: 'DeliveryPass123!'
+    }, 'DeliveryReady123!');
+
+    const authorCookie = cookieFrom(await login(baseUrl, 'author@example.test', 'AuthorReady123!'));
+    const deliveryCookie = cookieFrom(await login(baseUrl, 'delivery@example.test', 'DeliveryReady123!'));
+
+    const authorRejected = await fetchText(baseUrl, '/reports/scheduled/create', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie: authorCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken: 'bad-token',
+        title: 'Daily',
+        sql: 'SELECT 1',
+        rowLimit: '50',
+        timeoutMs: '1000'
+      })
+    });
+    const deliveryRejected = await fetchText(baseUrl, '/reports/scheduled/1/schedules/create', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        cookie: deliveryCookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({
+        csrfToken: 'bad-token',
+        scheduleTime: '09:00',
+        recipients: 'team@example.test'
+      })
+    });
+
+    assert.equal(authorRejected.response.status, 403);
+    assert.equal(deliveryRejected.response.status, 403);
+    assert.deepEqual(calls, []);
+  }, { scheduledReportService: scheduledReports });
+});
+
+test('scheduled report downloads require delivery permission', async () => {
+  const scheduledReports = {
+    listReports: () => [{ id: 1, title: 'Daily', sql: 'SELECT 1', enabled: true }],
+    getReport: () => ({ id: 1, title: 'Daily', sql: 'SELECT 1', enabled: true }),
+    listSchedules: () => [],
+    listRuns: () => [],
+    getRun: () => ({ id: 5, reportId: 1, status: 'success', filePath: 'C:\\outside\\missing.xlsx' }),
+    getMailSettings: () => ({ hasPassword: false }),
+    close() {}
+  };
+
+  await withAuthServer(async ({ baseUrl, userStore }) => {
+    await createReadyUser(userStore, {
+      email: 'author@example.test',
+      name: 'Author',
+      role: 'analyst',
+      permissions: ['scheduled-report-author'],
+      password: 'AuthorPass123!'
+    }, 'AuthorReady123!');
+    await createReadyUser(userStore, {
+      email: 'delivery@example.test',
+      name: 'Delivery',
+      role: 'analyst',
+      permissions: ['scheduled-report-delivery'],
+      password: 'DeliveryPass123!'
+    }, 'DeliveryReady123!');
+
+    const authorCookie = cookieFrom(await login(baseUrl, 'author@example.test', 'AuthorReady123!'));
+    const deliveryCookie = cookieFrom(await login(baseUrl, 'delivery@example.test', 'DeliveryReady123!'));
+    const authorDownload = await fetchText(baseUrl, '/reports/scheduled/runs/5/download', {
+      headers: { cookie: authorCookie }
+    });
+    const deliveryDownload = await fetchText(baseUrl, '/reports/scheduled/runs/5/download', {
+      headers: { cookie: deliveryCookie }
+    });
+
+    assert.equal(authorDownload.response.status, 403);
+    assert.equal(deliveryDownload.response.status, 404);
+  }, { scheduledReportService: scheduledReports });
+});
+
 test('request report async endpoints return JSON auth errors', async () => {
   await withAuthServer(async ({ baseUrl, userStore }) => {
     await createReadyUser(userStore, {

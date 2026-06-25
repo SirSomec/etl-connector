@@ -45,6 +45,12 @@ function maxExecutionTimeSeconds(limits) {
   return Math.max(1, Math.ceil(Number(limits && limits.timeoutMs) / 1000));
 }
 
+function retentionDays(config) {
+  const value = Number(config && config.retentionDays);
+
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 60;
+}
+
 async function unlinkBestEffort(filePath, unlink) {
   try {
     await unlink(filePath);
@@ -101,6 +107,25 @@ function createScheduledReportRunner({
     let fileSizeBytes = 0;
     let rows = [];
 
+    async function pruneOldRunsBestEffort() {
+      if (typeof store.pruneOldRuns !== 'function') {
+        return;
+      }
+
+      try {
+        await store.pruneOldRuns(retentionDays(config));
+      } catch (_) {
+        // Retention cleanup must not hide the result of the report run.
+      }
+    }
+
+    async function finishRunAndPrune(input) {
+      const finished = await store.finishRun(run.id, input);
+
+      await pruneOldRunsBestEffort();
+      return finished;
+    }
+
     try {
       const limits = normalizeReportLimits(report, config);
       const wrapped = wrapReportSql(report.sql, limits);
@@ -153,7 +178,7 @@ function createScheduledReportRunner({
       });
 
     } catch (error) {
-      return store.finishRun(run.id, {
+      return finishRunAndPrune({
         status: 'failed',
         rowCount: filePath ? rows.length : 0,
         fileSizeBytes: filePath ? fileSizeBytes : 0,
@@ -162,7 +187,7 @@ function createScheduledReportRunner({
       });
     }
 
-    return store.finishRun(run.id, {
+    return finishRunAndPrune({
       status: 'success',
       rowCount: rows.length,
       fileSizeBytes,

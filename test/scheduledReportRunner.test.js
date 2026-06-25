@@ -196,6 +196,45 @@ test('runner executes query writes xlsx sends mail and records success', async (
   }
 });
 
+test('runner prunes old runs after finishing report run', async () => {
+  const { dir, fileDir, store: baseStore } = await fixture();
+  const pruneCalls = [];
+  const store = {
+    ...baseStore,
+    pruneOldRuns(days) {
+      pruneCalls.push(days);
+      return Promise.resolve({ runs: 0, files: 0, skipped: 0 });
+    }
+  };
+
+  try {
+    const report = baseStore.createReport({ title: 'R', sql: 'SELECT value FROM mg_jobs', userId: 'u' });
+    const schedule = baseStore.createSchedule({ reportId: report.id, recipients: ['a@example.test'], userId: 'u' });
+    saveMailSettings(baseStore);
+
+    const runner = createScheduledReportRunner({
+      client: {
+        async queryJSONEachRow() {
+          return [{ value: 'ok' }];
+        }
+      },
+      store,
+      fileDir,
+      config: { ...defaultConfig, retentionDays: 60 },
+      mailer: {
+        async sendReport() {}
+      }
+    });
+    const run = await runner.runSchedule({ scheduleId: schedule.id, trigger: 'schedule', userId: 'system' });
+
+    assert.equal(run.status, 'success');
+    assert.deepEqual(pruneCalls, [60]);
+  } finally {
+    baseStore.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('runner keeps generated file and sanitized error when SMTP fails', async () => {
   const { dir, fileDir, store } = await fixture();
   const client = {

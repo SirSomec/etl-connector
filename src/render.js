@@ -75,6 +75,12 @@ const NAV_LINKS = [
     permission: 'request-report-matching'
   },
   {
+    href: '/reports/scheduled',
+    label: 'Регулярные отчеты',
+    id: 'scheduled-reports',
+    permissionAny: ['scheduled-report-author', 'scheduled-report-delivery']
+  },
+  {
     href: '/admin/users',
     label: 'Учетные записи',
     id: 'users',
@@ -91,6 +97,12 @@ const NAV_LINKS = [
     label: 'Предзагрузка',
     id: 'preload-admin',
     permission: 'preload-admin'
+  },
+  {
+    href: '/admin/mail-settings',
+    label: 'SMTP',
+    id: 'mail-settings',
+    permission: 'admin-only'
   }
 ];
 
@@ -106,6 +118,10 @@ function navLinksForUser(currentUser) {
   return NAV_LINKS.filter((link) => {
     if (link.permission === 'admin-only') {
       return currentUser.role === 'admin';
+    }
+
+    if (Array.isArray(link.permissionAny)) {
+      return link.permissionAny.some((permission) => hasPermission(currentUser, permission));
     }
 
     return hasPermission(currentUser, link.permission);
@@ -1061,6 +1077,7 @@ function layout({
 
     select,
     input,
+    textarea,
     button {
       min-height: 36px;
       border: 1px solid var(--line);
@@ -1070,10 +1087,16 @@ function layout({
     }
 
     select,
-    input {
+    input,
+    textarea {
       padding: 6px 8px;
       background: var(--surface);
       color: var(--text);
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
     }
 
     .filter-field {
@@ -5578,6 +5601,434 @@ function renderAccountManagement({
 
 function renderCheckedAttribute(value) {
   return value ? ' checked' : '';
+}
+
+function scheduledRouteSegment(value) {
+  return encodeURIComponent(String(value ?? ''));
+}
+
+function scheduleRecipientsText(recipients) {
+  if (Array.isArray(recipients)) {
+    return recipients.join('\n');
+  }
+
+  return String(recipients || '');
+}
+
+function scheduleRecipientsDisplay(recipients) {
+  if (Array.isArray(recipients)) {
+    return recipients.join(', ');
+  }
+
+  return String(recipients || '');
+}
+
+function scheduledReportValue(value, fallback = '') {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  return value;
+}
+
+function formatScheduledReportFileSize(value) {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return '-';
+  }
+
+  if (bytes < 1024) {
+    return `${formatNumber(bytes)} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${formatNumber(bytes / 1024, 1)} KB`;
+  }
+
+  return `${formatNumber(bytes / 1024 / 1024, 1)} MB`;
+}
+
+function renderScheduledPageMessages(message, error) {
+  const messageHtml = message ? `<div class="success">${escapeHtml(message)}</div>` : '';
+  const errorHtml = error ? `<div class="inline-error">${escapeHtml(error)}</div>` : '';
+
+  return messageHtml || errorHtml ? `<section class="section">${messageHtml}${errorHtml}</section>` : '';
+}
+
+function renderScheduledReportList(reports = [], selectedReport = null) {
+  const rows = safeRows(reports);
+  const selectedId = selectedReport && selectedReport.id !== undefined && selectedReport.id !== null
+    ? String(selectedReport.id)
+    : '';
+
+  if (rows.length === 0) {
+    return '<p class="empty">Отчетов пока нет.</p>';
+  }
+
+  return `<ul class="table-list scheduled-report-list">${rows.map((report) => {
+    const safeReport = report || {};
+    const reportId = String(scheduledReportValue(safeReport.id));
+    const isSelected = selectedId !== '' && String(safeReport.id) === selectedId;
+    const className = isSelected ? 'scheduled-report-item scheduled-report-selected' : 'scheduled-report-item';
+    const marker = isSelected ? '<span class="readonly-badge">выбран</span>' : '';
+    const status = safeReport.enabled ? 'включен' : 'выключен';
+    const updatedAt = safeReport.updatedAt ? ` · ${safeReport.updatedAt}` : '';
+
+    return `<li class="${className}">
+      <a class="table-link" href="/reports/scheduled?reportId=${escapeHtml(scheduledRouteSegment(reportId))}">${escapeHtml(safeReport.title || `Отчет ${reportId}`)}</a>
+      ${marker}
+      <span class="technical-note">${escapeHtml(`${status}${updatedAt}`)}</span>
+    </li>`;
+  }).join('')}</ul>`;
+}
+
+function renderScheduledReportPreview(preview) {
+  if (!preview) {
+    return '';
+  }
+
+  if (preview.error) {
+    return `<div class="inline-error">${escapeHtml(preview.error)}</div>`;
+  }
+
+  const rows = safeRows(preview.rows);
+  const columns = safeRows(preview.columns).length > 0
+    ? safeRows(preview.columns).map((column) => String(column))
+    : rows.length > 0
+      ? Object.keys(rows[0])
+      : [];
+
+  if (columns.length === 0) {
+    return '<p class="empty">Preview пуст.</p>';
+  }
+
+  const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('');
+  const body = rows.map((row) => `<tr>${columns.map((column) => `<td>${renderCell(row[column])}</td>`).join('')}</tr>`).join('');
+
+  return `<div class="table-scroll"><table>
+    <thead><tr>${header}</tr></thead>
+    <tbody>${body || `<tr><td colspan="${escapeHtml(columns.length)}">Нет строк.</td></tr>`}</tbody>
+  </table></div>`;
+}
+
+function renderScheduledReportForm({ report = {}, csrfToken = '', mode = 'create', preview }) {
+  const safeReport = report || {};
+  const isUpdate = mode === 'update';
+  const reportId = scheduledReportValue(safeReport.id);
+
+  if (isUpdate && String(reportId) === '') {
+    return '';
+  }
+
+  const htmlId = isUpdate ? `scheduled-report-${scheduledRouteSegment(reportId)}` : 'scheduled-report-new';
+  const action = isUpdate
+    ? `/reports/scheduled/${scheduledRouteSegment(reportId)}/update`
+    : '/reports/scheduled/create';
+  const previewAction = isUpdate
+    ? `/reports/scheduled/${scheduledRouteSegment(reportId)}/preview`
+    : '';
+  const title = isUpdate ? 'Редактировать SQL-отчет' : 'Создать SQL-отчет';
+  const enabled = isUpdate ? safeReport.enabled : true;
+
+  return `<form class="form-panel" action="${escapeHtml(action)}" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <h2>${escapeHtml(title)}</h2>
+    <div class="form-grid">
+      <div class="field">
+        <label for="${escapeHtml(htmlId)}-title">Название</label>
+        <input id="${escapeHtml(htmlId)}-title" name="title" value="${escapeHtml(scheduledReportValue(safeReport.title))}" required>
+      </div>
+      <div class="field">
+        <label for="${escapeHtml(htmlId)}-row-limit">Лимит строк</label>
+        <input id="${escapeHtml(htmlId)}-row-limit" name="rowLimit" type="number" min="1" value="${escapeHtml(scheduledReportValue(safeReport.rowLimit, 10000))}" required>
+      </div>
+      <div class="field">
+        <label for="${escapeHtml(htmlId)}-timeout">Timeout, ms</label>
+        <input id="${escapeHtml(htmlId)}-timeout" name="timeoutMs" type="number" min="1" value="${escapeHtml(scheduledReportValue(safeReport.timeoutMs, 120000))}" required>
+      </div>
+    </div>
+    <div class="field">
+      <label for="${escapeHtml(htmlId)}-description">Описание</label>
+      <textarea id="${escapeHtml(htmlId)}-description" name="description">${escapeHtml(scheduledReportValue(safeReport.description))}</textarea>
+    </div>
+    <div class="field">
+      <label for="${escapeHtml(htmlId)}-sql">SQL</label>
+      <textarea id="${escapeHtml(htmlId)}-sql" name="sql" rows="8" required>${escapeHtml(scheduledReportValue(safeReport.sql))}</textarea>
+    </div>
+    <label class="checkbox-label"><input name="enabled" type="checkbox" value="1"${renderCheckedAttribute(enabled)}> Включен</label>
+    ${isUpdate && preview ? `<div class="section">${renderScheduledReportPreview(preview)}</div>` : ''}
+    <div class="form-actions">
+      <button type="submit">${isUpdate ? 'Сохранить отчет' : 'Создать отчет'}</button>
+      ${isUpdate ? `<button class="secondary-button" type="submit" formaction="${escapeHtml(previewAction)}" formmethod="post">Проверить SQL</button>` : ''}
+    </div>
+  </form>`;
+}
+
+function renderScheduledAuthorControls({ selectedReport, csrfToken, preview }) {
+  const updateForm = selectedReport
+    ? renderScheduledReportForm({ report: selectedReport, csrfToken, mode: 'update', preview })
+    : '<p class="technical-note">Выберите отчет в списке, чтобы отредактировать SQL и лимиты.</p>';
+
+  return `<section class="section">
+  ${renderScheduledReportForm({ csrfToken, mode: 'create' })}
+  ${updateForm}
+</section>`;
+}
+
+function renderScheduledScheduleForm({ reportId, schedule = {}, csrfToken = '', mode = 'create' }) {
+  const safeSchedule = schedule || {};
+  const isUpdate = mode === 'update';
+  const scheduleId = scheduledReportValue(safeSchedule.id);
+
+  if (String(reportId ?? '') === '' || (isUpdate && String(scheduleId) === '')) {
+    return '';
+  }
+
+  const reportSegment = scheduledRouteSegment(reportId);
+  const scheduleSegment = scheduledRouteSegment(scheduleId);
+  const htmlId = isUpdate
+    ? `scheduled-report-${reportSegment}-schedule-${scheduleSegment}`
+    : `scheduled-report-${reportSegment}-schedule-new`;
+  const action = isUpdate
+    ? `/reports/scheduled/${reportSegment}/schedules/${scheduleSegment}/update`
+    : `/reports/scheduled/${reportSegment}/schedules/create`;
+  const title = isUpdate ? `Расписание ${scheduleId}` : 'Новое расписание';
+  const enabled = isUpdate ? safeSchedule.enabled : true;
+
+  return `<form class="form-panel" action="${escapeHtml(action)}" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <h2>${escapeHtml(title)}</h2>
+    <label class="checkbox-label"><input name="enabled" type="checkbox" value="1"${renderCheckedAttribute(enabled)}> Включено</label>
+    <div class="form-grid">
+      <div class="field">
+        <label for="${escapeHtml(htmlId)}-time">Время</label>
+        <input id="${escapeHtml(htmlId)}-time" name="scheduleTime" type="time" value="${escapeHtml(scheduledReportValue(safeSchedule.scheduleTime, '09:00'))}" required>
+      </div>
+      <div class="field">
+        <label for="${escapeHtml(htmlId)}-timezone">Timezone</label>
+        <input id="${escapeHtml(htmlId)}-timezone" name="timezone" value="${escapeHtml(scheduledReportValue(safeSchedule.timezone, 'Europe/Moscow'))}" required>
+      </div>
+      <div class="field">
+        <label for="${escapeHtml(htmlId)}-subject">Тема письма</label>
+        <input id="${escapeHtml(htmlId)}-subject" name="emailSubject" value="${escapeHtml(scheduledReportValue(safeSchedule.emailSubject))}">
+      </div>
+    </div>
+    <div class="field">
+      <label for="${escapeHtml(htmlId)}-recipients">Получатели</label>
+      <textarea id="${escapeHtml(htmlId)}-recipients" name="recipients" required>${escapeHtml(scheduleRecipientsText(safeSchedule.recipients))}</textarea>
+    </div>
+    <div class="field">
+      <label for="${escapeHtml(htmlId)}-body">Текст письма</label>
+      <textarea id="${escapeHtml(htmlId)}-body" name="emailBody">${escapeHtml(scheduledReportValue(safeSchedule.emailBody))}</textarea>
+    </div>
+    <div class="form-actions">
+      <button type="submit">${isUpdate ? 'Сохранить расписание' : 'Создать расписание'}</button>
+    </div>
+  </form>`;
+}
+
+function renderScheduledManualRunForm({ reportId, scheduleId, csrfToken = '' }) {
+  if (String(reportId ?? '') === '' || String(scheduleId ?? '') === '') {
+    return '';
+  }
+
+  return `<form class="filter-bar" action="/reports/scheduled/${escapeHtml(scheduledRouteSegment(reportId))}/schedules/${escapeHtml(scheduledRouteSegment(scheduleId))}/run" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <button type="submit">Запустить сейчас</button>
+  </form>`;
+}
+
+function renderScheduledRunRow(run) {
+  const safeRun = run || {};
+  const runId = scheduledReportValue(safeRun.id ?? safeRun.runId);
+  const rowCount = safeRun.rowCount ?? safeRun.rowsRead ?? safeRun.rowsWritten ?? 0;
+  const recipients = scheduleRecipientsDisplay(safeRun.recipients);
+  const error = safeRun.error ?? safeRun.errorMessage ?? '';
+  const download = safeRun.canDownload === true && String(runId) !== ''
+    ? `<a href="/reports/scheduled/runs/${escapeHtml(scheduledRouteSegment(runId))}/download">Скачать</a>`
+    : '';
+
+  return `<tr>
+    <td>${escapeHtml(safeRun.status || '')}</td>
+    <td>${escapeHtml(safeRun.trigger || '')}</td>
+    <td>${escapeHtml(rowCount)}</td>
+    <td>${escapeHtml(formatScheduledReportFileSize(safeRun.fileSizeBytes))}${download ? `<br>${download}` : ''}</td>
+    <td>${escapeHtml(safeRun.startedAt || '')}</td>
+    <td>${escapeHtml(safeRun.finishedAt || '')}</td>
+    <td>${escapeHtml(recipients)}</td>
+    <td>${escapeHtml(error)}</td>
+  </tr>`;
+}
+
+function renderScheduledRunHistory(runs = []) {
+  const rows = safeRows(runs);
+  const body = rows.map(renderScheduledRunRow).join('');
+
+  return `<section class="section">
+  <h2>История отправок</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Статус</th><th>Триггер</th><th>Строк</th><th>Файл</th><th>Старт</th><th>Финиш</th><th>Получатели</th><th>Ошибка</th></tr></thead>
+    <tbody>${body || '<tr><td colspan="8">Запусков пока нет.</td></tr>'}</tbody>
+  </table></div>
+</section>`;
+}
+
+function renderScheduledDeliveryControls({ selectedReport, schedules = [], runs = [], csrfToken }) {
+  if (!selectedReport || selectedReport.id === undefined || selectedReport.id === null) {
+    return `<section class="section"><p class="technical-note">Выберите отчет, чтобы настроить расписание и посмотреть историю отправок.</p></section>
+${renderScheduledRunHistory(runs)}`;
+  }
+
+  const reportId = selectedReport.id;
+  const scheduleForms = safeRows(schedules)
+    .map((schedule) => {
+      const safeSchedule = schedule || {};
+
+      return `<article class="section">
+      ${renderScheduledScheduleForm({ reportId, schedule: safeSchedule, csrfToken, mode: 'update' })}
+      ${renderScheduledManualRunForm({ reportId, scheduleId: safeSchedule.id, csrfToken })}
+    </article>`;
+    })
+    .join('');
+
+  return `<section class="section">
+  ${renderScheduledScheduleForm({ reportId, csrfToken, mode: 'create' })}
+</section>
+${scheduleForms || '<section class="section"><p class="empty">Расписаний пока нет.</p></section>'}
+${renderScheduledRunHistory(runs)}`;
+}
+
+function renderScheduledReportsPage({
+  database,
+  currentUser,
+  csrfToken = '',
+  reports = [],
+  selectedReport = null,
+  schedules = [],
+  runs = [],
+  canAuthor = false,
+  canDeliver = false,
+  message = '',
+  error = '',
+  preview
+} = {}) {
+  const hasCapability = canAuthor || canDeliver;
+  const content = `<section class="section">
+  <h1>Регулярные отчеты</h1>
+  <p class="technical-note">SQL-отчеты для регулярной email-рассылки с Excel-вложениями.</p>
+</section>
+${renderScheduledPageMessages(message, error)}
+${!hasCapability ? `<section class="section"><p class="empty">Нет доступов для управления регулярными отчетами.</p></section>` : `<section class="section">
+  <h2>Отчеты</h2>
+  ${renderScheduledReportList(reports, selectedReport)}
+</section>
+${canAuthor ? renderScheduledAuthorControls({ selectedReport, csrfToken, preview }) : ''}
+${canDeliver ? renderScheduledDeliveryControls({ selectedReport, schedules, runs, csrfToken }) : ''}`}`;
+
+  return layout({
+    title: 'Регулярные отчеты',
+    database,
+    content,
+    activeNav: 'scheduled-reports',
+    currentUser,
+    csrfToken
+  });
+}
+
+function renderSecureModeOptions(selectedMode) {
+  const safeMode = ['starttls', 'ssl'].includes(String(selectedMode || ''))
+    ? String(selectedMode)
+    : 'starttls';
+
+  return [
+    ['starttls', 'STARTTLS'],
+    ['ssl', 'SSL']
+  ]
+    .map(([value, label]) => `<option value="${value}"${value === safeMode ? ' selected' : ''}>${label}</option>`)
+    .join('');
+}
+
+function renderMailSettingsPage({
+  database,
+  settings = {},
+  testRecipient = '',
+  message = '',
+  error = '',
+  csrfToken = '',
+  currentUser
+} = {}) {
+  const safeSettings = settings || {};
+  const messageHtml = renderScheduledPageMessages(message, error);
+  const hasPasswordText = safeSettings.hasPassword ? 'Пароль сохранен' : 'Пароль не сохранен';
+  const content = `<section class="section">
+  <h1>SMTP</h1>
+  <p class="technical-note">Настройки отправки писем для регулярных отчетов.</p>
+</section>
+${messageHtml}
+<section class="section">
+  <form class="form-panel" action="/admin/mail-settings" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <h2>Настройки сервера</h2>
+    <div class="form-grid">
+      <div class="field">
+        <label for="smtp-host">Host</label>
+        <input id="smtp-host" name="host" value="${escapeHtml(scheduledReportValue(safeSettings.host))}" required>
+      </div>
+      <div class="field">
+        <label for="smtp-port">Port</label>
+        <input id="smtp-port" name="port" type="number" min="1" max="65535" value="${escapeHtml(scheduledReportValue(safeSettings.port, 587))}" required>
+      </div>
+      <div class="field">
+        <label for="smtp-secure-mode">Secure mode</label>
+        <select id="smtp-secure-mode" name="secureMode">${renderSecureModeOptions(safeSettings.secureMode)}</select>
+      </div>
+      <div class="field">
+        <label for="smtp-username">Username</label>
+        <input id="smtp-username" name="username" autocomplete="off" value="${escapeHtml(scheduledReportValue(safeSettings.username))}">
+      </div>
+      <div class="field">
+        <label for="smtp-password">Password</label>
+        <input id="smtp-password" name="password" type="password" autocomplete="new-password" placeholder="${safeSettings.hasPassword ? 'Оставить без изменений' : ''}">
+      </div>
+      <div class="field">
+        <label for="smtp-from-email">From email</label>
+        <input id="smtp-from-email" name="fromEmail" type="email" value="${escapeHtml(scheduledReportValue(safeSettings.fromEmail))}">
+      </div>
+      <div class="field">
+        <label for="smtp-from-name">From name</label>
+        <input id="smtp-from-name" name="fromName" value="${escapeHtml(scheduledReportValue(safeSettings.fromName))}">
+      </div>
+    </div>
+    <p class="technical-note">${escapeHtml(hasPasswordText)}</p>
+    <label class="checkbox-label"><input name="clearPassword" type="checkbox" value="1"> Очистить сохраненный пароль</label>
+    <div class="form-actions">
+      <button type="submit">Сохранить SMTP</button>
+    </div>
+  </form>
+</section>
+<section class="section">
+  <form class="form-panel" action="/admin/mail-settings/test" method="post">
+    ${renderHiddenCsrf(csrfToken)}
+    <h2>Тестовая отправка</h2>
+    <div class="field">
+      <label for="smtp-test-recipient">Получатель</label>
+      <input id="smtp-test-recipient" name="testRecipient" type="email" value="${escapeHtml(testRecipient)}" required>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Отправить тест</button>
+    </div>
+  </form>
+</section>`;
+
+  return layout({
+    title: 'SMTP',
+    database,
+    content,
+    activeNav: 'mail-settings',
+    currentUser,
+    csrfToken
+  });
 }
 
 function renderPreloadRunRow(run) {
@@ -11515,12 +11966,14 @@ module.exports = {
   renderHeatmapDashboardSection,
   renderHome,
   renderLogin,
+  renderMailSettingsPage,
   renderPasswordChange,
   renderPreloadManagement,
   renderRequestReportMissingConfirmedPage,
   renderRequestReportMissingConfirmedResult,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
+  renderScheduledReportsPage,
   renderTable,
   renderUserActivityDashboard,
   renderWorkerCancellationsDetails,

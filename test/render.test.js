@@ -13,11 +13,13 @@ const {
   renderHeatmapDashboard,
   renderHeatmapDashboardSection,
   renderHome,
+  renderMailSettingsPage,
   renderPreloadManagement,
   renderRequestReportMissingConfirmedPage,
   renderRequestReportMissingConfirmedResult,
   renderSalesByProjectDashboard,
   renderSalesByProjectDashboardSection,
+  renderScheduledReportsPage,
   renderTable,
   renderUserActivityDashboard,
   renderWorkerCancellationsDetails,
@@ -518,6 +520,214 @@ test('admin-only activity navigation is visible only to admins', () => {
 
   assert.match(adminHtml, /href="\/admin\/activity"/);
   assert.doesNotMatch(analystHtml, /href="\/admin\/activity"/);
+});
+
+test('scheduled reports page renders author and delivery controls with escaped values', () => {
+  const hostile = `<script>alert("x")</script>&'`;
+  const html = renderScheduledReportsPage({
+    database: `etl-${hostile}`,
+    currentUser: { role: 'admin', permissions: [] },
+    csrfToken: `csrf-${hostile}`,
+    reports: [
+      { id: 1, title: `Daily ${hostile}`, enabled: true, updatedAt: '2026-06-25T06:00:00.000Z' },
+      { id: 4, title: 'Other report', enabled: false, updatedAt: '' }
+    ],
+    selectedReport: {
+      id: 1,
+      title: `Daily ${hostile}`,
+      description: `Description ${hostile}`,
+      sql: `SELECT '${hostile}' AS value`,
+      rowLimit: 100,
+      timeoutMs: 120000,
+      enabled: true
+    },
+    schedules: [
+      {
+        id: 2,
+        reportId: 1,
+        enabled: true,
+        scheduleTime: '09:00',
+        timezone: 'Europe/Moscow',
+        recipients: ['a@example.test', `recipient-${hostile}@example.test`],
+        emailSubject: `Subject ${hostile}`,
+        emailBody: `Body ${hostile}`
+      }
+    ],
+    runs: [
+      {
+        id: 3,
+        status: `success-${hostile}`,
+        trigger: 'manual',
+        rowCount: 1,
+        fileSizeBytes: 128,
+        startedAt: '2026-06-25T06:59:00.000Z',
+        finishedAt: '2026-06-25T07:00:00.000Z',
+        recipients: ['a@example.test'],
+        error: '',
+        canDownload: true
+      },
+      {
+        id: 5,
+        status: 'failed',
+        trigger: 'schedule',
+        rowCount: 0,
+        fileSizeBytes: 0,
+        startedAt: '2026-06-25T08:00:00.000Z',
+        finishedAt: '',
+        recipients: [`bad-${hostile}@example.test`],
+        error: `Error ${hostile}`,
+        canDownload: false
+      }
+    ],
+    canAuthor: true,
+    canDeliver: true,
+    message: `Saved ${hostile}`,
+    error: `Problem ${hostile}`
+  });
+
+  assert.match(html, /Регулярные отчеты/);
+  assert.match(html, /class="nav-link active" href="\/reports\/scheduled"/);
+  assert.match(html, /href="\/reports\/scheduled\?reportId=1"/);
+  assert.match(html, /scheduled-report-selected/);
+  assert.match(html, /action="\/reports\/scheduled\/create"/);
+  assert.match(html, /action="\/reports\/scheduled\/1\/update"/);
+  assert.match(html, /formaction="\/reports\/scheduled\/1\/preview"/);
+  assert.match(html, /name="title"/);
+  assert.match(html, /name="description"/);
+  assert.match(html, /name="sql"/);
+  assert.match(html, /name="rowLimit"/);
+  assert.match(html, /name="timeoutMs"/);
+  assert.match(html, /name="enabled"/);
+  assert.match(html, /action="\/reports\/scheduled\/1\/schedules\/create"/);
+  assert.match(html, /action="\/reports\/scheduled\/1\/schedules\/2\/update"/);
+  assert.match(html, /action="\/reports\/scheduled\/1\/schedules\/2\/run"/);
+  assert.match(html, /name="scheduleTime"/);
+  assert.match(html, /name="timezone"/);
+  assert.match(html, /name="recipients"/);
+  assert.match(html, /name="emailSubject"/);
+  assert.match(html, /name="emailBody"/);
+  assert.match(html, /href="\/reports\/scheduled\/runs\/3\/download"/);
+  assert.doesNotMatch(html, /href="\/reports\/scheduled\/runs\/5\/download"/);
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`csrf-${hostile}`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`SELECT '${hostile}' AS value`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`recipient-${hostile}@example.test`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`Error ${hostile}`))));
+  assert.doesNotMatch(html, /<script>alert\("x"\)<\/script>/);
+});
+
+test('scheduled reports page encodes preview route id', () => {
+  const html = renderScheduledReportsPage({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: ['scheduled-report-author'] },
+    csrfToken: 'csrf-token',
+    reports: [{ id: 'report <1>/x', title: 'Unsafe id' }],
+    selectedReport: {
+      id: 'report <1>/x',
+      title: 'Unsafe id',
+      sql: 'SELECT 1',
+      rowLimit: 100,
+      timeoutMs: 120000,
+      enabled: true
+    },
+    canAuthor: true,
+    canDeliver: false
+  });
+
+  assert.match(html, /name="csrfToken" value="csrf-token"/);
+  assert.match(html, /formaction="\/reports\/scheduled\/report%20%3C1%3E%2Fx\/preview"/);
+  assert.doesNotMatch(html, /formaction="\/reports\/scheduled\/report <1>\/x\/preview"/);
+});
+
+test('scheduled reports page separates author and delivery capabilities', () => {
+  const authorHtml = renderScheduledReportsPage({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: ['scheduled-report-author'] },
+    csrfToken: 'csrf',
+    reports: [{ id: 1, title: 'Daily' }],
+    selectedReport: { id: 1, title: 'Daily', sql: 'SELECT 1', enabled: true },
+    schedules: [{ id: 2, reportId: 1, recipients: ['a@example.test'] }],
+    runs: [{ id: 3, canDownload: true }],
+    canAuthor: true,
+    canDeliver: false
+  });
+  const deliveryHtml = renderScheduledReportsPage({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: ['scheduled-report-delivery'] },
+    csrfToken: 'csrf',
+    reports: [{ id: 1, title: 'Daily' }],
+    selectedReport: { id: 1, title: 'Daily', sql: 'SELECT 1', enabled: true },
+    schedules: [{ id: 2, reportId: 1, recipients: ['a@example.test'] }],
+    runs: [{ id: 3, status: 'success', trigger: 'manual', canDownload: true }],
+    canAuthor: false,
+    canDeliver: true
+  });
+  const readOnlyHtml = renderScheduledReportsPage({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: [] },
+    csrfToken: 'csrf',
+    reports: [{ id: 1, title: 'Daily' }],
+    selectedReport: { id: 1, title: 'Daily', sql: 'SELECT 1' },
+    canAuthor: false,
+    canDeliver: false
+  });
+
+  assert.match(authorHtml, /action="\/reports\/scheduled\/create"/);
+  assert.match(authorHtml, /name="sql"/);
+  assert.doesNotMatch(authorHtml, /name="recipients"/);
+  assert.doesNotMatch(authorHtml, /\/download"/);
+
+  assert.doesNotMatch(deliveryHtml, /action="\/reports\/scheduled\/create"/);
+  assert.doesNotMatch(deliveryHtml, /name="sql"/);
+  assert.match(deliveryHtml, /name="recipients"/);
+  assert.match(deliveryHtml, /href="\/reports\/scheduled\/runs\/3\/download"/);
+
+  assert.match(readOnlyHtml, /Нет доступов для управления регулярными отчетами/);
+  assert.doesNotMatch(readOnlyHtml, /action="\/reports\/scheduled\/create"/);
+  assert.doesNotMatch(readOnlyHtml, /name="sql"/);
+  assert.doesNotMatch(readOnlyHtml, /name="recipients"/);
+});
+
+test('mail settings page renders SMTP forms without exposing password', () => {
+  const hostile = `<script>alert("smtp")</script>&'`;
+  const html = renderMailSettingsPage({
+    database: `etl-${hostile}`,
+    currentUser: { role: 'admin', permissions: [] },
+    csrfToken: `csrf-${hostile}`,
+    settings: {
+      host: `smtp-${hostile}.example.test`,
+      port: 587,
+      secureMode: 'starttls',
+      username: `user-${hostile}`,
+      password: `secret-${hostile}`,
+      hasPassword: true,
+      fromEmail: `from-${hostile}@example.test`,
+      fromName: `MyGig ${hostile}`
+    },
+    testRecipient: `test-${hostile}@example.test`,
+    message: `Saved ${hostile}`,
+    error: `Error ${hostile}`
+  });
+
+  assert.match(html, /class="nav-link active" href="\/admin\/mail-settings"/);
+  assert.match(html, /action="\/admin\/mail-settings"/);
+  assert.match(html, /action="\/admin\/mail-settings\/test"/);
+  assert.match(html, /name="host"/);
+  assert.match(html, /name="port"/);
+  assert.match(html, /name="secureMode"/);
+  assert.match(html, /value="starttls" selected/);
+  assert.match(html, /value="ssl"/);
+  assert.match(html, /name="username"/);
+  assert.match(html, /name="password"/);
+  assert.match(html, /name="clearPassword"/);
+  assert.match(html, /name="fromEmail"/);
+  assert.match(html, /name="fromName"/);
+  assert.match(html, /name="testRecipient"/);
+  assert.match(html, /Пароль сохранен/);
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`smtp-${hostile}.example.test`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`test-${hostile}@example.test`))));
+  assert.match(html, new RegExp(escapeRegExp(escapeHtml(`csrf-${hostile}`))));
+  assert.doesNotMatch(html, new RegExp(escapeRegExp(`secret-${hostile}`)));
+  assert.doesNotMatch(html, /<script>alert\("smtp"\)<\/script>/);
 });
 
 test('renderWorkplaceAnalysisDashboard renders unified dashboard header and active filter chips', () => {

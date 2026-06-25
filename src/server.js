@@ -37,6 +37,7 @@ const {
 const {
   createRequestReportJobStore
 } = require('./requestReportJobStore');
+const { buildXlsxWorkbook } = require('./xlsxWorkbook');
 const {
   runRequestReportConfirmedCheckJob
 } = require('./requestReportJobRunner');
@@ -1133,7 +1134,7 @@ function createApp({
       reportId: String(reportId),
       enabled: booleanFromBody(safeBody.enabled),
       scheduleTime: parseScheduledReportTime(safeBody.scheduleTime),
-      timezone: String(safeBody.timezone || 'Europe/Moscow').trim() || 'Europe/Moscow',
+      timezone: 'Europe/Moscow',
       recipients: normalizeRecipientsFromBody(safeBody.recipients),
       emailSubject: String(safeBody.emailSubject || '').trim(),
       emailBody: String(safeBody.emailBody || '').trim()
@@ -1175,6 +1176,7 @@ function createApp({
       run
       && run.filePath
       && (run.status === 'success' || run.status === 'failed')
+      && isScheduledRunWithinRetention(run)
     );
   }
 
@@ -1320,8 +1322,26 @@ function createApp({
     return `scheduled-report-${safeRunId}.xlsx`;
   }
 
+  function scheduledReportRetentionDays() {
+    const days = Number(scheduledReportsConfig().retentionDays);
+
+    return Number.isFinite(days) && days > 0 ? Math.floor(days) : 60;
+  }
+
+  function isScheduledRunWithinRetention(run) {
+    const finishedTime = Date.parse(String(run && run.finishedAt || ''));
+
+    if (!Number.isFinite(finishedTime)) {
+      return false;
+    }
+
+    const cutoff = now().getTime() - scheduledReportRetentionDays() * 24 * 60 * 60 * 1000;
+
+    return finishedTime >= cutoff;
+  }
+
   async function readScheduledRunFile(run) {
-    if (!canDownloadScheduledRun(run)) {
+    if (!canDownloadScheduledRun(run) || !isScheduledRunWithinRetention(run)) {
       return null;
     }
 
@@ -3227,7 +3247,11 @@ function start(options = {}) {
           subject: 'SMTP test',
           body: 'SMTP settings test',
           filename: 'smtp-test.xlsx',
-          fileBuffer: Buffer.from('SMTP test')
+          fileBuffer: buildXlsxWorkbook({
+            sheetName: 'SMTP',
+            headers: ['status'],
+            rows: [['ok']]
+          })
         });
       }
     }

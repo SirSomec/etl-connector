@@ -5807,7 +5807,8 @@ function renderScheduledScheduleForm({ reportId, schedule = {}, csrfToken = '', 
       </div>
       <div class="field">
         <label for="${escapeHtml(htmlId)}-timezone">Timezone</label>
-        <input id="${escapeHtml(htmlId)}-timezone" name="timezone" value="${escapeHtml(scheduledReportValue(safeSchedule.timezone, 'Europe/Moscow'))}" required>
+        <input name="timezone" type="hidden" value="Europe/Moscow">
+        <input id="${escapeHtml(htmlId)}-timezone" value="Europe/Moscow" readonly>
       </div>
       <div class="field">
         <label for="${escapeHtml(htmlId)}-subject">Тема письма</label>

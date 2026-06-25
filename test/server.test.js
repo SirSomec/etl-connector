@@ -2670,6 +2670,7 @@ test('scheduled report routes render save update preview run and download xlsx',
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-report-routes-'));
   const fileDir = path.join(tempDir, 'files');
   const filePath = path.join(fileDir, 'daily.xlsx');
+  const oldFilePath = path.join(fileDir, 'old-daily.xlsx');
 
   await fs.mkdir(fileDir, { recursive: true });
   await fs.writeFile(filePath, Buffer.from('xlsx-body'));
@@ -2685,6 +2686,16 @@ test('scheduled report routes render save update preview run and download xlsx',
       filePath,
       recipients: ['team@example.test'],
       finishedAt: '2026-06-25T07:00:00.000Z'
+    }, {
+      id: 4,
+      reportId: 1,
+      status: 'success',
+      trigger: 'schedule',
+      rowCount: 1,
+      fileSizeBytes: 9,
+      filePath: oldFilePath,
+      recipients: ['team@example.test'],
+      finishedAt: '2026-04-25T07:00:00.000Z'
     }]
   });
   const client = createFakeClient({
@@ -2709,6 +2720,7 @@ test('scheduled report routes render save update preview run and download xlsx',
         assert.match(page.text, /Daily report/);
         assert.match(page.text, /team@example.test/);
         assert.match(page.text, /\/reports\/scheduled\/runs\/3\/download/);
+        assert.doesNotMatch(page.text, /\/reports\/scheduled\/runs\/4\/download/);
 
         const created = await fetchText(baseUrl, '/reports/scheduled/create', {
           method: 'POST',
@@ -2788,7 +2800,7 @@ test('scheduled report routes render save update preview run and download xlsx',
           body: formBody({
             enabled: '1',
             scheduleTime: '10:30',
-            timezone: 'Europe/Moscow',
+            timezone: 'UTC',
             recipients: 'a@example.test\nb@example.test',
             emailSubject: 'Subject',
             emailBody: 'Email body'
@@ -2806,7 +2818,7 @@ test('scheduled report routes render save update preview run and download xlsx',
           },
           body: formBody({
             scheduleTime: '11:00',
-            timezone: 'Europe/Moscow',
+            timezone: 'UTC',
             recipients: 'team@example.test',
             emailSubject: 'Updated subject',
             emailBody: 'Updated body'
@@ -2840,12 +2852,16 @@ test('scheduled report routes render save update preview run and download xlsx',
         ...baseConfig(),
         scheduledReports: {
           fileDir,
+          retentionDays: 60,
           defaultRowLimit: 10000,
           maxRowLimit: 100000,
           queryTimeoutMs: 120000
         }
       },
-      { scheduledReportService: scheduledReports }
+      {
+        scheduledReportService: scheduledReports,
+        now: () => new Date('2026-06-25T07:00:00.000Z')
+      }
     );
 
     assert.deepEqual(
@@ -2995,34 +3011,46 @@ test('scheduled report download returns sanitized 404 for missing or unsafe file
   const fileDir = path.join(tempDir, 'files');
   const outsidePath = path.join(tempDir, 'outside.xlsx');
   const missingPath = path.join(fileDir, 'missing.xlsx');
+  const oldPath = path.join(fileDir, 'old.xlsx');
   const scheduledReports = createFakeScheduledReportService({
     runs: [
-      { id: 7, reportId: 1, status: 'success', filePath: outsidePath },
-      { id: 8, reportId: 1, status: 'success', filePath: missingPath }
+      { id: 7, reportId: 1, status: 'success', filePath: outsidePath, finishedAt: '2026-06-25T07:00:00.000Z' },
+      { id: 8, reportId: 1, status: 'success', filePath: missingPath, finishedAt: '2026-06-25T07:00:00.000Z' },
+      { id: 9, reportId: 1, status: 'success', filePath: oldPath, finishedAt: '2026-04-25T07:00:00.000Z' }
     ]
   });
 
   try {
+    await fs.mkdir(fileDir, { recursive: true });
+    await fs.writeFile(oldPath, Buffer.from('old-xlsx'));
+
     await withServer(
       createFakeClient(),
       async (baseUrl) => {
         const unsafe = await fetchText(baseUrl, '/reports/scheduled/runs/7/download');
         const missing = await fetchText(baseUrl, '/reports/scheduled/runs/8/download');
+        const old = await fetchText(baseUrl, '/reports/scheduled/runs/9/download');
         const unknown = await fetchText(baseUrl, '/reports/scheduled/runs/404/download');
 
         assert.equal(unsafe.response.status, 404);
         assert.equal(missing.response.status, 404);
+        assert.equal(old.response.status, 404);
         assert.equal(unknown.response.status, 404);
         assert.doesNotMatch(unsafe.text, /outside\.xlsx/);
         assert.doesNotMatch(missing.text, /missing\.xlsx/);
+        assert.doesNotMatch(old.text, /old\.xlsx/);
       },
       {
         ...baseConfig(),
         scheduledReports: {
-          fileDir
+          fileDir,
+          retentionDays: 60
         }
       },
-      { scheduledReportService: scheduledReports }
+      {
+        scheduledReportService: scheduledReports,
+        now: () => new Date('2026-06-25T07:00:00.000Z')
+      }
     );
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -3134,7 +3162,8 @@ test('scheduled report routes record page admin action and export activity witho
       status: 'success',
       filePath,
       fileSizeBytes: 9,
-      rowCount: 1
+      rowCount: 1,
+      finishedAt: '2026-06-25T07:00:00.000Z'
     }]
   });
 
@@ -3723,6 +3752,7 @@ test('start uses injectable dependencies and logs the listening port without sec
   let fakeScheduledReportRunner;
   let fakeScheduledReportScheduler;
   let fakeScheduledReportService;
+  let smtpTestMailInput;
   let scheduledReportServiceClosed = false;
 
   class FakeClient {
@@ -3758,7 +3788,12 @@ test('start uses injectable dependencies and logs the listening port without sec
     },
     createScheduledReportMailerFn: (args) => {
       scheduledReportMailerArgs = args;
-      fakeScheduledReportMailer = {};
+      fakeScheduledReportMailer = {
+        async sendReport(input) {
+          smtpTestMailInput = input;
+          return { messageId: 'smtp-test' };
+        }
+      };
 
       return fakeScheduledReportMailer;
     },
@@ -3836,6 +3871,10 @@ test('start uses injectable dependencies and logs the listening port without sec
       store: fakeScheduledReportStore,
       scheduler: fakeScheduledReportScheduler
     });
+    await createAppArgs.scheduledReportService.sendTestMail({ recipient: 'admin@example.test' });
+    assert.equal(smtpTestMailInput.filename, 'smtp-test.xlsx');
+    assert.equal(smtpTestMailInput.fileBuffer.readUInt32LE(0), 0x04034b50);
+    assert.deepEqual(smtpTestMailInput.recipients, ['admin@example.test']);
     assert.equal(createAppArgs.activeGigersCache, null);
     assert.equal(createAppArgs.cityAnalysisCache, null);
     assert.equal(createAppArgs.dashboardSectionCache, null);

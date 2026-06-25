@@ -74,6 +74,21 @@ const PERMISSION_DEFINITIONS = [
     description: 'Управление расписанием и ручным обновлением предрасчитанных витрин.'
   },
   {
+    id: 'scheduled-report-author',
+    label: 'SQL отчеты',
+    description: 'Создание, редактирование и проверка SQL-отчетов для регулярной рассылки.'
+  },
+  {
+    id: 'scheduled-report-delivery',
+    label: 'Рассылки отчетов',
+    description: 'Расписания, получатели, история отправки и скачивание отправленных Excel-файлов.'
+  },
+  {
+    id: 'mail-settings-admin',
+    label: 'SMTP настройки',
+    description: 'Администраторская настройка SMTP и тестовая отправка.'
+  },
+  {
     id: 'users',
     label: 'Учетные записи',
     description: 'Создание, редактирование и удаление пользователей сервиса.'
@@ -81,7 +96,10 @@ const PERMISSION_DEFINITIONS = [
 ];
 
 const ALL_PERMISSION_IDS = PERMISSION_DEFINITIONS.map((permission) => permission.id);
-const ANALYST_PERMISSION_IDS = ALL_PERMISSION_IDS.filter((permission) => permission !== 'users');
+const ANALYST_PERMISSION_IDS = ALL_PERMISSION_IDS.filter((permission) => ![
+  'users',
+  'mail-settings-admin'
+].includes(permission));
 
 function authUserStorePathFromEnv(env = process.env) {
   return env.AUTH_USER_STORE_PATH || DEFAULT_USER_STORE_PATH;

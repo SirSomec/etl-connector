@@ -15,6 +15,10 @@ function baseEnv(overrides = {}) {
   };
 }
 
+function requiredEnv(overrides = {}) {
+  return baseEnv(overrides);
+}
+
 test('loadConfig returns required values and safe defaults', () => {
   const config = loadConfig(baseEnv());
 
@@ -43,6 +47,35 @@ test('loadConfig returns required values and safe defaults', () => {
   );
   assert.equal(config.auth.sessionCookieName, 'etl_analytics_session');
   assert.equal(config.auth.sessionTtlMs, 12 * 60 * 60 * 1000);
+});
+
+test('scheduled report config uses safe defaults', () => {
+  const config = loadConfig(requiredEnv());
+
+  assert.equal(
+    config.scheduledReports.storePath,
+    path.join(process.cwd(), 'data', 'scheduled-reports.sqlite')
+  );
+  assert.equal(
+    config.scheduledReports.fileDir,
+    path.join(process.cwd(), 'data', 'scheduled-report-files')
+  );
+  assert.equal(config.scheduledReports.retentionDays, 60);
+  assert.equal(config.scheduledReports.defaultRowLimit, 10000);
+  assert.equal(config.scheduledReports.maxRowLimit, 100000);
+  assert.equal(config.scheduledReports.maxFileSizeBytes, 10485760);
+  assert.equal(config.scheduledReports.queryTimeoutMs, 120000);
+});
+
+test('scheduled report numeric config validates ranges', () => {
+  assert.throws(
+    () => loadConfig({ ...requiredEnv(), SCHEDULED_REPORT_RETENTION_DAYS: '0' }),
+    /SCHEDULED_REPORT_RETENTION_DAYS must be between 1 and 3650/
+  );
+  assert.throws(
+    () => loadConfig({ ...requiredEnv(), SCHEDULED_REPORT_MAX_ROW_LIMIT: 'abc' }),
+    /SCHEDULED_REPORT_MAX_ROW_LIMIT must be an integer/
+  );
 });
 
 test('loadConfig accepts preload store path override', () => {

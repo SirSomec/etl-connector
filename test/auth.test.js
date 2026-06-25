@@ -14,6 +14,12 @@ const {
   verifyPassword
 } = require('../src/auth');
 
+const tempStoreDirs = [];
+
+test.after(async () => {
+  await Promise.all(tempStoreDirs.map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
+});
+
 async function withTempDir(callback) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'auth-test-'));
 
@@ -37,6 +43,14 @@ function createStore(filePath) {
   });
 }
 
+async function tempStorePath() {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'auth-test-'));
+
+  tempStoreDirs.push(tempDir);
+
+  return path.join(tempDir, 'users.json');
+}
+
 test('password hashing verifies correct passwords without storing plaintext', async () => {
   const hash = await createPasswordHash('StrongPass123', {
     iterations: 1000,
@@ -47,6 +61,36 @@ test('password hashing verifies correct passwords without storing plaintext', as
   assert.doesNotMatch(hash, /StrongPass123/);
   assert.equal(await verifyPassword('StrongPass123', hash), true);
   assert.equal(await verifyPassword('WrongPass123', hash), false);
+});
+
+test('scheduled report permissions are normalized for admins and analysts', async () => {
+  const store = createUserStore({
+    filePath: await tempStorePath(),
+    adminEmail: 'admin@example.test',
+    adminPassword: 'AdminPass123!',
+    passwordHashOptions: { iterations: 1000, salt: '0123456789abcdef' }
+  });
+
+  const admin = await store.findByEmail('admin@example.test');
+  const analyst = await store.createUser({
+    email: 'reports@example.test',
+    name: 'Reports Analyst',
+    role: 'analyst',
+    permissions: [
+      'scheduled-report-author',
+      'scheduled-report-delivery',
+      'mail-settings-admin'
+    ],
+    password: 'ReportsPass123!'
+  });
+
+  assert.equal(admin.permissions.includes('scheduled-report-author'), true);
+  assert.equal(admin.permissions.includes('scheduled-report-delivery'), true);
+  assert.equal(admin.permissions.includes('mail-settings-admin'), true);
+  assert.deepEqual(analyst.permissions, [
+    'scheduled-report-author',
+    'scheduled-report-delivery'
+  ]);
 });
 
 test('user store exposes env admin and persists managed accounts', async () => {

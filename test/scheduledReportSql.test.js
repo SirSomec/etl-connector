@@ -18,13 +18,14 @@ test('scheduled report SQL rejects mutations and multiple statements', () => {
   assert.throws(() => assertSafeReportSql('SELECT * FROM mg_jobs FORMAT JSONEachRow'), /FORMAT clause is managed by the application/);
 });
 
-test('wrapReportSql applies external limit and readonly settings', () => {
+test('wrapReportSql applies external limit without changing readonly setting', () => {
   const wrapped = wrapReportSql('SELECT _id, status FROM mg_jobs', { rowLimit: 100 });
 
   assert.match(wrapped.query, /SELECT \* FROM \(/);
   assert.match(wrapped.query, /LIMIT 100/);
   assert.deepEqual(wrapped.params, {});
-  assert.deepEqual(wrapped.settings, { readonly: 1, max_result_rows: 100 });
+  assert.deepEqual(wrapped.settings, { max_result_rows: 100 });
+  assert.equal(Object.hasOwn(wrapped.settings, 'readonly'), false);
 });
 
 test('wrapReportSql normalizes unsafe row limits', () => {

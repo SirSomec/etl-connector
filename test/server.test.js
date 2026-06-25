@@ -2786,9 +2786,9 @@ test('scheduled report routes render save update preview run and download xlsx',
         const previewQuery = client.calls.find((call) => call[0] === 'queryJSONEachRow' && call[1] === 'scheduled report preview');
 
         assert.ok(previewQuery);
-        assert.equal(previewQuery[2].readonly, 1);
         assert.equal(previewQuery[2].max_result_rows, 50);
         assert.equal(previewQuery[2].max_execution_time, 120);
+        assert.equal(Object.hasOwn(previewQuery[2], 'readonly'), false);
         assert.match(previewQuery[3], /SELECT \* FROM \(\nSELECT 4 AS answer\n\) AS scheduled_report_result\nLIMIT 50\nFORMAT JSONEachRow/);
 
         const scheduleCreated = await fetchText(baseUrl, '/reports/scheduled/1/schedules/create', {

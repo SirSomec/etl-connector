@@ -97,6 +97,105 @@ test('scheduled report scheduler timer callback delegates scheduled run and resc
   assert.equal(timers[1].delay, 60 * 60 * 1000);
 });
 
+test('scheduled report scheduler retries failed generated reports after three minutes', async () => {
+  const schedules = [{ id: 1, enabled: true, scheduleTime: '09:30', timezone: 'Europe/Moscow' }];
+  const timers = [];
+  const runs = [];
+  const results = [
+    { status: 'failed', filePath: '', rowCount: 0 },
+    { status: 'success', filePath: 'report.xlsx', rowCount: 1 }
+  ];
+  const scheduler = createScheduledReportScheduler({
+    store: {
+      listEnabledSchedules() {
+        return schedules;
+      }
+    },
+    runner: {
+      async runSchedule(input) {
+        runs.push(input);
+        return results.shift();
+      }
+    },
+    now: () => new Date('2026-06-25T06:00:00.000Z'),
+    setTimeoutFn(callback, delay) {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutFn() {}
+  });
+
+  scheduler.reschedule();
+
+  assert.equal(timers[0].delay, 30 * 60 * 1000);
+
+  await timers[0].callback();
+
+  assert.equal(runs.length, 1);
+  assert.equal(timers[1].delay, 3 * 60 * 1000);
+
+  await timers[1].callback();
+
+  assert.deepEqual(runs, [
+    { scheduleId: 1, trigger: 'schedule', userId: 'system' },
+    { scheduleId: 1, trigger: 'schedule', userId: 'system' }
+  ]);
+  assert.equal(timers[2].delay, 30 * 60 * 1000);
+});
+
+test('scheduled report scheduler does not retry failed reports after mail sending started', async () => {
+  const schedules = [{ id: 1, enabled: true, scheduleTime: '09:30', timezone: 'Europe/Moscow' }];
+  const timers = [];
+  const scheduler = createScheduledReportScheduler({
+    store: {
+      listEnabledSchedules() {
+        return schedules;
+      }
+    },
+    runner: {
+      async runSchedule() {
+        return { status: 'failed', filePath: 'report.xlsx', rowCount: 1 };
+      }
+    },
+    now: () => new Date('2026-06-25T06:00:00.000Z'),
+    setTimeoutFn(callback, delay) {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutFn() {}
+  });
+
+  scheduler.reschedule();
+  await timers[0].callback();
+
+  assert.equal(timers[1].delay, 30 * 60 * 1000);
+});
+
+test('scheduled report scheduler does not retry manual failures', async () => {
+  const timers = [];
+  const scheduler = createScheduledReportScheduler({
+    store: { listEnabledSchedules: () => [] },
+    runner: {
+      async runSchedule() {
+        return { status: 'failed', filePath: '', rowCount: 0 };
+      }
+    },
+    setTimeoutFn(callback, delay) {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutFn() {}
+  });
+
+  const result = await scheduler.runNow({ scheduleId: 1, trigger: 'manual', userId: 'u' });
+
+  assert.deepEqual(result, { status: 'failed', filePath: '', rowCount: 0 });
+  assert.deepEqual(timers, []);
+});
+
 test('scheduled report scheduler prevents parallel run for same schedule and drains running promises', async () => {
   let release;
   const blocker = new Promise((resolve) => {

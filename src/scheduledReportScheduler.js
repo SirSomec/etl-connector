@@ -1,5 +1,6 @@
 const MOSCOW_UTC_OFFSET_HOURS = 3;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_RETRY_DELAY_MS = 3 * 60 * 1000;
 
 function parseScheduleTime(scheduleTime) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(String(scheduleTime || '09:00'));
@@ -43,10 +44,15 @@ function scheduleKey(scheduleId) {
   return String(scheduleId);
 }
 
+function shouldRetryGeneratedReport(result) {
+  return Boolean(result && result.status === 'failed' && !result.filePath);
+}
+
 function createScheduledReportScheduler({
   store,
   runner,
   now = () => new Date(),
+  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout
 } = {}) {
@@ -86,6 +92,38 @@ function createScheduledReportScheduler({
       .filter((schedule) => schedule && schedule.id !== undefined && schedule.enabled !== false);
   }
 
+  function scheduleRunTimer(schedule, delay, generation) {
+    const key = scheduleKey(schedule.id);
+    let timer;
+
+    timer = setTimeoutFn(() => {
+      if (timersBySchedule.get(key) === timer) {
+        timersBySchedule.delete(key);
+      }
+
+      if (stopped || generation !== timerGeneration) {
+        return Promise.resolve();
+      }
+
+      return runNow({ scheduleId: schedule.id, trigger: 'schedule', userId: 'system' })
+        .catch(() => ({ status: 'failed', filePath: '' }))
+        .then((result) => {
+          if (stopped || generation !== timerGeneration) {
+            return;
+          }
+
+          if (shouldRetryGeneratedReport(result)) {
+            scheduleRunTimer(schedule, retryDelayMs, generation);
+            return;
+          }
+
+          reschedule();
+        });
+    }, delay);
+
+    timersBySchedule.set(key, timer);
+  }
+
   function reschedule() {
     stopped = false;
     clearTimers();
@@ -93,28 +131,7 @@ function createScheduledReportScheduler({
     const generation = timerGeneration;
 
     for (const schedule of enabledSchedules()) {
-      const key = scheduleKey(schedule.id);
-      let timer;
-
-      timer = setTimeoutFn(() => {
-        if (timersBySchedule.get(key) === timer) {
-          timersBySchedule.delete(key);
-        }
-
-        if (stopped || generation !== timerGeneration) {
-          return Promise.resolve();
-        }
-
-        return runNow({ scheduleId: schedule.id, trigger: 'schedule', userId: 'system' })
-          .catch(() => undefined)
-          .finally(() => {
-            if (!stopped && generation === timerGeneration) {
-              reschedule();
-            }
-          });
-      }, nextDelayForSchedule(schedule, now()));
-
-      timersBySchedule.set(key, timer);
+      scheduleRunTimer(schedule, nextDelayForSchedule(schedule, now()), generation);
     }
   }
 

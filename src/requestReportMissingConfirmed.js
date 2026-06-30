@@ -11,6 +11,7 @@ const REQUEST_REPORT_EXPORT_HEADERS = [
   'Результат проверки',
   'ID смены если найдена',
   'Ссылка на смену',
+  'Лист учета',
   'Статус проверки'
 ];
 const CHECK_RESULT_FOUND = 'confirmed-found';
@@ -19,6 +20,11 @@ const CHECK_RESULT_LABELS = {
   [CHECK_RESULT_FOUND]: 'Найдена confirmed-смена',
   [CHECK_RESULT_MISSING]: 'Confirmed-смена не найдена'
 };
+const ACT_EXISTS_COLUMN = 'photos_confirm';
+const LEGACY_ACT_EXISTS_COLUMN = 'is_act_exists';
+const ACT_SIGNED_FALLBACK_COLUMN = 'is_act_signed';
+const DEFAULT_ACT_EXISTS_EXPRESSION = actExistsExpressionForColumn(ACT_EXISTS_COLUMN);
+const EMPTY_ACT_EXISTS_EXPRESSION = 'toUInt8(0)';
 
 const PROGRESS_POINTS = Object.freeze({
   'reading-file': Object.freeze({ start: 0, end: 5, detail: 'Читаем файл отчета' }),
@@ -118,20 +124,25 @@ function normalizeLookupOptions(value = DEFAULT_BATCH_SIZE) {
   if (typeof value === 'number') {
     return {
       batchSize: Number.isInteger(value) && value > 0 ? value : DEFAULT_BATCH_SIZE,
-      onProgress: undefined
+      onProgress: undefined,
+      actExistsExpression: DEFAULT_ACT_EXISTS_EXPRESSION
     };
   }
 
   if (value && typeof value === 'object') {
     return {
       batchSize: Number.isInteger(value.batchSize) && value.batchSize > 0 ? value.batchSize : DEFAULT_BATCH_SIZE,
-      onProgress: value.onProgress
+      onProgress: value.onProgress,
+      actExistsExpression: typeof value.actExistsExpression === 'string' && value.actExistsExpression
+        ? value.actExistsExpression
+        : DEFAULT_ACT_EXISTS_EXPRESSION
     };
   }
 
   return {
     batchSize: DEFAULT_BATCH_SIZE,
-    onProgress: undefined
+    onProgress: undefined,
+    actExistsExpression: DEFAULT_ACT_EXISTS_EXPRESSION
   };
 }
 
@@ -151,6 +162,36 @@ function normalizeExternalId(value) {
   }
 
   return text;
+}
+
+function normalizeActExists(value) {
+  if (value === true) {
+    return true;
+  }
+
+  if (value === false || value === undefined || value === null) {
+    return false;
+  }
+
+  const text = normalizeCellText(value).toLowerCase();
+
+  if (text === '' || text === '0' || text === 'false' || text === 'no' || text === 'n' || text === 'нет' || text === '[]' || text === 'null') {
+    return false;
+  }
+
+  return true;
+}
+
+function actExistsLabel(value) {
+  return normalizeActExists(value) ? 'Есть' : 'Нет';
+}
+
+function addActInfo(row, isActExists) {
+  return {
+    ...row,
+    isActExists: normalizeActExists(isActExists),
+    actExistsLabel: actExistsLabel(isActExists)
+  };
 }
 
 function xmlDecode(value) {
@@ -661,8 +702,52 @@ function chunkValues(values, size) {
   return chunks;
 }
 
+function actExistsExpressionForColumn(columnName) {
+  if (columnName === ACT_EXISTS_COLUMN) {
+    return `toUInt8(arrayExists(x -> x LIKE '%createdAt%' AND x NOT LIKE '%deleted": true%' AND x NOT LIKE '%deleted\\": true%', j.${columnName}))`;
+  }
+
+  if (columnName === LEGACY_ACT_EXISTS_COLUMN || columnName === ACT_SIGNED_FALLBACK_COLUMN) {
+    return `toUInt8(ifNull(j.${columnName}, 0))`;
+  }
+
+  return EMPTY_ACT_EXISTS_EXPRESSION;
+}
+
+async function resolveActExistsExpression(client) {
+  if (!client || typeof client.getColumns !== 'function') {
+    return DEFAULT_ACT_EXISTS_EXPRESSION;
+  }
+
+  let columns;
+
+  try {
+    columns = await client.getColumns('mg_jobs');
+  } catch {
+    return EMPTY_ACT_EXISTS_EXPRESSION;
+  }
+
+  const names = new Set((Array.isArray(columns) ? columns : [])
+    .map((column) => normalizeCellText(column && column.name))
+    .filter(Boolean));
+
+  if (names.has(ACT_EXISTS_COLUMN)) {
+    return actExistsExpressionForColumn(ACT_EXISTS_COLUMN);
+  }
+
+  if (names.has(LEGACY_ACT_EXISTS_COLUMN)) {
+    return actExistsExpressionForColumn(LEGACY_ACT_EXISTS_COLUMN);
+  }
+
+  if (names.has(ACT_SIGNED_FALLBACK_COLUMN)) {
+    return actExistsExpressionForColumn(ACT_SIGNED_FALLBACK_COLUMN);
+  }
+
+  return EMPTY_ACT_EXISTS_EXPRESSION;
+}
+
 async function loadJobsForExternalIds(client, externalIds, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
-  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const { batchSize, onProgress, actExistsExpression } = normalizeLookupOptions(batchSizeOrOptions);
   const safeExternalIds = Array.isArray(externalIds) ? externalIds : [];
   const progressOptions = { onProgress };
   const jobs = [];
@@ -693,7 +778,8 @@ async function loadJobsForExternalIds(client, externalIds, batchSizeOrOptions = 
       '  toString(o.external_id) AS external_id,',
       '  toString(j._id) AS job_id,',
       '  toString(j.status) AS status,',
-      '  toString(j.workplace) AS workplace_id',
+      '  toString(j.workplace) AS workplace_id,',
+      `  ${actExistsExpression} AS is_act_exists`,
       'FROM mg_orders AS o',
       'INNER JOIN mg_jobs AS j ON toString(j.source) = toString(o._id)',
       `WHERE toString(o.external_id) IN (${idsSql})`,
@@ -753,7 +839,8 @@ function buildConfirmedJobByExternalId(jobs) {
 
     confirmed.set(externalId, {
       jobId: normalizeCellText(job && job.job_id),
-      workplaceId: normalizeCellText(job && job.workplace_id)
+      workplaceId: normalizeCellText(job && job.workplace_id),
+      isActExists: normalizeActExists(job && job.is_act_exists)
     });
   }
 
@@ -777,6 +864,25 @@ function groupJobsByExternalId(jobs) {
   }
 
   return grouped;
+}
+
+function buildActExistsByExternalId(jobs) {
+  const actExistsByExternalId = new Map();
+
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    const externalId = normalizeExternalId(job && job.external_id);
+
+    if (!externalId) {
+      continue;
+    }
+
+    actExistsByExternalId.set(
+      externalId,
+      actExistsByExternalId.get(externalId) === true || normalizeActExists(job && job.is_act_exists)
+    );
+  }
+
+  return actExistsByExternalId;
 }
 
 function uniqueWorkplaceIdFromJobs(jobs) {
@@ -976,7 +1082,7 @@ function uniqueWorkplaceDateCandidates(rows) {
 }
 
 async function loadConfirmedCompositeKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
-  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const { batchSize, onProgress, actExistsExpression } = normalizeLookupOptions(batchSizeOrOptions);
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const progressOptions = { onProgress };
   const uniqueKeys = new Set();
@@ -1012,11 +1118,13 @@ async function loadConfirmedCompositeKeys(client, candidates, batchSizeOrOptions
       '  technical_name,',
       '  any(job_id) AS job_id,',
       '  any(workplace_id) AS workplace_id,',
+      '  max(is_act_exists) AS is_act_exists,',
       '  count() AS confirmed_jobs',
       'FROM (',
       '  SELECT',
       '    toString(j._id) AS job_id,',
       '    toString(j.workplace) AS workplace_id,',
+      `    ${actExistsExpression} AS is_act_exists,`,
       '    toString(toDate(j.start)) AS start_date,',
       '    left(toString(j.start_time), 5) AS start_time,',
       `    ${technicalNameExpression} AS technical_name`,
@@ -1041,7 +1149,8 @@ async function loadConfirmedCompositeKeys(client, candidates, batchSizeOrOptions
         uniqueKeys.add(key);
         uniqueMatches.set(key, {
           jobId: normalizeCellText(row && row.job_id),
-          workplaceId: normalizeCellText(row && row.workplace_id)
+          workplaceId: normalizeCellText(row && row.workplace_id),
+          isActExists: normalizeActExists(row && row.is_act_exists)
         });
       }
     }
@@ -1072,7 +1181,7 @@ function normalizedClickHouseEmployeeNameExpression(expression) {
 }
 
 async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
-  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const { batchSize, onProgress, actExistsExpression } = normalizeLookupOptions(batchSizeOrOptions);
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const progressOptions = { onProgress };
   const keys = new Map();
@@ -1116,11 +1225,13 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
       '  employee_name,',
       '  any(job_id) AS resolved_job_id,',
       '  any(workplace_id) AS resolved_workplace_id,',
+      '  max(is_act_exists) AS is_act_exists,',
       '  uniqExact(job_id) AS confirmed_jobs',
       'FROM (',
       '  SELECT',
       '    toString(j._id) AS job_id,',
       '    toString(j.workplace) AS workplace_id,',
+      `    ${actExistsExpression} AS is_act_exists,`,
       '    toString(toDate(j.start)) AS start_date,',
       '    left(toString(j.start_time), 5) AS start_time,',
       `    ${technicalNameExpression} AS technical_name,`,
@@ -1149,7 +1260,8 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
 
         keys.set(key, {
           jobId: normalizeCellText(row && row.resolved_job_id),
-          workplaceId: normalizeCellText(row && row.resolved_workplace_id)
+          workplaceId: normalizeCellText(row && row.resolved_workplace_id),
+          isActExists: normalizeActExists(row && row.is_act_exists)
         });
       }
     }
@@ -1166,7 +1278,7 @@ async function loadUniqueConfirmedCompositeEmployeeKeys(client, candidates, batc
 }
 
 async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, batchSizeOrOptions = DEFAULT_BATCH_SIZE) {
-  const { batchSize, onProgress } = normalizeLookupOptions(batchSizeOrOptions);
+  const { batchSize, onProgress, actExistsExpression } = normalizeLookupOptions(batchSizeOrOptions);
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const progressOptions = { onProgress };
   const keys = new Map();
@@ -1208,11 +1320,13 @@ async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, 
       '  employee_name,',
       '  any(job_id) AS resolved_job_id,',
       '  any(workplace_id) AS resolved_workplace_id,',
+      '  max(is_act_exists) AS is_act_exists,',
       '  uniqExact(job_id) AS confirmed_jobs',
       'FROM (',
       '  SELECT',
       '    toString(j._id) AS job_id,',
       '    toString(j.workplace) AS workplace_id,',
+      `    ${actExistsExpression} AS is_act_exists,`,
       '    toString(toDate(j.start)) AS start_date,',
       `    ${technicalNameExpression} AS technical_name,`,
       `    arrayJoin([${workerNameExpression}, ${userNameExpression}]) AS employee_name`,
@@ -1239,7 +1353,8 @@ async function loadUniqueConfirmedCompositeEmployeeDateKeys(client, candidates, 
 
         keys.set(key, {
           jobId: normalizeCellText(row && row.resolved_job_id),
-          workplaceId: normalizeCellText(row && row.resolved_workplace_id)
+          workplaceId: normalizeCellText(row && row.resolved_workplace_id),
+          isActExists: normalizeActExists(row && row.is_act_exists)
         });
       }
     }
@@ -1428,11 +1543,13 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
   const batchSize = Number.isInteger(options.batchSize) && options.batchSize > 0
     ? options.batchSize
     : DEFAULT_BATCH_SIZE;
-  const progressOptions = { batchSize, onProgress: options.onProgress };
+  const actExistsExpression = await resolveActExistsExpression(client);
+  const progressOptions = { batchSize, onProgress: options.onProgress, actExistsExpression };
   const jobs = await loadJobsForExternalIds(client, externalIds, progressOptions);
   const confirmedExternalIds = buildConfirmedExternalIdSet(jobs);
   const confirmedJobByExternalId = buildConfirmedJobByExternalId(jobs);
   const jobsByExternalId = groupJobsByExternalId(jobs);
+  const actExistsByExternalId = buildActExistsByExternalId(jobs);
   const rowsForCompositeFallback = safeRows.filter((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
 
@@ -1508,7 +1625,10 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
       technicalName
     )) || '';
 
-    return addCrmUrl(row, directWorkplaceId || fallbackWorkplaceId || fallbackWorkplaceIdByDate);
+    return addActInfo(
+      addCrmUrl(row, directWorkplaceId || fallbackWorkplaceId || fallbackWorkplaceIdByDate),
+      actExistsByExternalId.get(externalId) === true
+    );
   });
   const checkedRows = safeRows.map((row) => {
     const externalId = normalizeExternalId(row && row.idLkk);
@@ -1522,13 +1642,17 @@ async function findRequestReportRowsWithoutConfirmedShift(client, rows, options 
       || null;
     const checkResult = match ? CHECK_RESULT_FOUND : CHECK_RESULT_MISSING;
     const shiftUrl = match ? crmCoordinationUrl(row && row.startText, match.workplaceId) : '';
+    const isActExists = normalizeActExists(match && match.isActExists)
+      || actExistsByExternalId.get(externalId) === true;
 
     return {
       ...row,
       checkResult,
       checkResultLabel: CHECK_RESULT_LABELS[checkResult],
       matchedShiftId: match ? normalizeCellText(match.jobId) : '',
-      shiftUrl
+      shiftUrl,
+      isActExists,
+      actExistsLabel: actExistsLabel(isActExists)
     };
   });
   const confirmedRows = safeRows.length - missingRows.length;
@@ -1574,12 +1698,15 @@ function buildRequestReportCheckWorkbook(input = {}) {
     const checkResultLabel = normalizeCellText(row.checkResultLabel)
       || CHECK_RESULT_LABELS[checkResult]
       || '';
+    const actLabel = normalizeCellText(row.actExistsLabel)
+      || (Object.hasOwn(row, 'isActExists') ? actExistsLabel(row.isActExists) : '');
 
     workbookRows.push([
       ...(Array.isArray(sourceRow && sourceRow.cells) ? sourceRow.cells.map(normalizeCellText) : []),
       checkResultLabel,
       normalizeCellText(row.matchedShiftId),
       normalizeCellText(row.shiftUrl),
+      actLabel,
       normalizeCellText(row.reviewStatusLabel || row.reviewStatus)
     ]);
   }

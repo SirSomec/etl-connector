@@ -117,9 +117,9 @@ test('findRequestReportRowsWithoutConfirmedShift returns rows without confirmed 
       calls.push({ query, params, operation });
 
       return [
-        { external_id: 'confirmed-id', status: 'confirmed', workplace_id: 'wp-confirmed' },
-        { external_id: 'cancelled-id', status: 'cancelled', workplace_id: 'wp-cancelled' },
-        { external_id: 'booked-id', status: 'booked', workplace_id: 'wp-booked' }
+        { external_id: 'confirmed-id', job_id: 'job-confirmed', status: 'confirmed', workplace_id: 'wp-confirmed', is_act_exists: '["photo"]' },
+        { external_id: 'cancelled-id', job_id: 'job-cancelled', status: 'cancelled', workplace_id: 'wp-cancelled', is_act_exists: '["photo"]' },
+        { external_id: 'booked-id', job_id: 'job-booked', status: 'booked', workplace_id: 'wp-booked', is_act_exists: 0 }
       ];
     }
   };
@@ -143,7 +143,17 @@ test('findRequestReportRowsWithoutConfirmedShift returns rows without confirmed 
   assert.equal(calls[0].operation, 'request report confirmed shift lookup');
   assert.match(calls[0].query, /mg_orders AS o/);
   assert.match(calls[0].query, /mg_jobs AS j/);
+  assert.match(calls[0].query, /j\.photos_confirm/);
+  assert.match(calls[0].query, /arrayExists/);
+  assert.match(calls[0].query, /createdAt/);
+  assert.match(calls[0].query, /deleted": true/);
+  assert.match(calls[0].query, /deleted\\": true/);
+  assert.doesNotMatch(calls[0].query, /j\.is_act_exists/);
   assert.deepEqual(result.rows.map((row) => row.idLkk), ['cancelled-id', 'missing-id', '']);
+  assert.deepEqual(result.rows.map((row) => row.isActExists), [true, false, false]);
+  assert.deepEqual(result.rows.map((row) => row.actExistsLabel), ['Есть', 'Нет', 'Нет']);
+  assert.deepEqual(result.checkedRows.map((row) => row.isActExists), [true, true, false, false]);
+  assert.deepEqual(result.checkedRows.map((row) => row.actExistsLabel), ['Есть', 'Есть', 'Нет', 'Нет']);
   assert.equal(
     result.rows[0].crmUrl,
     'https://crm.mygig.ru/coordination?searchDate[]=2026-06-09&searchDate[]=2026-06-09&workplaceIds[]=wp-cancelled'
@@ -155,6 +165,99 @@ test('findRequestReportRowsWithoutConfirmedShift returns rows without confirmed 
     confirmedRows: 1,
     missingConfirmedRows: 3
   });
+});
+
+test('findRequestReportRowsWithoutConfirmedShift uses photos_confirm when the column exists in mg_jobs', async () => {
+  const calls = [];
+  const client = {
+    async getColumns(tableName) {
+      calls.push({ operation: 'getColumns', tableName });
+
+      assert.equal(tableName, 'mg_jobs');
+
+      return [
+        { name: 'photos_confirm', type: 'Array(String)' },
+        { name: 'is_act_signed', type: 'Nullable(Bool)' }
+      ];
+    },
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'request report confirmed shift lookup') {
+        return [
+          {
+            external_id: 'cancelled-id',
+            job_id: 'job-cancelled',
+            status: 'cancelled',
+            workplace_id: 'wp-cancelled',
+            is_act_exists: 1
+          }
+        ];
+      }
+
+      return [];
+    }
+  };
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, [
+    { idLkk: 'cancelled-id', organization: 'А', workplace: 'Т1' }
+  ], { batchSize: 10 });
+  const shiftLookupCall = calls.find((call) => call.operation === 'request report confirmed shift lookup');
+
+  assert.ok(shiftLookupCall);
+  assert.match(shiftLookupCall.query, /j\.photos_confirm/);
+  assert.match(shiftLookupCall.query, /arrayExists/);
+  assert.match(shiftLookupCall.query, /createdAt/);
+  assert.match(shiftLookupCall.query, /deleted": true/);
+  assert.match(shiftLookupCall.query, /deleted\\": true/);
+  assert.doesNotMatch(shiftLookupCall.query, /j\.is_act_exists/);
+  assert.doesNotMatch(shiftLookupCall.query, /j\.is_act_signed/);
+  assert.equal(result.rows[0].isActExists, true);
+  assert.equal(result.rows[0].actExistsLabel, 'Есть');
+});
+
+test('findRequestReportRowsWithoutConfirmedShift falls back when mg_jobs has no photos_confirm column', async () => {
+  const calls = [];
+  const client = {
+    async getColumns(tableName) {
+      calls.push({ operation: 'getColumns', tableName });
+
+      assert.equal(tableName, 'mg_jobs');
+
+      return [
+        { name: 'is_act_signed', type: 'Nullable(Bool)' }
+      ];
+    },
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'request report confirmed shift lookup') {
+        return [
+          {
+            external_id: 'cancelled-id',
+            job_id: 'job-cancelled',
+            status: 'cancelled',
+            workplace_id: 'wp-cancelled',
+            is_act_exists: 1
+          }
+        ];
+      }
+
+      return [];
+    }
+  };
+
+  const result = await findRequestReportRowsWithoutConfirmedShift(client, [
+    { idLkk: 'cancelled-id', organization: 'А', workplace: 'Т1' }
+  ], { batchSize: 10 });
+  const shiftLookupCall = calls.find((call) => call.operation === 'request report confirmed shift lookup');
+
+  assert.ok(shiftLookupCall);
+  assert.doesNotMatch(shiftLookupCall.query, /j\.photos_confirm/);
+  assert.doesNotMatch(shiftLookupCall.query, /j\.is_act_exists/);
+  assert.match(shiftLookupCall.query, /j\.is_act_signed/);
+  assert.equal(result.rows[0].isActExists, true);
+  assert.equal(result.rows[0].actExistsLabel, 'Есть');
 });
 
 test('findRequestReportRowsWithoutConfirmedShift does not query ClickHouse when report has no LKK ids', async () => {
@@ -169,7 +272,9 @@ test('findRequestReportRowsWithoutConfirmedShift does not query ClickHouse when 
 
   const result = await findRequestReportRowsWithoutConfirmedShift(client, rows);
 
-  assert.deepEqual(result.rows, rows);
+  assert.deepEqual(result.rows, [
+    { ...rows[0], isActExists: false, actExistsLabel: 'Нет' }
+  ]);
   assert.deepEqual(result.summary, {
     totalRows: 1,
     rowsWithId: 0,
@@ -195,7 +300,9 @@ test('findRequestReportRowsWithoutConfirmedShift ignores progress callback failu
     }
   });
 
-  assert.deepEqual(result.rows, rows);
+  assert.deepEqual(result.rows, [
+    { ...rows[0], isActExists: false, actExistsLabel: 'Нет' }
+  ]);
   assert.equal(result.summary.totalRows, 1);
   assert.equal(result.summary.missingConfirmedRows, 1);
 });
@@ -942,6 +1049,7 @@ test('buildRequestReportCheckWorkbook preserves source columns and appends check
         checkResultLabel: 'Найдена confirmed-смена',
         matchedShiftId: 'job-101',
         shiftUrl: 'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101',
+        actExistsLabel: 'Есть',
         reviewStatusLabel: 'Проверена'
       }
     ]
@@ -949,10 +1057,11 @@ test('buildRequestReportCheckWorkbook preserves source columns and appends check
   const parsed = parseRequestsReportWorkbook(workbook);
   const exportedRow = parsed.sourceSheet.rows[0];
 
-  assert.deepEqual(parsed.sourceSheet.headers.slice(-4), [
+  assert.deepEqual(parsed.sourceSheet.headers.slice(-5), [
     'Результат проверки',
     'ID смены если найдена',
     'Ссылка на смену',
+    'Лист учета',
     'Статус проверки'
   ]);
   assert.deepEqual(exportedRow.cells.slice(0, 8), [
@@ -965,10 +1074,11 @@ test('buildRequestReportCheckWorkbook preserves source columns and appends check
     '09:00',
     '7.5'
   ]);
-  assert.deepEqual(exportedRow.cells.slice(-4), [
+  assert.deepEqual(exportedRow.cells.slice(-5), [
     'Найдена confirmed-смена',
     'job-101',
     'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101',
+    'Есть',
     'Проверена'
   ]);
 });

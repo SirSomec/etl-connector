@@ -1135,7 +1135,8 @@ test('POST /tools/request-report-confirmed-check exports checked report as xlsx'
             external_id: '101',
             job_id: 'job-101',
             status: 'confirmed',
-            workplace_id: 'wp-101'
+            workplace_id: 'wp-101',
+            is_act_exists: 1
           }
         ];
       }
@@ -1226,16 +1227,18 @@ test('POST /tools/request-report-confirmed-check exports checked report as xlsx'
         /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet\b/
       );
       assert.match(response.headers.get('content-disposition'), /attachment; filename="request-report-check\.xlsx"/);
-      assert.deepEqual(parsed.sourceSheet.headers.slice(-4), [
+      assert.deepEqual(parsed.sourceSheet.headers.slice(-5), [
         'Результат проверки',
         'ID смены если найдена',
         'Ссылка на смену',
+        'Лист учета',
         'Статус проверки'
       ]);
-      assert.deepEqual(row.cells.slice(-4), [
+      assert.deepEqual(row.cells.slice(-5), [
         'Найдена confirmed-смена',
         'job-101',
         'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=wp-101',
+        'Есть',
         'Проверена'
       ]);
     },

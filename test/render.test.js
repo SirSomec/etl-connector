@@ -110,6 +110,8 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
           employee: 'Иванов Иван',
           startText: '2026-06-01 09:00',
           actualDuration: '7.5',
+          isActExists: true,
+          actExistsLabel: 'Есть',
           crmUrl: 'https://crm.mygig.ru/coordination?searchDate[]=2026-06-01&searchDate[]=2026-06-01&workplaceIds[]=63e9cbf44eece00008747426'
         },
         {
@@ -119,7 +121,9 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
           organization: 'ООО Ноль',
           workplace: 'Точка 0',
           startText: '2026-06-01 10:00',
-          actualDuration: '0'
+          actualDuration: '0',
+          isActExists: false,
+          actExistsLabel: 'Нет'
         },
         {
           reviewStatusKey: 'lkk:103',
@@ -172,6 +176,7 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
   assert.match(html, /Сотрудник/);
   assert.match(html, /Время с/);
   assert.match(html, /<th>Фактическая продолжительность за вычетом перерыва<\/th>/);
+  assert.match(html, /<th>Лист учета<\/th>/);
   assert.match(html, /<th>Статус проверки<\/th>/);
   assert.match(html, /requests-report.xlsx/);
   assert.match(html, /АО &quot;Тандер&quot;/);
@@ -188,10 +193,17 @@ test('renderRequestReportMissingConfirmedPage renders upload form and requested 
   assert.match(html, /data-request-status-filter/);
   assert.match(html, /<option value="verified">Проверена<\/option>/);
   assert.match(html, /<option value="return-later">Вернуться позже<\/option>/);
+  assert.match(html, /data-request-act-filter/);
+  assert.match(html, /<option value="yes">Есть<\/option>/);
+  assert.match(html, /<option value="no">Нет<\/option>/);
   assert.match(html, /data-request-report-status-control/);
   assert.match(html, /data-request-report-status-key="lkk:101"/);
   assert.match(html, /data-request-review-status="verified"/);
   assert.match(html, /data-request-review-status="return-later"/);
+  assert.match(html, /data-request-act-exists="yes"/);
+  assert.match(html, /data-request-act-exists="no"/);
+  assert.match(html, /✓ Есть/);
+  assert.match(html, /— Нет/);
   assert.match(html, /class="request-report-row request-report-row-verified"/);
   assert.match(html, /class="request-report-row request-report-row-return-later"/);
   assert.match(html, /\.request-report-row-verified > td \{\s*background: rgba\(34, 197, 94, 0\.14\);/);
@@ -226,7 +238,9 @@ test('renderRequestReportMissingConfirmedResult returns reusable result fragment
           organization: 'ООО Фрагмент',
           workplace: 'Точка 2',
           startText: '2026-06-02 09:00',
-          actualDuration: '0'
+          actualDuration: '0',
+          isActExists: true,
+          actExistsLabel: 'Есть'
         }
       ],
       warnings: ['warning <one>']
@@ -238,8 +252,10 @@ test('renderRequestReportMissingConfirmedResult returns reusable result fragment
   assert.match(html, /data-request-report-result/);
   assert.match(html, /data-request-duration-filter/);
   assert.match(html, /data-request-status-filter/);
+  assert.match(html, /data-request-act-filter/);
   assert.match(html, /data-request-report-status-control/);
   assert.match(html, /data-request-report-status-key="lkk:201"/);
+  assert.match(html, /data-request-act-exists="yes"/);
   assert.match(html, /data-request-duration-filter-empty hidden/);
   assert.match(html, /warning &lt;one&gt;/);
 });

@@ -634,6 +634,31 @@ function layout({
       min-width: 168px;
     }
 
+    .request-report-act-cell {
+      min-width: 108px;
+      white-space: nowrap;
+    }
+
+    .request-report-act-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 24px;
+      padding: 2px 8px;
+      border: 1px solid #c7d4df;
+      border-radius: 999px;
+      background: #f6f9fb;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .request-report-act-badge-yes {
+      border-color: #9bd0af;
+      background: #effaf3;
+      color: #1f6b3a;
+    }
+
     .request-report-status-select {
       width: 100%;
       min-width: 150px;
@@ -3574,19 +3599,23 @@ function renderRequestReportDurationFilterScript() {
   function updateRequestReportFilters(root) {
     var durationFilter = root.querySelector('[data-request-duration-filter]');
     var statusFilter = root.querySelector('[data-request-status-filter]');
+    var actFilter = root.querySelector('[data-request-act-filter]');
     var rows = Array.prototype.slice.call(root.querySelectorAll('[data-request-duration-category]'));
     var status = root.querySelector('[data-request-duration-filter-status]');
     var empty = root.querySelector('[data-request-duration-filter-empty]');
     var selectedDuration = durationFilter ? durationFilter.value : '';
     var selectedStatus = statusFilter ? statusFilter.value : '';
+    var selectedAct = actFilter ? actFilter.value : '';
     var visible = 0;
 
     rows.forEach(function (row) {
       var category = row.getAttribute('data-request-duration-category') || '';
       var reviewStatus = row.getAttribute('data-request-review-status') || '';
+      var actExists = row.getAttribute('data-request-act-exists') || 'no';
       var durationVisible = selectedDuration === '' || category === selectedDuration;
       var statusVisible = selectedStatus === '' || reviewStatus === selectedStatus;
-      var isVisible = durationVisible && statusVisible;
+      var actVisible = selectedAct === '' || actExists === selectedAct;
+      var isVisible = durationVisible && statusVisible && actVisible;
 
       row.hidden = !isVisible;
 
@@ -3978,7 +4007,7 @@ function renderRequestReportDurationFilterScript() {
 
   document.addEventListener('change', function (event) {
     var filter = event.target && event.target.closest
-      ? event.target.closest('[data-request-duration-filter], [data-request-status-filter]')
+      ? event.target.closest('[data-request-duration-filter], [data-request-status-filter], [data-request-act-filter]')
       : null;
 
     if (!filter) {
@@ -6383,6 +6412,21 @@ function requestReportReviewStatusRowClass(status) {
   return 'request-report-row';
 }
 
+function requestReportActExistsValue(row) {
+  return row && row.isActExists ? 'yes' : 'no';
+}
+
+function renderRequestReportActBadge(row) {
+  const value = requestReportActExistsValue(row);
+  const label = String((row && row.actExistsLabel) || (value === 'yes' ? 'Есть' : 'Нет'));
+  const mark = value === 'yes' ? '✓' : '—';
+  const className = value === 'yes'
+    ? 'request-report-act-badge request-report-act-badge-yes'
+    : 'request-report-act-badge';
+
+  return `<span class="${className}">${mark} ${escapeHtml(label)}</span>`;
+}
+
 function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
   const safeRows = Array.isArray(rows) ? rows : [];
 
@@ -6407,19 +6451,21 @@ function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
       const durationCategory = requestReportDurationCategory(durationText);
       const reviewStatus = String(row.reviewStatus || '');
       const reviewStatusKey = String(row.reviewStatusKey || '');
+      const actExistsValue = requestReportActExistsValue(row);
       const rowClass = requestReportReviewStatusRowClass(reviewStatus);
       const statusDisabled = reviewStatusKey ? '' : ' disabled';
       const actualDuration = row.crmUrl
         ? `<a href="${escapeHtml(row.crmUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(durationText)}</a>`
         : escapeHtml(durationText);
 
-      return `<tr class="${escapeHtml(rowClass)}" data-request-duration-category="${escapeHtml(durationCategory)}" data-request-review-status="${escapeHtml(reviewStatus)}">
+      return `<tr class="${escapeHtml(rowClass)}" data-request-duration-category="${escapeHtml(durationCategory)}" data-request-review-status="${escapeHtml(reviewStatus)}" data-request-act-exists="${escapeHtml(actExistsValue)}">
   <td>${escapeHtml(row.organization || '')}</td>
   <td>${escapeHtml(row.workplace || '')}</td>
   <td>${escapeHtml(row.address || '')}</td>
   <td>${escapeHtml(row.employee || '')}</td>
   <td>${escapeHtml(row.startText || '')}</td>
   <td>${actualDuration}</td>
+  <td class="request-report-act-cell">${renderRequestReportActBadge(row)}</td>
   <td class="request-report-status-cell"><select class="request-report-status-select" data-request-report-status-control data-request-report-status-key="${escapeHtml(reviewStatusKey)}" data-saved-status="${escapeHtml(reviewStatus)}"${statusDisabled}>${statusControlOptions(reviewStatus)}</select></td>
 </tr>`;
     })
@@ -6438,6 +6484,14 @@ function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
       </select>
     </div>
     <div class="field filter-field">
+      <label for="requestActExistsFilter">Лист учета</label>
+      <select id="requestActExistsFilter" data-request-act-filter>
+        <option value="">Все</option>
+        <option value="yes">Есть</option>
+        <option value="no">Нет</option>
+      </select>
+    </div>
+    <div class="field filter-field">
       <label for="requestReviewStatusFilter">Статус проверки</label>
       <select id="requestReviewStatusFilter" data-request-status-filter>
         <option value="">Все</option>
@@ -6448,7 +6502,7 @@ function renderRequestReportMissingConfirmedRows(rows, csrfToken = '') {
   </div>
   <p class="empty" data-request-duration-filter-empty hidden>Нет строк для выбранного фильтра.</p>
   <div class="table-wrap"><table>
-  <thead><tr><th>Организация</th><th>Рабочая точка</th><th>Адрес</th><th>Сотрудник</th><th>Время с</th><th>Фактическая продолжительность за вычетом перерыва</th><th>Статус проверки</th></tr></thead>
+  <thead><tr><th>Организация</th><th>Рабочая точка</th><th>Адрес</th><th>Сотрудник</th><th>Время с</th><th>Фактическая продолжительность за вычетом перерыва</th><th>Лист учета</th><th>Статус проверки</th></tr></thead>
   <tbody>${bodyRows}</tbody>
 </table></div>
 </div>`;

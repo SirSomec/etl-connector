@@ -373,6 +373,47 @@ test('runner records file size limit failure and does not call mailer', async ()
   }
 });
 
+test('runner records empty query result as failed and does not send mail', async () => {
+  const { dir, fileDir, store } = await fixture();
+  let mailerCalled = false;
+  const client = {
+    async queryJSONEachRow() {
+      return [];
+    }
+  };
+
+  try {
+    const report = store.createReport({ title: 'R', sql: 'SELECT value FROM mg_jobs', userId: 'u' });
+    const schedule = store.createSchedule({ reportId: report.id, recipients: ['a@example.test'], userId: 'u' });
+    saveMailSettings(store);
+
+    const runner = createScheduledReportRunner({
+      client,
+      store,
+      fileDir,
+      config: defaultConfig,
+      mailer: {
+        async sendReport() {
+          mailerCalled = true;
+        }
+      },
+      sanitizeError: (error) => String(error.message)
+    });
+    const run = await runner.runSchedule({ scheduleId: schedule.id, trigger: 'schedule', userId: 'system' });
+
+    assert.equal(run.status, 'failed');
+    assert.equal(run.rowCount, 0);
+    assert.equal(run.filePath, '');
+    assert.equal(run.fileSizeBytes, 0);
+    assert.match(run.errorMessage, /returned no rows/i);
+    assert.equal(mailerCalled, false);
+    assert.deepEqual(await fs.readdir(fileDir), []);
+  } finally {
+    store.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('runner escapes formula-like values in produced workbook', async () => {
   const { dir, fileDir, store } = await fixture();
   const sent = [];

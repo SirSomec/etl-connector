@@ -137,6 +137,10 @@ function createScheduledReportRunner({
         throw new Error('Scheduled report query returned invalid rows');
       }
 
+      if (rows.length === 0) {
+        throw new Error('Scheduled report returned no rows');
+      }
+
       const headers = headersForRows(rows);
       const workbook = buildXlsxWorkbook({
         sheetName: 'Отчет',

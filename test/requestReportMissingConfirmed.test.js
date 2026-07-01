@@ -145,9 +145,10 @@ test('findRequestReportRowsWithoutConfirmedShift returns rows without confirmed 
   assert.match(calls[0].query, /mg_jobs AS j/);
   assert.match(calls[0].query, /j\.photos_confirm/);
   assert.match(calls[0].query, /arrayExists/);
-  assert.match(calls[0].query, /createdAt/);
-  assert.match(calls[0].query, /deleted": true/);
-  assert.match(calls[0].query, /deleted\\": true/);
+  assert.match(calls[0].query, /JSONHas\(x, 'createdAt'\)/);
+  assert.match(calls[0].query, /JSONHas\(JSONExtractString\(x\), 'createdAt'\)/);
+  assert.match(calls[0].query, /JSONExtractBool\(x, 'deleted'\)/);
+  assert.match(calls[0].query, /JSONExtractBool\(JSONExtractString\(x\), 'deleted'\)/);
   assert.doesNotMatch(calls[0].query, /j\.is_act_exists/);
   assert.deepEqual(result.rows.map((row) => row.idLkk), ['cancelled-id', 'missing-id', '']);
   assert.deepEqual(result.rows.map((row) => row.isActExists), [true, false, false]);
@@ -207,9 +208,10 @@ test('findRequestReportRowsWithoutConfirmedShift uses photos_confirm when the co
   assert.ok(shiftLookupCall);
   assert.match(shiftLookupCall.query, /j\.photos_confirm/);
   assert.match(shiftLookupCall.query, /arrayExists/);
-  assert.match(shiftLookupCall.query, /createdAt/);
-  assert.match(shiftLookupCall.query, /deleted": true/);
-  assert.match(shiftLookupCall.query, /deleted\\": true/);
+  assert.match(shiftLookupCall.query, /JSONHas\(x, 'createdAt'\)/);
+  assert.match(shiftLookupCall.query, /JSONHas\(JSONExtractString\(x\), 'createdAt'\)/);
+  assert.match(shiftLookupCall.query, /JSONExtractBool\(x, 'deleted'\)/);
+  assert.match(shiftLookupCall.query, /JSONExtractBool\(JSONExtractString\(x\), 'deleted'\)/);
   assert.doesNotMatch(shiftLookupCall.query, /j\.is_act_exists/);
   assert.doesNotMatch(shiftLookupCall.query, /j\.is_act_signed/);
   assert.equal(result.rows[0].isActExists, true);

@@ -704,7 +704,7 @@ function chunkValues(values, size) {
 
 function actExistsExpressionForColumn(columnName) {
   if (columnName === ACT_EXISTS_COLUMN) {
-    return `toUInt8(arrayExists(x -> x LIKE '%createdAt%' AND x NOT LIKE '%deleted": true%' AND x NOT LIKE '%deleted\\": true%', j.${columnName}))`;
+    return `toUInt8(arrayExists(x -> (JSONHas(x, 'createdAt') OR JSONHas(JSONExtractString(x), 'createdAt')) AND NOT (JSONExtractBool(x, 'deleted') OR JSONExtractBool(JSONExtractString(x), 'deleted')), j.${columnName}))`;
   }
 
   if (columnName === LEGACY_ACT_EXISTS_COLUMN || columnName === ACT_SIGNED_FALLBACK_COLUMN) {

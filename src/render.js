@@ -3871,6 +3871,38 @@ function renderBrandTrendChartsScript() {
     }).join(' ');
   }
 
+  function dynamicRange(rows, keys) {
+    var values = [];
+    rows.forEach(function (row) {
+      keys.forEach(function (key) {
+        values.push(numberValue(row[key]));
+      });
+    });
+
+    var min = Math.min.apply(null, values.concat([0]));
+    var max = Math.max.apply(null, values.concat([1]));
+    if (max === min) {
+      var fallbackPadding = Math.max(1, max * 0.1);
+      return {
+        min: Math.max(0, min - fallbackPadding),
+        max: max + fallbackPadding
+      };
+    }
+
+    var padding = Math.max(1, (max - min) * 0.18);
+    return {
+      min: Math.max(0, min - padding),
+      max: max + padding
+    };
+  }
+
+  function rangeScale(range, top, plotHeight) {
+    var span = Math.max(1, range.max - range.min);
+    return function (value) {
+      return top + ((range.max - numberValue(value)) / span) * plotHeight;
+    };
+  }
+
   function formatCompactNumber(value) {
     return Math.round(numberValue(value)).toLocaleString('ru-RU');
   }
@@ -4072,11 +4104,13 @@ function renderBrandTrendChartsScript() {
       return;
     }
 
-    var respondedPath = pointPath(rows, xForIndex, yForCount, 'uniqueRespondedUsers');
-    var workedPath = pointPath(rows, xForIndex, yForCount, 'uniqueWorkedUsers');
+    var workerRange = dynamicRange(rows, ['uniqueRespondedUsers', 'uniqueWorkedUsers']);
+    var yForWorkerCount = rangeScale(workerRange, top, plotHeight);
+    var respondedPath = pointPath(rows, xForIndex, yForWorkerCount, 'uniqueRespondedUsers');
+    var workedPath = pointPath(rows, xForIndex, yForWorkerCount, 'uniqueWorkedUsers');
     var points = rows.map(function (row, index) {
-      return '<circle class="brand-trend-point" fill="#f97316" cx="' + xForIndex(index) + '" cy="' + yForCount(row.uniqueRespondedUsers) + '" r="4"><title>' + escapeHtml(row.period + ': откликнулись ' + row.uniqueRespondedUsers) + '</title></circle>' +
-        '<circle class="brand-trend-point" fill="#16a34a" cx="' + xForIndex(index) + '" cy="' + yForCount(row.uniqueWorkedUsers) + '" r="4"><title>' + escapeHtml(row.period + ': вышли ' + row.uniqueWorkedUsers) + '</title></circle>';
+      return '<circle class="brand-trend-point" fill="#f97316" cx="' + xForIndex(index) + '" cy="' + yForWorkerCount(row.uniqueRespondedUsers) + '" r="4"><title>' + escapeHtml(row.period + ': откликнулись ' + row.uniqueRespondedUsers) + '</title></circle>' +
+        '<circle class="brand-trend-point" fill="#16a34a" cx="' + xForIndex(index) + '" cy="' + yForWorkerCount(row.uniqueWorkedUsers) + '" r="4"><title>' + escapeHtml(row.period + ': вышли ' + row.uniqueWorkedUsers) + '</title></circle>';
     }).join('');
     var workerValueLabels = detailed ? filterReadableLabels(rows.flatMap(function (row, index) {
       var x = xForIndex(index);
@@ -4085,7 +4119,7 @@ function renderBrandTrendChartsScript() {
           index: index,
           order: 1,
           x: x + 8,
-          y: Math.max(12, yForCount(row.uniqueRespondedUsers) - 8),
+          y: Math.max(12, yForWorkerCount(row.uniqueRespondedUsers) - 8),
           anchor: 'start',
           label: formatCompactNumber(row.uniqueRespondedUsers),
           priority: numberValue(row.uniqueRespondedUsers),
@@ -4095,7 +4129,7 @@ function renderBrandTrendChartsScript() {
           index: index,
           order: 2,
           x: x + 8,
-          y: Math.min(height - 48, yForCount(row.uniqueWorkedUsers) + 18),
+          y: Math.min(height - 48, yForWorkerCount(row.uniqueWorkedUsers) + 18),
           anchor: 'start',
           label: formatCompactNumber(row.uniqueWorkedUsers),
           priority: numberValue(row.uniqueWorkedUsers) * 0.9,
@@ -6008,6 +6042,14 @@ function renderWorkplacePointReviewsScript() {
       return;
     }
 
+    var pageLink = event.target.closest('[data-review-list-page-link]');
+
+    if (pageLink && modal.contains(pageLink)) {
+      event.preventDefault();
+      loadReviews(pageLink.getAttribute('href'));
+      return;
+    }
+
     var trigger = event.target.closest('[data-workplace-point-review-trigger]');
 
     if (trigger) {
@@ -7872,6 +7914,7 @@ function brandAnalysisReviewsUrl(filters = {}) {
   addDashboardQueryParam(params, 'brandId', filters.brandId);
   addDashboardQueryParam(params, 'city', filters.city);
   addDashboardQueryParam(params, 'region', filters.region);
+  addDashboardQueryParam(params, 'page', filters.page);
 
   return `/dashboards/brand-analysis/reviews?${params.toString()}`;
 }
@@ -8062,6 +8105,30 @@ function brandTrendPointPath(rows, xForIndex, yForValue, valueKey) {
     .join(' ');
 }
 
+function brandTrendDynamicRange(rows, keys) {
+  const values = rows.flatMap((row) => keys.map((key) => brandTrendNumber(row[key])));
+  const min = Math.min(0, ...values);
+  const max = Math.max(1, ...values);
+  if (max === min) {
+    const fallbackPadding = Math.max(1, max * 0.1);
+    return {
+      min: Math.max(0, min - fallbackPadding),
+      max: max + fallbackPadding
+    };
+  }
+
+  const padding = Math.max(1, (max - min) * 0.18);
+  return {
+    min: Math.max(0, min - padding),
+    max: max + padding
+  };
+}
+
+function brandTrendRangeScale(range, top, plotHeight) {
+  const span = Math.max(1, range.max - range.min);
+  return (value) => top + ((range.max - brandTrendNumber(value)) / span) * plotHeight;
+}
+
 function renderBrandTrendEmptySvg() {
   return '<text class="brand-trend-label" x="380" y="140" text-anchor="middle">\u041d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445</text>';
 }
@@ -8127,11 +8194,13 @@ function renderBrandTrendSvg(rows, type) {
     return `${grid}${bars}<path class="brand-trend-line" stroke="#7c3aed" d="${escapeHtml(slaPath)}"></path>${slaPoints}${labels}`;
   }
 
-  const respondedPath = brandTrendPointPath(rows, xForIndex, yForCount, 'uniqueRespondedUsers');
-  const workedPath = brandTrendPointPath(rows, xForIndex, yForCount, 'uniqueWorkedUsers');
+  const workerRange = brandTrendDynamicRange(rows, ['uniqueRespondedUsers', 'uniqueWorkedUsers']);
+  const yForWorkerCount = brandTrendRangeScale(workerRange, top, plotHeight);
+  const respondedPath = brandTrendPointPath(rows, xForIndex, yForWorkerCount, 'uniqueRespondedUsers');
+  const workedPath = brandTrendPointPath(rows, xForIndex, yForWorkerCount, 'uniqueWorkedUsers');
   const points = rows
-    .map((row, index) => `<circle class="brand-trend-point" fill="#f97316" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForCount(row.uniqueRespondedUsers))}" r="4"><title>${escapeHtml(`${row.period}: responded ${row.uniqueRespondedUsers}`)}</title></circle>` +
-      `<circle class="brand-trend-point" fill="#16a34a" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForCount(row.uniqueWorkedUsers))}" r="4"><title>${escapeHtml(`${row.period}: worked ${row.uniqueWorkedUsers}`)}</title></circle>`)
+    .map((row, index) => `<circle class="brand-trend-point" fill="#f97316" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForWorkerCount(row.uniqueRespondedUsers))}" r="4"><title>${escapeHtml(`${row.period}: responded ${row.uniqueRespondedUsers}`)}</title></circle>` +
+      `<circle class="brand-trend-point" fill="#16a34a" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForWorkerCount(row.uniqueWorkedUsers))}" r="4"><title>${escapeHtml(`${row.period}: worked ${row.uniqueWorkedUsers}`)}</title></circle>`)
     .join('');
 
   return `${grid}<path class="brand-trend-line" stroke="#f97316" d="${escapeHtml(respondedPath)}"></path><path class="brand-trend-line" stroke="#16a34a" d="${escapeHtml(workedPath)}"></path>${points}${labels}`;
@@ -8405,6 +8474,8 @@ ${renderWorkplacePointReviewsScript()}`;
 
 function renderBrandAnalysisReviews({ details }) {
   const reviews = (details && details.reviews) || [];
+  const filters = (details && details.filters) || {};
+  const pageSize = 50;
 
   if (reviews.length === 0) {
     return `<div class="workplace-point-reviews">
@@ -8413,7 +8484,27 @@ function renderBrandAnalysisReviews({ details }) {
 </div>`;
   }
 
-  const rows = reviews
+  const totalReviews = reviews.length;
+  const totalPages = Math.max(1, Math.ceil(totalReviews / pageSize));
+  const requestedPage = Math.max(1, Math.floor(Number(filters.page) || 1));
+  const page = Math.min(requestedPage, totalPages);
+  const pageReviews = reviews.slice((page - 1) * pageSize, page * pageSize);
+  const previousUrl = brandAnalysisReviewsUrl({ ...filters, page: page - 1 });
+  const nextUrl = brandAnalysisReviewsUrl({ ...filters, page: page + 1 });
+  const pagination = totalPages > 1
+    ? `<nav class="pagination" aria-label="\u041f\u0430\u0433\u0438\u043d\u0430\u0446\u0438\u044f \u043e\u0442\u0437\u044b\u0432\u043e\u0432">
+  <div class="pagination-meta">\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430 ${escapeHtml(page)} \u0438\u0437 ${escapeHtml(totalPages)} \u00b7 \u043e\u0442\u0437\u044b\u0432\u043e\u0432: ${escapeHtml(formatNumber(totalReviews))}</div>
+  <div class="pagination-actions">
+    ${page > 1
+      ? `<a class="pagination-link" href="${escapeHtml(previousUrl)}" data-review-list-page-link="1">\u041d\u0430\u0437\u0430\u0434</a>`
+      : '<span class="pagination-link disabled" aria-disabled="true">\u041d\u0430\u0437\u0430\u0434</span>'}
+    ${page < totalPages
+      ? `<a class="pagination-link" href="${escapeHtml(nextUrl)}" data-review-list-page-link="1">\u0412\u043f\u0435\u0440\u0435\u0434</a>`
+      : '<span class="pagination-link disabled" aria-disabled="true">\u0412\u043f\u0435\u0440\u0435\u0434</span>'}
+  </div>
+</nav>`
+    : '';
+  const rows = pageReviews
     .map((review) => `<tr>
   <td class="number-cell">${escapeHtml(formatNumber(review.rating))}</td>
   <td class="compact-text-cell" title="${escapeHtml(detailText(review.workplaceTitle))}">${escapeHtml(detailText(review.workplaceTitle))}</td>
@@ -8428,8 +8519,9 @@ function renderBrandAnalysisReviews({ details }) {
   return `<div class="workplace-point-reviews">
   <div class="giger-details-head">
     <h2>\u041e\u0442\u0437\u044b\u0432\u044b \u0431\u0440\u0435\u043d\u0434\u0430</h2>
-    <div class="giger-details-actions"><span class="muted">\u0412\u0441\u0435\u0433\u043e: ${escapeHtml(formatNumber(reviews.length))}</span></div>
+    <div class="giger-details-actions"><span class="muted">\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e: ${escapeHtml(formatNumber(pageReviews.length))} \u0438\u0437 ${escapeHtml(formatNumber(totalReviews))}</span></div>
   </div>
+  ${pagination}
   <div class="table-wrap compact-detail-table-wrap"><table class="compact-detail-table workplace-point-reviews-table">
     <thead><tr>
       <th>\u041e\u0446\u0435\u043d\u043a\u0430</th>
@@ -8442,6 +8534,7 @@ function renderBrandAnalysisReviews({ details }) {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>
+  ${pagination}
 </div>`;
 }
 

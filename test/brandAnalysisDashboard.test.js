@@ -29,6 +29,7 @@ test('normalizeBrandAnalysisFilters keeps supported period, dates and selected b
       from: '2026-04-01',
       to: '2026-04-30',
       brandId: ' client-1 ',
+      page: '3',
       city: [' Москва ', 'Москва', '', 'Казань'],
       region: ['ЦФО', ' ', 'ЦФО', 'ПФО']
     },
@@ -44,6 +45,7 @@ test('normalizeBrandAnalysisFilters keeps supported period, dates and selected b
     brandId: 'client-1',
     city: ['Москва', 'Казань'],
     region: ['ЦФО', 'ПФО'],
+    page: 3,
     rangeDays: 30
   });
 });
@@ -61,6 +63,7 @@ test('normalizeBrandAnalysisFilters falls back from unsafe period and invalid da
 
   assert.equal(filters.period, 'month');
   assert.equal(filters.from, '2026-03-03');
+  assert.equal(filters.page, 1);
   assert.equal(filters.to, '2026-06-01');
   assert.equal(filters.fromDateTime, '2026-03-03 00:00:00');
   assert.equal(filters.toExclusiveDateTime, '2026-06-02 00:00:00');

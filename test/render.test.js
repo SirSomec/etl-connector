@@ -7,6 +7,7 @@ const {
   renderGigerDetails,
   renderGigerDetailsWorkbook,
   renderBrandAnalysisDashboard,
+  renderBrandAnalysisReviews,
   renderBrandAnalysisDashboardSection,
   renderCityAnalysisDashboard,
   renderCityAnalysisDashboardSection,
@@ -1957,6 +1958,8 @@ test('renderBrandAnalysisDashboard renders brand selector and progressive sectio
   assert.match(html, /filterReadableLabels/);
   assert.match(html, /withSlaCallouts/);
   assert.match(html, /brand-trend-callout-line/);
+  assert.match(html, /dynamicRange/);
+  assert.match(html, /rangeScale/);
   assert.match(html, /Загружается/);
   assert.doesNotMatch(html, /Brand <A>/);
 });
@@ -1984,6 +1987,32 @@ test('renderBrandAnalysisDashboard asks to choose brand when no brand is selecte
 
   assert.match(html, /Выберите бренд/);
   assert.doesNotMatch(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section/);
+});
+
+test('renderBrandAnalysisReviews paginates brand reviews by 50 rows', () => {
+  const reviews = Array.from({ length: 51 }, (_, index) => ({
+    rating: 5,
+    workplaceTitle: `Point ${index + 1}`,
+    city: 'City',
+    authorFullName: `Author ${index + 1}`,
+    authorPhone: '+79990000000',
+    createdAtLocal: '2026-04-12 10:00:00',
+    text: `Review ${index + 1}`
+  }));
+  const html = renderBrandAnalysisReviews({
+    details: {
+      filters: { brandId: 'Brand A', city: ['City'], region: ['Region'], page: 2 },
+      reviews
+    }
+  });
+  const bodyRows = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] || '';
+
+  assert.equal((bodyRows.match(/<tr>/g) || []).length, 1);
+  assert.match(html, /Страница 2 из 2/);
+  assert.match(html, /Показано: 1 из 51/);
+  assert.match(html, /data-review-list-page-link="1"/);
+  assert.match(html, /page=1/);
+  assert.doesNotMatch(html, /page=3/);
 });
 
 test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors', () => {

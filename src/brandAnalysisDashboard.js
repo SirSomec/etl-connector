@@ -111,6 +111,7 @@ function normalizeBrandAnalysisFilters(input = {}, now = new Date()) {
     brandId: normalizeBrandId(input.brandId),
     city: cleanValues(input.city),
     region: cleanValues(input.region),
+    page: Math.max(1, Math.floor(Number(input.page) || 1)),
     rangeDays
   };
 }

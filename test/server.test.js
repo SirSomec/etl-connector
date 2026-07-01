@@ -1475,7 +1475,8 @@ test('GET /dashboards/brand-analysis/section renders selected brand fragment', a
 
   assert.deepEqual(brandCalls.map((call) => call[1]), [
     'brand analysis orders summary',
-    'brand analysis shifts summary'
+    'brand analysis shifts summary',
+    'brand analysis review summary'
   ]);
   assert.equal(brandCalls[0][2].param_brand_title, 'Brand A');
   assert.equal(brandCalls[0][2].param_from, '2026-04-01 00:00:00');

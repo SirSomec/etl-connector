@@ -7153,6 +7153,14 @@ function brandAnalysisSectionUrl(filters, section) {
   return `/dashboards/brand-analysis/section?${params.toString()}`;
 }
 
+function brandAnalysisReviewsUrl(filters = {}) {
+  const params = new URLSearchParams();
+
+  addDashboardQueryParam(params, 'brandId', filters.brandId);
+
+  return `/dashboards/brand-analysis/reviews?${params.toString()}`;
+}
+
 function renderBrandAnalysisProgressiveSections(filters) {
   if (String(filters.brandId || '') === '') {
     return `<section class="section">
@@ -7188,7 +7196,7 @@ ${renderDashboardLoadingSection({
 })}`;
 }
 
-function renderBrandAnalysisKpiCards(summary, currentUser) {
+function renderBrandAnalysisKpiCards(summary, currentUser, filters = {}) {
   return renderKpiGrid([
     { label: 'Заказано смен', value: formatNumber(summary.orderedShifts), metricId: 'brand-analysis.summary.ordered-shifts' },
     { label: 'Отработано смен', value: formatNumber(summary.workedShifts), metricId: 'brand-analysis.summary.worked-shifts' },
@@ -7204,7 +7212,14 @@ function renderBrandAnalysisKpiCards(summary, currentUser) {
     { label: 'Самоброни', value: formatPercent(summary.selfBookingPercent), metricId: 'brand-analysis.summary.self-booking-percent' },
     { label: 'Стабильность заказа', value: formatPercent(summary.orderStabilityPercent), metricId: 'brand-analysis.summary.order-stability' },
     { label: 'Ставка гигера/час', value: formatNumber(summary.avgWorkerRateHour), metricId: 'brand-analysis.summary.avg-worker-rate-hour' },
-    { label: 'Ставка клиента/час', value: formatNumber(summary.avgCustomerRateHour), metricId: 'brand-analysis.summary.avg-customer-rate-hour' }
+    { label: 'Ставка клиента/час', value: formatNumber(summary.avgCustomerRateHour), metricId: 'brand-analysis.summary.avg-customer-rate-hour' },
+    {
+      label: '\u0420\u0435\u0439\u0442\u0438\u043d\u0433 \u0431\u0440\u0435\u043d\u0434\u0430',
+      value: `${formatPointRating(summary.ratingAll)} / ${formatPointRating(summary.ratingLast10)}`,
+      detail: `\u0432\u0441\u0435 / \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 10 \u00b7 \u043e\u0442\u0437\u044b\u0432\u043e\u0432 ${formatNumber(summary.ratingReviewCount)}`,
+      metricId: 'brand-analysis.summary.rating',
+      attributes: `role="button" tabindex="0" data-workplace-point-review-trigger data-detail-url="${escapeHtml(brandAnalysisReviewsUrl(filters))}"`
+    }
   ], currentUser);
 }
 
@@ -7309,7 +7324,7 @@ function renderBrandAnalysisDashboardSection({ dashboard, section, currentUser }
   if (section === 'summary') {
     return `<section class="section">
   ${renderMetricPanelHead('Основные показатели', 'brand-analysis.summary', currentUser)}
-  ${renderBrandAnalysisKpiCards(dashboard.summary || {}, currentUser)}
+  ${renderBrandAnalysisKpiCards(dashboard.summary || {}, currentUser, dashboard.filters || {})}
 </section>`;
   }
 
@@ -7392,7 +7407,9 @@ ${renderBrandAnalysisDashboardSection({ dashboard, section: 'statuses', currentU
     <button type="submit">Применить</button>
   </form>
 </section>
-${resultsHtml}`;
+${resultsHtml}
+${renderWorkplacePointReviewModal()}
+${renderWorkplacePointReviewsScript()}`;
 
   return layout({
     title: 'Анализ брендов',
@@ -7402,6 +7419,48 @@ ${resultsHtml}`;
     currentUser,
     csrfToken
   });
+}
+
+function renderBrandAnalysisReviews({ details }) {
+  const reviews = (details && details.reviews) || [];
+
+  if (reviews.length === 0) {
+    return `<div class="workplace-point-reviews">
+  <h2>\u041e\u0442\u0437\u044b\u0432\u044b \u0431\u0440\u0435\u043d\u0434\u0430</h2>
+  <p class="empty">\u041d\u0435\u0442 \u043e\u0442\u0437\u044b\u0432\u043e\u0432 \u043f\u043e \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u043c\u0443 \u0431\u0440\u0435\u043d\u0434\u0443.</p>
+</div>`;
+  }
+
+  const rows = reviews
+    .map((review) => `<tr>
+  <td class="number-cell">${escapeHtml(formatNumber(review.rating))}</td>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(review.workplaceTitle))}">${escapeHtml(detailText(review.workplaceTitle))}</td>
+  <td class="compact-text-cell">${escapeHtml(detailText(review.city))}</td>
+  <td class="compact-text-cell" title="${escapeHtml(detailText(review.authorFullName))}">${escapeHtml(detailText(review.authorFullName))}</td>
+  <td class="nowrap-cell">${escapeHtml(detailText(review.authorPhone))}</td>
+  <td class="nowrap-cell">${escapeHtml(formatDateTimeValue(review.createdAtLocal))}</td>
+  <td class="review-text-cell">${escapeHtml(detailText(review.text))}</td>
+</tr>`)
+    .join('');
+
+  return `<div class="workplace-point-reviews">
+  <div class="giger-details-head">
+    <h2>\u041e\u0442\u0437\u044b\u0432\u044b \u0431\u0440\u0435\u043d\u0434\u0430</h2>
+    <div class="giger-details-actions"><span class="muted">\u0412\u0441\u0435\u0433\u043e: ${escapeHtml(formatNumber(reviews.length))}</span></div>
+  </div>
+  <div class="table-wrap compact-detail-table-wrap"><table class="compact-detail-table workplace-point-reviews-table">
+    <thead><tr>
+      <th>\u041e\u0446\u0435\u043d\u043a\u0430</th>
+      <th>\u0422\u043e\u0447\u043a\u0430</th>
+      <th>\u0413\u043e\u0440\u043e\u0434</th>
+      <th>\u0424\u0418\u041e</th>
+      <th>\u0422\u0435\u043b\u0435\u0444\u043e\u043d</th>
+      <th>\u0414\u0430\u0442\u0430</th>
+      <th>\u041e\u0442\u0437\u044b\u0432</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>
+</div>`;
 }
 
 function renderOrderTypeOptions(selectedType) {
@@ -12011,6 +12070,7 @@ module.exports = {
   escapeHtml,
   renderAccountManagement,
   renderBrandAnalysisDashboard,
+  renderBrandAnalysisReviews,
   renderBrandAnalysisDashboardSection,
   renderDashboardSectionError,
   renderError,

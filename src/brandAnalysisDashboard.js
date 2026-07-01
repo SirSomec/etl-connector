@@ -105,6 +105,24 @@ function numberValue(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function nullableNumberValue(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : null;
+}
+
+function textValue(value) {
+  return value === null || typeof value === 'undefined' ? '' : String(value);
+}
+
+function phoneValue(value) {
+  return textValue(value).trim();
+}
+
 function percent(numerator, denominator) {
   const bottom = numberValue(denominator);
 
@@ -141,13 +159,17 @@ function emptySummary() {
     selfBookingPercent: 0,
     orderStabilityPercent: 0,
     avgWorkerRateHour: 0,
-    avgCustomerRateHour: 0
+    avgCustomerRateHour: 0,
+    ratingAll: null,
+    ratingLast10: null,
+    ratingReviewCount: 0
   };
 }
 
-function mapSummaryRows(orderRows, shiftRows, filters) {
+function mapSummaryRows(orderRows, shiftRows, reviewRows, filters) {
   const orders = orderRows[0] || {};
   const shifts = shiftRows[0] || {};
+  const reviews = reviewRows[0] || {};
   const orderedShifts = numberValue(orders.ordered_shifts);
   const workedShifts = numberValue(shifts.worked_shifts);
   const coveredShifts = numberValue(shifts.covered_shifts);
@@ -167,7 +189,10 @@ function mapSummaryRows(orderRows, shiftRows, filters) {
     selfBookingPercent: percent(shifts.self_booked_confirmed_shifts, workedShifts),
     orderStabilityPercent: percent(orders.active_days, filters.rangeDays),
     avgWorkerRateHour: firstNumberValue(shifts.avg_worker_rate_hour),
-    avgCustomerRateHour: firstNumberValue(shifts.avg_customer_rate_hour)
+    avgCustomerRateHour: firstNumberValue(shifts.avg_customer_rate_hour),
+    ratingAll: nullableNumberValue(reviews.avg_rating_all),
+    ratingLast10: nullableNumberValue(reviews.avg_rating_last_10),
+    ratingReviewCount: numberValue(reviews.review_count)
   };
 }
 
@@ -519,6 +544,25 @@ function paramsForFilters(filters) {
   };
 }
 
+function mergeBrandAnalysisReviews(filters, reviewRows = []) {
+  return {
+    filters,
+    brandId: filters.brandId,
+    reviews: reviewRows.map((row) => ({
+      reviewId: textValue(row.review_id),
+      jobId: textValue(row.job_id),
+      workplaceId: textValue(row.workplace_id),
+      workplaceTitle: textValue(row.workplace_title) || 'Без точки',
+      city: textValue(row.city),
+      rating: numberValue(row.rating),
+      text: textValue(row.text),
+      authorFullName: textValue(row.author_full_name),
+      authorPhone: phoneValue(row.author_phone),
+      createdAtLocal: textValue(row.created_at_local)
+    }))
+  };
+}
+
 function emptyBrandAnalysisDashboard(filters) {
   return {
     filters,
@@ -610,7 +654,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
   const avgCustomerRateHour = avgCustomerRateHourExpression();
 
   if (section === 'summary') {
-    const [orderSummaryRows, shiftSummaryRows] = await Promise.all([
+    const [orderSummaryRows, shiftSummaryRows, reviewSummaryRows] = await Promise.all([
       client.queryJSONEachRow(
         `${actualOrdersWithClause({ includeDateFilter: true })}
       SELECT
@@ -638,10 +682,15 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
       FORMAT JSONEachRow`,
         params,
         'brand analysis shifts summary'
+      ),
+      client.queryJSONEachRow(
+        brandReviewSummaryQuery(),
+        params,
+        'brand analysis review summary'
       )
     ]);
 
-    return { orderSummaryRows, shiftSummaryRows };
+    return { orderSummaryRows, shiftSummaryRows, reviewSummaryRows };
   }
 
   if (section === 'trend') {
@@ -773,7 +822,12 @@ function mergeBrandAnalysisSection(filters, section, rows) {
   if (section === 'summary') {
     return {
       ...dashboard,
-      summary: mapSummaryRows(rows.orderSummaryRows || [], rows.shiftSummaryRows || [], filters)
+      summary: mapSummaryRows(
+        rows.orderSummaryRows || [],
+        rows.shiftSummaryRows || [],
+        rows.reviewSummaryRows || [],
+        filters
+      )
     };
   }
 
@@ -855,7 +909,12 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
 
   return {
     ...shell,
-    summary: mapSummaryRows(summaryRows.orderSummaryRows, summaryRows.shiftSummaryRows, shell.filters),
+    summary: mapSummaryRows(
+      summaryRows.orderSummaryRows,
+      summaryRows.shiftSummaryRows,
+      summaryRows.reviewSummaryRows,
+      shell.filters
+    ),
     trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows),
     workplaceRows: mergeWorkplaceRows(workplaceRows.workplaceOrderRows, workplaceRows.workplaceShiftRows),
     professionRows: mergeProfessionRows(professionRows.professionOrderRows, professionRows.professionShiftRows),
@@ -863,9 +922,83 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
   };
 }
 
+function reviewAuthorFullNameExpression() {
+  return `coalesce(
+      nullIf(trim(concat(ifNull(wu.lastname, ''), ' ', ifNull(wu.firstname, ''), ' ', ifNull(wu.middlename, ''))), ''),
+      nullIf(trim(ifNull(w.full_name, '')), ''),
+      ''
+    )`;
+}
+
+function brandReviewSummaryQuery() {
+  return `${actualOrdersWithClause()}
+SELECT
+  count() AS review_count,
+  avgOrNull(r.rating) AS avg_rating_all,
+  (
+    SELECT avgOrNull(rating)
+    FROM (
+      SELECT r2.rating AS rating
+      FROM mg_reviews AS r2
+      INNER JOIN mg_jobs AS j2 ON r2.job = j2._id
+      INNER JOIN actual_orders AS ao2 ON j2.source = ao2.order_id
+      WHERE ifNull(r2.rating, 0) > 0
+      ORDER BY r2.createdAt DESC, r2._id DESC
+      LIMIT 10
+    )
+  ) AS avg_rating_last_10
+FROM mg_reviews AS r
+INNER JOIN mg_jobs AS j ON r.job = j._id
+INNER JOIN actual_orders AS ao ON j.source = ao.order_id
+WHERE ifNull(r.rating, 0) > 0
+FORMAT JSONEachRow`;
+}
+
+function brandReviewsQuery() {
+  return `${actualOrdersWithClause()}
+SELECT
+  r._id AS review_id,
+  r.job AS job_id,
+  ao.workplace AS workplace_id,
+  ao.workplace_title AS workplace_title,
+  ao.city AS city,
+  r.rating AS rating,
+  ifNull(r.text, '') AS text,
+  ${reviewAuthorFullNameExpression()} AS author_full_name,
+  ifNull(wu.phone, '') AS author_phone,
+  ifNull(formatDateTime(toTimeZone(r.createdAt, 'Europe/Moscow'), '%F %T'), '') AS created_at_local
+FROM mg_reviews AS r
+INNER JOIN mg_jobs AS j ON r.job = j._id
+INNER JOIN actual_orders AS ao ON j.source = ao.order_id
+LEFT JOIN mg_workers AS w ON coalesce(nullIf(ifNull(r.worker, ''), ''), nullIf(ifNull(j.worker, ''), ''), '') = w._id
+LEFT JOIN mg_users AS wu ON w.user = wu._id
+ORDER BY r.createdAt DESC, r._id DESC
+FORMAT JSONEachRow`;
+}
+
+async function loadBrandAnalysisReviews(client, input = {}, now = new Date()) {
+  const filters = normalizeBrandAnalysisFilters(input, now);
+
+  if (filters.brandId === '') {
+    const error = new Error('Missing brandId');
+
+    error.status = 400;
+    throw error;
+  }
+
+  const reviewRows = await client.queryJSONEachRow(
+    brandReviewsQuery(),
+    paramsForFilters(filters),
+    'brand analysis reviews'
+  );
+
+  return mergeBrandAnalysisReviews(filters, reviewRows);
+}
+
 module.exports = {
   BRAND_ANALYSIS_SECTIONS,
   buildPeriodExpression,
+  loadBrandAnalysisReviews,
   loadBrandAnalysisDashboard,
   loadBrandAnalysisDashboardSection,
   loadBrandAnalysisDashboardShell,

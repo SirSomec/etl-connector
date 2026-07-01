@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   BRAND_ANALYSIS_SECTIONS,
+  loadBrandAnalysisReviews,
   loadBrandAnalysisDashboardSection,
   loadBrandAnalysisDashboardShell,
   normalizeBrandAnalysisFilters
@@ -134,6 +135,13 @@ test('loadBrandAnalysisDashboardSection queries and maps summary for selected br
         avg_worker_rate_hour: 320,
         avg_customer_rate_hour: 450
       }
+    ],
+    'brand analysis review summary': [
+      {
+        review_count: 8,
+        avg_rating_all: 4.25,
+        avg_rating_last_10: 4.5
+      }
     ]
   });
 
@@ -161,9 +169,13 @@ test('loadBrandAnalysisDashboardSection queries and maps summary for selected br
   assert.equal(dashboard.summary.selfBookingPercent, 40);
   assert.equal(dashboard.summary.avgWorkerRateHour, 320);
   assert.equal(dashboard.summary.avgCustomerRateHour, 450);
+  assert.equal(dashboard.summary.ratingAll, 4.25);
+  assert.equal(dashboard.summary.ratingLast10, 4.5);
+  assert.equal(dashboard.summary.ratingReviewCount, 8);
   assert.deepEqual(calls.map((call) => call.operation), [
     'brand analysis orders summary',
-    'brand analysis shifts summary'
+    'brand analysis shifts summary',
+    'brand analysis review summary'
   ]);
   assert.ok(calls.every((call) => call.params.param_brand_title === 'Brand A'));
   assert.ok(calls.every((call) => call.params.param_from === '2026-04-01 00:00:00'));
@@ -175,6 +187,57 @@ test('loadBrandAnalysisDashboardSection queries and maps summary for selected br
   assert.ok(calls.some((call) => call.query.includes("!= 'processing'")));
   assert.ok(calls.some((call) => call.query.includes('AS is_successful_confirmed_shift')));
   assert.equal(calls.some((call) => call.query.includes('mygig_')), false);
+});
+
+test('loadBrandAnalysisReviews loads brand reviews with workplace for each rating', async () => {
+  const { calls, client } = createDashboardClient({
+    'brand analysis reviews': [
+      {
+        review_id: 'review-1',
+        job_id: 'job-1',
+        workplace_id: 'wp-1',
+        workplace_title: 'Точка 1',
+        city: 'Москва',
+        rating: 5,
+        text: 'Хорошо',
+        author_full_name: 'Анна Иванова',
+        author_phone: '+79990000001',
+        created_at_local: '2026-04-12 10:00:00'
+      }
+    ]
+  });
+
+  const details = await loadBrandAnalysisReviews(
+    client,
+    {
+      period: 'month',
+      from: '2026-04-01',
+      to: '2026-04-30',
+      brandId: 'Brand A'
+    },
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.deepEqual(details.reviews, [
+    {
+      reviewId: 'review-1',
+      jobId: 'job-1',
+      workplaceId: 'wp-1',
+      workplaceTitle: 'Точка 1',
+      city: 'Москва',
+      rating: 5,
+      text: 'Хорошо',
+      authorFullName: 'Анна Иванова',
+      authorPhone: '+79990000001',
+      createdAtLocal: '2026-04-12 10:00:00'
+    }
+  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].operation, 'brand analysis reviews');
+  assert.equal(calls[0].params.param_brand_title, 'Brand A');
+  assert.equal(calls[0].query.includes('FROM mg_reviews AS r'), true);
+  assert.equal(calls[0].query.includes('INNER JOIN actual_orders AS ao ON j.source = ao.order_id'), true);
+  assert.equal(calls[0].query.includes('ao.workplace_title AS workplace_title'), true);
 });
 
 test('loadBrandAnalysisDashboardSection maps trend, workplaces, professions and statuses', async () => {

@@ -66,6 +66,7 @@ const {
 } = require('./salesByProjectDashboard');
 const {
   BRAND_ANALYSIS_SECTIONS,
+  loadBrandAnalysisReviews,
   loadBrandAnalysisDashboardSection,
   loadBrandAnalysisDashboardShell
 } = require('./brandAnalysisDashboard');
@@ -92,6 +93,7 @@ const {
 const {
   renderAccountManagement,
   renderBrandAnalysisDashboard,
+  renderBrandAnalysisReviews,
   renderBrandAnalysisDashboardSection,
   renderDashboardSectionError,
   renderError,
@@ -2286,6 +2288,29 @@ function createApp({
           .status(200)
           .type('html')
           .send(renderBrandAnalysisDashboardSection({ dashboard, section, ...viewContext(req) }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/brand-analysis/reviews',
+    requireAuth('brand-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadBrandAnalysisReviews(client, req.query, new Date());
+
+        recordCurrentUserActivity(req, activityEventType(req));
+        res
+          .status(200)
+          .type('html')
+          .send(renderBrandAnalysisReviews({ details }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 

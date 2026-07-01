@@ -1920,12 +1920,18 @@ test('renderBrandAnalysisDashboard renders brand selector and progressive sectio
         period: 'month',
         from: '2026-04-01',
         to: '2026-04-30',
-        brandId: 'Brand <A>'
+        brandId: 'Brand <A>',
+        city: ['Москва'],
+        region: ['ЦФО']
       },
       brandOptions: [
         { id: 'Brand <A>', title: 'Brand <A>' },
         { id: 'Brand B', title: 'Brand B' }
       ],
+      filterOptions: {
+        city: ['Москва'],
+        region: ['ЦФО']
+      },
       selectedBrandTitle: 'Brand <A>',
       summary: {},
       trendRows: [],
@@ -1939,8 +1945,18 @@ test('renderBrandAnalysisDashboard renders brand selector and progressive sectio
   assert.match(html, /class="nav-link active" href="\/dashboards\/brand-analysis"/);
   assert.match(html, /<form class="filter-bar" action="\/dashboards\/brand-analysis" method="get">/);
   assert.match(html, /<option value="Brand &lt;A&gt;" selected>Brand &lt;A&gt;<\/option>/);
-  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section\?section=summary&amp;period=month&amp;from=2026-04-01&amp;to=2026-04-30&amp;brandId=Brand\+%3CA%3E"/);
+  assert.match(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section\?section=summary&amp;period=month&amp;from=2026-04-01&amp;to=2026-04-30&amp;brandId=Brand\+%3CA%3E&amp;city=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0&amp;region=%D0%A6%D0%A4%D0%9E"/);
+  assert.match(html, /name="city" value="Москва" checked/);
+  assert.match(html, /name="region" value="ЦФО" checked/);
   assert.match(html, /data-dashboard-fragment-url="\/dashboards\/brand-analysis\/section\?section=workplaces/);
+  assert.match(html, /window\.initBrandTrendCharts/);
+  assert.match(html, /window\.initBrandTrendCharts\(document\)/);
+  assert.match(html, /brand-trend-value-label/);
+  assert.match(html, /data-brand-trend-detailed/);
+  assert.match(html, /shouldShowDenseLabel/);
+  assert.match(html, /filterReadableLabels/);
+  assert.match(html, /withSlaCallouts/);
+  assert.match(html, /brand-trend-callout-line/);
   assert.match(html, /Загружается/);
   assert.doesNotMatch(html, /Brand <A>/);
 });
@@ -2011,7 +2027,11 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
           slaPercent: 75,
           coveragePercent: 85,
           revenueRub: 30000,
-          cancelledShifts: 2
+          cancelledShifts: 2,
+          respondedUserIds: ['user-1', 'user-2'],
+          workedUserIds: ['user-2'],
+          uniqueRespondedUsers: 2,
+          uniqueWorkedUsers: 1
         }
       ]
     }
@@ -2063,7 +2083,28 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(summaryHtml, /data-sql-inspector-open="brand-analysis\.summary\.ordered-shifts"/);
   assert.match(summaryHtml, /data-sql-inspector-open="brand-analysis\.summary\.open-demand"/);
   assert.match(summaryHtml, /data-sql-inspector-open="brand-analysis\.summary\.avg-customer-rate-hour"/);
-  assert.match(trendHtml, /data-sql-inspector-open="brand-analysis\.trend\.coverage"/);
+  assert.match(trendHtml, /data-brand-trend-charts/);
+  assert.match(trendHtml, /class="brand-trend-chart-grid"/);
+  assert.match(trendHtml, /data-brand-trend-period="day"/);
+  assert.match(trendHtml, /data-brand-trend-period="week"/);
+  assert.match(trendHtml, /data-brand-trend-period="month"/);
+  assert.match(trendHtml, /data-brand-trend-period="quarter"/);
+  assert.match(trendHtml, /data-brand-trend-chart="fulfillment"/);
+  assert.match(trendHtml, /data-brand-trend-chart="workers"/);
+  assert.match(trendHtml, /data-brand-trend-expand="fulfillment"/);
+  assert.match(trendHtml, /data-brand-trend-expand="workers"/);
+  assert.match(trendHtml, /data-brand-trend-modal/);
+  assert.match(trendHtml, /data-brand-trend-modal-chart/);
+  const fulfillmentSvg = trendHtml.match(/<article class="mini-panel brand-trend-chart" data-brand-trend-chart="fulfillment">[\s\S]*?<svg[^>]*>([\s\S]*?)<\/svg>/)?.[1] || '';
+  const workersSvg = trendHtml.match(/<article class="mini-panel brand-trend-chart" data-brand-trend-chart="workers">[\s\S]*?<svg[^>]*>([\s\S]*?)<\/svg>/)?.[1] || '';
+  assert.match(fulfillmentSvg, /<rect class="brand-trend-bar"/);
+  assert.match(fulfillmentSvg, /<path class="brand-trend-line"/);
+  assert.match(workersSvg, /<path class="brand-trend-line"/);
+  assert.match(workersSvg, /<circle class="brand-trend-point"/);
+  assert.doesNotMatch(trendHtml, /<table>/);
+  assert.match(trendHtml, /"respondedUserIds":\["user-1","user-2"\]/);
+  assert.match(trendHtml, /"workedUserIds":\["user-2"\]/);
+  assert.match(trendHtml, /data-sql-inspector-open="brand-analysis\.trend"/);
   assert.match(workplacesHtml, /Точка &lt;1&gt;/);
   assert.doesNotMatch(workplacesHtml, /Точка <1>/);
   assert.match(workplacesHtml, /data-sql-inspector-open="brand-analysis\.workplaces\.sla"/);

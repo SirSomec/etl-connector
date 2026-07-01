@@ -17,6 +17,7 @@ const DEFAULT_LOOKBACK_DAYS = 90;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BRAND_ANALYSIS_SECTION_NAMES = ['summary', 'trend', 'workplaces', 'professions', 'statuses'];
 const BRAND_ANALYSIS_SECTIONS = new Set(BRAND_ANALYSIS_SECTION_NAMES);
+const FILTER_OPTION_KEYS = ['city', 'region'];
 const BRAND_TITLE_EXPRESSION = "ifNull(nullIf(trimBoth(ifNull(c.title, '')), ''), 'Без бренда')";
 const CLOSING_STATUSES_SQL = "('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')";
 
@@ -57,6 +58,29 @@ function normalizeBrandId(value) {
   return String(value || '').trim();
 }
 
+function cleanText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function cleanValues(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const values = [];
+  const seen = new Set();
+
+  for (const rawValue of rawValues) {
+    const text = cleanText(rawValue);
+
+    if (text === '' || seen.has(text)) {
+      continue;
+    }
+
+    seen.add(text);
+    values.push(text);
+  }
+
+  return values;
+}
+
 function normalizeBrandAnalysisFilters(input = {}, now = new Date()) {
   const requestedPeriod = typeof input.period === 'string' ? input.period : '';
   const period = Object.prototype.hasOwnProperty.call(PERIOD_EXPRESSIONS, requestedPeriod)
@@ -85,6 +109,8 @@ function normalizeBrandAnalysisFilters(input = {}, now = new Date()) {
     fromDateTime: toDateTimeParam(from),
     toExclusiveDateTime: toDateTimeParam(formatDateUTC(toExclusiveDate)),
     brandId: normalizeBrandId(input.brandId),
+    city: cleanValues(input.city),
+    region: cleanValues(input.region),
     rangeDays
   };
 }
@@ -206,11 +232,23 @@ function emptyTrendRow(period) {
     slaPercent: 0,
     coveragePercent: 0,
     revenueRub: 0,
-    cancelledShifts: 0
+    cancelledShifts: 0,
+    respondedUserIds: [],
+    workedUserIds: [],
+    uniqueRespondedUsers: 0,
+    uniqueWorkedUsers: 0
   };
 }
 
-function mergeTrendRows(orderRows, shiftRows) {
+function normalizeIdArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return cleanValues(value);
+}
+
+function mergeTrendRows(orderRows, shiftRows, responseRows = []) {
   const byPeriod = new Map();
 
   for (const row of orderRows) {
@@ -233,6 +271,17 @@ function mergeTrendRows(orderRows, shiftRows) {
     current.coveragePercent = percent(current.coveredShifts, current.orderedShifts);
     current.revenueRub = numberValue(row.revenue_rub);
     current.cancelledShifts = numberValue(row.cancelled_shifts);
+    current.workedUserIds = normalizeIdArray(row.worked_user_ids);
+    current.uniqueWorkedUsers = current.workedUserIds.length;
+    byPeriod.set(period, current);
+  }
+
+  for (const row of responseRows) {
+    const period = String(row.period);
+    const current = byPeriod.get(period) || emptyTrendRow(period);
+
+    current.respondedUserIds = normalizeIdArray(row.responded_user_ids);
+    current.uniqueRespondedUsers = current.respondedUserIds.length;
     byPeriod.set(period, current);
   }
 
@@ -350,6 +399,39 @@ function mapStatusRows(rows) {
   }));
 }
 
+function emptyFilterOptions() {
+  return FILTER_OPTION_KEYS.reduce((options, key) => {
+    options[key] = [];
+    return options;
+  }, {});
+}
+
+function filterOptionsFromRows(rows) {
+  const options = emptyFilterOptions();
+  const seenByKey = FILTER_OPTION_KEYS.reduce((seen, key) => {
+    seen[key] = new Set();
+    return seen;
+  }, {});
+
+  for (const row of rows) {
+    const key = String(row.filter || '');
+    const value = cleanText(row.value);
+
+    if (!Object.prototype.hasOwnProperty.call(options, key) || value === '') {
+      continue;
+    }
+
+    if (seenByKey[key].has(value)) {
+      continue;
+    }
+
+    seenByKey[key].add(value);
+    options[key].push(value);
+  }
+
+  return options;
+}
+
 function nullableNumberExpression(alias, field) {
   return `toFloat64OrNull(nullIf(trimBoth(ifNull(toString(${alias}.${field}), '')), ''))`;
 }
@@ -366,7 +448,24 @@ function transactionAmountExpression(alias = 't') {
   return `coalesce(${nullableNumberExpression(alias, 'payment_amount')}, ${nullableNumberExpression(alias, 'amount')}, 0)`;
 }
 
-function actualOrdersCte({ includeDateFilter = false } = {}) {
+function escapeClickHouseString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
+}
+
+function addDimensionFiltersWhere(filters, where) {
+  if (filters.city.length > 0) {
+    where.push('w.address__city IN {cities:Array(String)}');
+  }
+  if (filters.region.length > 0) {
+    where.push('w.address__region IN {regions:Array(String)}');
+  }
+}
+
+function actualOrdersCte({ includeDateFilter = false } = {}, filters = null) {
   const where = [
     actualOrderDomainCondition('o', 'c', 'ct'),
     `${BRAND_TITLE_EXPRESSION} = {brand_title:String}`
@@ -374,6 +473,10 @@ function actualOrdersCte({ includeDateFilter = false } = {}) {
 
   if (includeDateFilter) {
     where.push('o.start >= {from:DateTime}', 'o.start < {to:DateTime}');
+  }
+
+  if (filters) {
+    addDimensionFiltersWhere(filters, where);
   }
 
   return `actual_orders AS (
@@ -384,6 +487,7 @@ function actualOrdersCte({ includeDateFilter = false } = {}) {
     o.workplace AS workplace,
     ifNull(nullIf(w.title, ''), 'Без точки') AS workplace_title,
     ifNull(w.address__city, '') AS city,
+    ifNull(w.address__region, '') AS region,
     if(ifNull(p.caption, '') = '', ifNull(o.spec, ''), p.caption) AS profession,
     ifNull(o.amount, 0) AS amount,
     ifNull(nullIf(c.title, ''), 'Без бренда') AS brand,
@@ -398,12 +502,12 @@ function actualOrdersCte({ includeDateFilter = false } = {}) {
 )`;
 }
 
-function actualOrdersWithClause(options) {
-  return `WITH ${actualOrdersCte(options)}`;
+function actualOrdersWithClause(options, filters = null) {
+  return `WITH ${actualOrdersCte(options, filters)}`;
 }
 
-function shiftFactsOnlyCte() {
-  return `WITH ${actualOrdersCte()},
+function shiftFactsOnlyCte(filters = null) {
+  return `WITH ${actualOrdersCte({}, filters)},
 shift_facts AS (
   SELECT
     j._id AS job,
@@ -413,6 +517,7 @@ shift_facts AS (
     ao.workplace AS workplace,
     ao.workplace_title AS workplace_title,
     ao.city AS city,
+    ao.region AS region,
     ao.profession AS profession,
     j.worker AS worker,
     j.source AS source,
@@ -438,8 +543,8 @@ shift_facts AS (
 )`;
 }
 
-function shiftFactsCte() {
-  return `${shiftFactsOnlyCte()},
+function shiftFactsCte(filters = null) {
+  return `${shiftFactsOnlyCte(filters)},
 history_ranked AS (
   SELECT
     h.job AS job,
@@ -537,11 +642,20 @@ function avgCustomerRateHourExpression() {
 }
 
 function paramsForFilters(filters) {
-  return {
+  const params = {
     param_brand_title: filters.brandId,
     param_from: filters.fromDateTime,
     param_to: filters.toExclusiveDateTime
   };
+
+  if (filters.city.length > 0) {
+    params.param_cities = serializeStringArray(filters.city);
+  }
+  if (filters.region.length > 0) {
+    params.param_regions = serializeStringArray(filters.region);
+  }
+
+  return params;
 }
 
 function mergeBrandAnalysisReviews(filters, reviewRows = []) {
@@ -568,6 +682,7 @@ function emptyBrandAnalysisDashboard(filters) {
     filters,
     brandOptions: [],
     selectedBrandTitle: '',
+    filterOptions: emptyFilterOptions(),
     summary: emptySummary(),
     trendRows: [],
     workplaceRows: [],
@@ -603,7 +718,9 @@ function cacheKeyForBrandAnalysisSection(section, filters) {
       period: filters.period,
       from: filters.from,
       to: filters.to,
-      brandId: filters.brandId
+      brandId: filters.brandId,
+      city: filters.city,
+      region: filters.region
     }
   });
 }
@@ -636,6 +753,41 @@ async function loadBrandOptions(client) {
   return Array.from(byTitle.values());
 }
 
+function brandFilterOptionsQuery() {
+  return `${actualOrdersWithClause({ includeDateFilter: true })}
+SELECT
+  tupleElement(option, 1) AS filter,
+  tupleElement(option, 2) AS value
+FROM (
+  SELECT
+    ifNull(o.city, '') AS city_value,
+    ifNull(o.region, '') AS region_value
+  FROM actual_orders AS o
+)
+ARRAY JOIN [
+  tuple('city', city_value),
+  tuple('region', region_value)
+] AS option
+WHERE value != ''
+GROUP BY filter, value
+ORDER BY filter, value
+FORMAT JSONEachRow`;
+}
+
+async function loadBrandFilterOptions(client, filters) {
+  if (filters.brandId === '') {
+    return emptyFilterOptions();
+  }
+
+  const rows = await client.queryJSONEachRow(
+    brandFilterOptionsQuery(),
+    paramsForFilters({ ...filters, city: [], region: [] }),
+    'brand analysis filter options'
+  );
+
+  return filterOptionsFromRows(rows);
+}
+
 async function loadBrandAnalysisSectionRows(client, filters, section) {
   assertBrandAnalysisSection(section);
 
@@ -656,7 +808,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
   if (section === 'summary') {
     const [orderSummaryRows, shiftSummaryRows, reviewSummaryRows] = await Promise.all([
       client.queryJSONEachRow(
-        `${actualOrdersWithClause({ includeDateFilter: true })}
+        `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
       SELECT
         sum(o.amount) AS ordered_shifts,
         countDistinctIf(o.workplace, o.workplace != '') AS workplaces_with_orders,
@@ -667,7 +819,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
         'brand analysis orders summary'
       ),
       client.queryJSONEachRow(
-        `${shiftFactsCte()}
+        `${shiftFactsCte(filters)}
       SELECT
         ${workedShifts} AS worked_shifts,
         ${coveredShifts} AS covered_shifts,
@@ -684,7 +836,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
         'brand analysis shifts summary'
       ),
       client.queryJSONEachRow(
-        brandReviewSummaryQuery(),
+        brandReviewSummaryQuery(filters),
         params,
         'brand analysis review summary'
       )
@@ -694,11 +846,11 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
   }
 
   if (section === 'trend') {
-    const [orderTrendRows, shiftTrendRows] = await Promise.all([
+    const [orderTrendRows, shiftTrendRows, responseTrendRows] = await Promise.all([
       client.queryJSONEachRow(
-        `${actualOrdersWithClause({ includeDateFilter: true })}
+        `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
       SELECT
-        ${periodOrders} AS period,
+        toDate(o.start) AS period,
         sum(o.amount) AS ordered_shifts
       FROM actual_orders AS o
       GROUP BY period
@@ -708,29 +860,50 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
         'brand analysis orders trend'
       ),
       client.queryJSONEachRow(
-        `${shiftFactsCte()}
+        `${shiftFactsCte(filters)}
       SELECT
-        ${periodShifts} AS period,
+        toDate(shift_start) AS period,
         ${workedShifts} AS worked_shifts,
         ${coveredShifts} AS covered_shifts,
         sum(${revenue}) AS revenue_rub,
-        ${cancelledShifts} AS cancelled_shifts
+        ${cancelledShifts} AS cancelled_shifts,
+        groupUniqArrayIf(ifNull(worker_profile.user, ''), is_successful_confirmed_shift = 1 AND ifNull(worker_profile.user, '') != '') AS worked_user_ids
       FROM shift_enriched
+      LEFT JOIN mg_workers AS worker_profile ON worker_profile._id = worker
       GROUP BY period
       ORDER BY period
       FORMAT JSONEachRow`,
         params,
         'brand analysis shifts trend'
+      ),
+      client.queryJSONEachRow(
+        `${actualOrdersWithClause({}, filters)}
+      SELECT
+        toDate(h.createdAt) AS period,
+        groupUniqArrayIf(ifNull(worker_profile.user, ''), ifNull(worker_profile.user, '') != '') AS responded_user_ids
+      FROM mg_job_history AS h
+      INNER JOIN mg_jobs AS j ON h.job = j._id
+      INNER JOIN actual_orders AS ao ON j.source = ao.order_id
+      LEFT JOIN mg_workers AS worker_profile
+        ON coalesce(nullIf(ifNull(h.worker, ''), ''), nullIf(ifNull(j.worker, ''), ''), '') = worker_profile._id
+      WHERE ifNull(h.status, '') = 'booked'
+        AND h.createdAt >= {from:DateTime}
+        AND h.createdAt < {to:DateTime}
+      GROUP BY period
+      ORDER BY period
+      FORMAT JSONEachRow`,
+        params,
+        'brand analysis responses trend'
       )
     ]);
 
-    return { orderTrendRows, shiftTrendRows };
+    return { orderTrendRows, shiftTrendRows, responseTrendRows };
   }
 
   if (section === 'workplaces') {
     const [workplaceOrderRows, workplaceShiftRows] = await Promise.all([
       client.queryJSONEachRow(
-        `${actualOrdersWithClause({ includeDateFilter: true })}
+        `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
       SELECT
         o.workplace AS workplace_id,
         any(o.workplace_title) AS workplace_title,
@@ -746,7 +919,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
         'brand analysis workplace orders'
       ),
       client.queryJSONEachRow(
-        `${shiftFactsCte()}
+        `${shiftFactsCte(filters)}
       SELECT
         workplace AS workplace_id,
         ${workedShifts} AS worked_shifts,
@@ -770,7 +943,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
   if (section === 'professions') {
     const [professionOrderRows, professionShiftRows] = await Promise.all([
       client.queryJSONEachRow(
-        `${actualOrdersWithClause({ includeDateFilter: true })}
+        `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
       SELECT
         ifNull(nullIf(o.profession, ''), 'Без специальности') AS profession,
         sum(o.amount) AS ordered_shifts
@@ -782,7 +955,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
         'brand analysis profession orders'
       ),
       client.queryJSONEachRow(
-        `${shiftFactsCte()}
+        `${shiftFactsCte(filters)}
       SELECT
         ifNull(nullIf(profession, ''), 'Без специальности') AS profession,
         ${workedShifts} AS worked_shifts,
@@ -801,7 +974,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
   }
 
   const statusRows = await client.queryJSONEachRow(
-    `${shiftFactsOnlyCte()}
+    `${shiftFactsOnlyCte(filters)}
       SELECT
         if(status = '', 'empty', status) AS status,
         count() AS shifts
@@ -834,7 +1007,7 @@ function mergeBrandAnalysisSection(filters, section, rows) {
   if (section === 'trend') {
     return {
       ...dashboard,
-      trendRows: mergeTrendRows(rows.orderTrendRows || [], rows.shiftTrendRows || [])
+      trendRows: mergeTrendRows(rows.orderTrendRows || [], rows.shiftTrendRows || [], rows.responseTrendRows || [])
     };
   }
 
@@ -862,11 +1035,13 @@ async function loadBrandAnalysisDashboardShell(client, input = {}, now = new Dat
   const filters = normalizeBrandAnalysisFilters(input, now);
   const brandOptions = await loadBrandOptions(client);
   const selected = brandOptions.find((brand) => brand.id === filters.brandId);
+  const filterOptions = selected ? await loadBrandFilterOptions(client, filters) : emptyFilterOptions();
 
   return {
     ...emptyBrandAnalysisDashboard(filters),
     brandOptions,
-    selectedBrandTitle: selected ? selected.title : ''
+    selectedBrandTitle: selected ? selected.title : '',
+    filterOptions
   };
 }
 
@@ -915,7 +1090,7 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
       summaryRows.reviewSummaryRows,
       shell.filters
     ),
-    trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows),
+    trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows, trendRows.responseTrendRows),
     workplaceRows: mergeWorkplaceRows(workplaceRows.workplaceOrderRows, workplaceRows.workplaceShiftRows),
     professionRows: mergeProfessionRows(professionRows.professionOrderRows, professionRows.professionShiftRows),
     statusRows: mapStatusRows(statusRows.statusRows)
@@ -930,8 +1105,8 @@ function reviewAuthorFullNameExpression() {
     )`;
 }
 
-function brandReviewSummaryQuery() {
-  return `${actualOrdersWithClause()}
+function brandReviewSummaryQuery(filters = null) {
+  return `${actualOrdersWithClause({}, filters)}
 SELECT
   count() AS review_count,
   avgOrNull(r.rating) AS avg_rating_all,
@@ -954,8 +1129,8 @@ WHERE ifNull(r.rating, 0) > 0
 FORMAT JSONEachRow`;
 }
 
-function brandReviewsQuery() {
-  return `${actualOrdersWithClause()}
+function brandReviewsQuery(filters = null) {
+  return `${actualOrdersWithClause({}, filters)}
 SELECT
   r._id AS review_id,
   r.job AS job_id,
@@ -987,7 +1162,7 @@ async function loadBrandAnalysisReviews(client, input = {}, now = new Date()) {
   }
 
   const reviewRows = await client.queryJSONEachRow(
-    brandReviewsQuery(),
+    brandReviewsQuery(filters),
     paramsForFilters(filters),
     'brand analysis reviews'
   );

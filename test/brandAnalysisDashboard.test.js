@@ -28,7 +28,9 @@ test('normalizeBrandAnalysisFilters keeps supported period, dates and selected b
       period: 'week',
       from: '2026-04-01',
       to: '2026-04-30',
-      brandId: ' client-1 '
+      brandId: ' client-1 ',
+      city: [' Москва ', 'Москва', '', 'Казань'],
+      region: ['ЦФО', ' ', 'ЦФО', 'ПФО']
     },
     new Date('2026-06-01T12:00:00.000Z')
   );
@@ -40,6 +42,8 @@ test('normalizeBrandAnalysisFilters keeps supported period, dates and selected b
     fromDateTime: '2026-04-01 00:00:00',
     toExclusiveDateTime: '2026-05-01 00:00:00',
     brandId: 'client-1',
+    city: ['Москва', 'Казань'],
+    region: ['ЦФО', 'ПФО'],
     rangeDays: 30
   });
 });
@@ -61,6 +65,8 @@ test('normalizeBrandAnalysisFilters falls back from unsafe period and invalid da
   assert.equal(filters.fromDateTime, '2026-03-03 00:00:00');
   assert.equal(filters.toExclusiveDateTime, '2026-06-02 00:00:00');
   assert.equal(filters.brandId, 'brand-1');
+  assert.deepEqual(filters.city, []);
+  assert.deepEqual(filters.region, []);
   assert.equal(filters.rangeDays, 91);
 });
 
@@ -71,6 +77,14 @@ test('loadBrandAnalysisDashboardShell loads brand options without heavy dashboar
       { brand_title: 'Brand A ' },
       { brand_title: 'Brand A' },
       { brand_title: 'Brand B' }
+    ],
+    'brand analysis filter options': [
+      { filter: 'city', value: 'Москва' },
+      { filter: 'city', value: 'Казань' },
+      { filter: 'city', value: 'Москва' },
+      { filter: 'region', value: 'ЦФО' },
+      { filter: 'region', value: '' },
+      { filter: 'region', value: 'ПФО' }
     ]
   });
 
@@ -80,7 +94,9 @@ test('loadBrandAnalysisDashboardShell loads brand options without heavy dashboar
       period: 'month',
       from: '2026-04-01',
       to: '2026-04-30',
-      brandId: 'Brand A'
+      brandId: 'Brand A',
+      city: ['Москва'],
+      region: ['ЦФО']
     },
     new Date('2026-06-01T12:00:00.000Z')
   );
@@ -89,10 +105,22 @@ test('loadBrandAnalysisDashboardShell loads brand options without heavy dashboar
     { id: 'Brand A', title: 'Brand A' },
     { id: 'Brand B', title: 'Brand B' }
   ]);
+  assert.deepEqual(dashboard.filterOptions, {
+    city: ['Москва', 'Казань'],
+    region: ['ЦФО', 'ПФО']
+  });
   assert.equal(dashboard.selectedBrandTitle, 'Brand A');
-  assert.deepEqual(calls.map((call) => call.operation), ['brand analysis brand options']);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'brand analysis brand options',
+    'brand analysis filter options'
+  ]);
   assert.match(calls[0].query, /GROUP BY brand_title/);
   assert.doesNotMatch(calls[0].query, /c\._id AS brand_id/);
+  assert.equal(calls[1].params.param_brand_title, 'Brand A');
+  assert.equal(calls[1].params.param_from, '2026-04-01 00:00:00');
+  assert.equal(calls[1].params.param_to, '2026-05-01 00:00:00');
+  assert.match(calls[1].query, /tuple\('city', city_value\)/);
+  assert.match(calls[1].query, /tuple\('region', region_value\)/);
 });
 
 test('loadBrandAnalysisDashboardSection returns empty data without selected brand', async () => {
@@ -151,7 +179,9 @@ test('loadBrandAnalysisDashboardSection queries and maps summary for selected br
       period: 'month',
       from: '2026-04-01',
       to: '2026-04-30',
-      brandId: 'Brand A'
+      brandId: 'Brand A',
+      city: ['Москва', 'Казань'],
+      region: ['ЦФО']
     },
     'summary',
     new Date('2026-06-01T12:00:00.000Z')
@@ -180,8 +210,12 @@ test('loadBrandAnalysisDashboardSection queries and maps summary for selected br
   assert.ok(calls.every((call) => call.params.param_brand_title === 'Brand A'));
   assert.ok(calls.every((call) => call.params.param_from === '2026-04-01 00:00:00'));
   assert.ok(calls.every((call) => call.params.param_to === '2026-05-01 00:00:00'));
+  assert.ok(calls.every((call) => call.params.param_cities === "['Москва','Казань']"));
+  assert.ok(calls.every((call) => call.params.param_regions === "['ЦФО']"));
   assert.ok(calls.some((call) => call.query.includes('actual_orders AS (')));
   assert.ok(calls.some((call) => call.query.includes('INNER JOIN actual_orders AS ao ON j.source = ao.order_id')));
+  assert.ok(calls.every((call) => call.query.includes('w.address__city IN {cities:Array(String)}')));
+  assert.ok(calls.every((call) => call.query.includes('w.address__region IN {regions:Array(String)}')));
   assert.ok(calls.some((call) => call.query.includes("ifNull(nullIf(trimBoth(ifNull(c.title, '')), ''), 'Без бренда') = {brand_title:String}")));
   assert.ok(calls.some((call) => call.query.includes('c.title NOT IN')));
   assert.ok(calls.some((call) => call.query.includes("!= 'processing'")));
@@ -241,12 +275,25 @@ test('loadBrandAnalysisReviews loads brand reviews with workplace for each ratin
 });
 
 test('loadBrandAnalysisDashboardSection maps trend, workplaces, professions and statuses', async () => {
-  const { client } = createDashboardClient({
+  const { calls, client } = createDashboardClient({
     'brand analysis orders trend': [
       { period: '2026-04-01', ordered_shifts: 20 }
     ],
     'brand analysis shifts trend': [
-      { period: '2026-04-01', worked_shifts: 15, covered_shifts: 17, revenue_rub: 30000, cancelled_shifts: 2 }
+      {
+        period: '2026-04-01',
+        worked_shifts: 15,
+        covered_shifts: 17,
+        revenue_rub: 30000,
+        cancelled_shifts: 2,
+        worked_user_ids: ['user-2', 'user-3']
+      }
+    ],
+    'brand analysis responses trend': [
+      {
+        period: '2026-04-01',
+        responded_user_ids: ['user-1', 'user-2']
+      }
     ],
     'brand analysis workplace orders': [
       {
@@ -300,10 +347,23 @@ test('loadBrandAnalysisDashboardSection maps trend, workplaces, professions and 
       slaPercent: 75,
       coveragePercent: 85,
       revenueRub: 30000,
-      cancelledShifts: 2
+      cancelledShifts: 2,
+      respondedUserIds: ['user-1', 'user-2'],
+      workedUserIds: ['user-2', 'user-3'],
+      uniqueRespondedUsers: 2,
+      uniqueWorkedUsers: 2
     }
   ]);
   assert.equal(workplaces.workplaceRows[0].workplaceTitle, 'Точка <1>');
+  const trendCalls = calls.filter((call) => String(call.operation).includes('trend'));
+  assert.deepEqual(trendCalls.map((call) => call.operation), [
+    'brand analysis orders trend',
+    'brand analysis shifts trend',
+    'brand analysis responses trend'
+  ]);
+  assert.ok(trendCalls.every((call) => call.query.includes('toDate(')));
+  assert.ok(trendCalls.some((call) => call.query.includes("ifNull(h.status, '') = 'booked'")));
+  assert.ok(trendCalls.some((call) => call.query.includes('groupUniqArrayIf')));
   assert.equal(workplaces.workplaceRows[0].slaPercent, 75);
   assert.equal(workplaces.workplaceRows[0].coveragePercent, 83.33333333333334);
   assert.equal(professions.professionRows[0].profession, 'Комплектовщик');

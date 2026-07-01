@@ -2615,6 +2615,243 @@ function layout({
       font-weight: 600;
     }
 
+    .brand-trend-charts {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .brand-trend-periods {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .brand-trend-period {
+      min-height: 34px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .brand-trend-period:hover,
+    .brand-trend-period[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .brand-trend-chart-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .brand-trend-chart {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-trend-chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .brand-trend-chart h3 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+
+    .brand-trend-expand {
+      min-width: 34px;
+      min-height: 30px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .brand-trend-expand:hover,
+    .brand-trend-expand:focus {
+      border-color: var(--accent);
+      background: var(--link-bg);
+      outline: none;
+    }
+
+    .brand-trend-svg {
+      width: 100%;
+      min-height: 260px;
+      overflow: visible;
+    }
+
+    .brand-trend-axis,
+    .brand-trend-grid-line {
+      stroke: var(--line);
+      stroke-width: 1;
+    }
+
+    .brand-trend-label {
+      fill: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .brand-trend-value-label {
+      fill: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 3px;
+      stroke-linejoin: round;
+    }
+
+    .brand-trend-label-bg {
+      fill: #ffffff;
+      stroke: rgba(148, 163, 184, 0.45);
+      stroke-width: 1px;
+      rx: 4px;
+      ry: 4px;
+    }
+
+    .brand-trend-callout-line {
+      stroke: var(--muted);
+      stroke-width: 1.2;
+      stroke-dasharray: 3 3;
+    }
+
+    .brand-trend-line {
+      fill: none;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .brand-trend-point {
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .brand-trend-bar {
+      rx: 3;
+      ry: 3;
+    }
+
+    .brand-trend-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .brand-trend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      display: inline-block;
+      margin-right: 5px;
+      vertical-align: -1px;
+    }
+
+    .brand-trend-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      padding: 24px;
+    }
+
+    .brand-trend-modal[aria-hidden="false"] {
+      display: block;
+    }
+
+    .brand-trend-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 33, 43, 0.55);
+    }
+
+    .brand-trend-modal-dialog {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 12px;
+      width: min(1080px, 100%);
+      max-height: calc(100vh - 48px);
+      margin: 0 auto;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.28);
+    }
+
+    .brand-trend-modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .brand-trend-modal-head h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .brand-trend-modal-close {
+      min-width: 34px;
+      min-height: 34px;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .brand-trend-modal-chart .brand-trend-svg {
+      min-height: 460px;
+    }
+
+    .brand-trend-modal-chart .brand-trend-label {
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .brand-trend-chart-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .brand-trend-modal {
+        padding: 10px;
+      }
+
+      .brand-trend-modal-dialog {
+        max-height: calc(100vh - 20px);
+      }
+    }
+
     .city-heatmap-scroll,
     .city-index-scroll {
       overflow-x: auto;
@@ -3515,9 +3752,480 @@ function layout({
       ? renderCityDynamicChartScript()
       : ''
   }
+  ${
+    content.includes('data-brand-trend-charts') || content.includes('/dashboards/brand-analysis/section?section=trend')
+      ? renderBrandTrendChartsScript()
+      : ''
+  }
   ${content.includes('data-sql-inspector-modal') || canViewSqlInspector(currentUser) ? renderSqlInspectorScript() : ''}
 </body>
 </html>`;
+}
+
+function renderBrandTrendChartsScript() {
+  return `<script>
+(function () {
+  if (window.initBrandTrendCharts) {
+    window.initBrandTrendCharts(document);
+    return;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function numberValue(value) {
+    var number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function parseDate(value) {
+    var parts = String(value || '').slice(0, 10).split('-').map(Number);
+    if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+      return null;
+    }
+    return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  }
+
+  function formatDate(date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  function startOfWeek(date) {
+    var copy = new Date(date.getTime());
+    var day = copy.getUTCDay() || 7;
+    copy.setUTCDate(copy.getUTCDate() - day + 1);
+    return copy;
+  }
+
+  function bucketFor(period, value) {
+    var date = parseDate(value);
+    if (!date) {
+      return String(value || '');
+    }
+    if (period === 'week') {
+      return formatDate(startOfWeek(date));
+    }
+    if (period === 'month') {
+      return date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0') + '-01';
+    }
+    if (period === 'quarter') {
+      var quarterMonth = Math.floor(date.getUTCMonth() / 3) * 3 + 1;
+      return date.getUTCFullYear() + '-' + String(quarterMonth).padStart(2, '0') + '-01';
+    }
+    return formatDate(date);
+  }
+
+  function uniqueSize(values) {
+    return new Set((values || []).filter(function (value) { return value !== ''; })).size;
+  }
+
+  function aggregateRows(rows, period) {
+    var byPeriod = new Map();
+    rows.forEach(function (row) {
+      var key = bucketFor(period, row.period);
+      var current = byPeriod.get(key);
+      if (!current) {
+        current = {
+          period: key,
+          orderedShifts: 0,
+          workedShifts: 0,
+          coveredShifts: 0,
+          respondedUserIds: new Set(),
+          workedUserIds: new Set()
+        };
+        byPeriod.set(key, current);
+      }
+      current.orderedShifts += numberValue(row.orderedShifts);
+      current.workedShifts += numberValue(row.workedShifts);
+      current.coveredShifts += numberValue(row.coveredShifts);
+      (row.respondedUserIds || []).forEach(function (id) { if (id) current.respondedUserIds.add(String(id)); });
+      (row.workedUserIds || []).forEach(function (id) { if (id) current.workedUserIds.add(String(id)); });
+    });
+
+    return Array.from(byPeriod.values())
+      .sort(function (left, right) { return left.period.localeCompare(right.period); })
+      .map(function (row) {
+        var responded = uniqueSize(Array.from(row.respondedUserIds));
+        var worked = uniqueSize(Array.from(row.workedUserIds));
+        return {
+          period: row.period,
+          orderedShifts: row.orderedShifts,
+          workedShifts: row.workedShifts,
+          coveredShifts: row.coveredShifts,
+          slaPercent: row.orderedShifts > 0 ? (row.workedShifts / row.orderedShifts) * 100 : 0,
+          uniqueRespondedUsers: responded,
+          uniqueWorkedUsers: worked
+        };
+      });
+  }
+
+  function pointPath(rows, xForIndex, yForValue, valueKey) {
+    return rows.map(function (row, index) {
+      return (index === 0 ? 'M' : 'L') + xForIndex(index) + ' ' + yForValue(numberValue(row[valueKey]));
+    }).join(' ');
+  }
+
+  function formatCompactNumber(value) {
+    return Math.round(numberValue(value)).toLocaleString('ru-RU');
+  }
+
+  function formatCompactPercent(value) {
+    return Math.round(numberValue(value)) + '%';
+  }
+
+  function shouldShowDenseLabel(rows, index, valueKey) {
+    if (rows.length <= 14) {
+      return true;
+    }
+
+    var value = numberValue(rows[index][valueKey]);
+    var maxValue = Math.max.apply(null, rows.map(function (row) {
+      return numberValue(row[valueKey]);
+    }).concat([0]));
+    var step = Math.ceil(rows.length / 7);
+    var previous = index > 0 ? numberValue(rows[index - 1][valueKey]) : value;
+    var next = index < rows.length - 1 ? numberValue(rows[index + 1][valueKey]) : value;
+    var isEdge = index === 0 || index === rows.length - 1;
+    var isPeak = value >= previous && value >= next && value >= maxValue * 0.55;
+
+    return isEdge || isPeak || index % step === 0;
+  }
+
+  function filterReadableLabels(candidates) {
+    var accepted = [];
+
+    candidates
+      .filter(function (candidate) {
+        return candidate.visible;
+      })
+      .sort(function (left, right) {
+        return right.priority - left.priority;
+      })
+      .forEach(function (candidate) {
+        var overlaps = accepted.some(function (current) {
+          return Math.abs(current.x - candidate.x) < 34 && Math.abs(current.y - candidate.y) < 18;
+        });
+
+        if (!overlaps) {
+          accepted.push(candidate);
+        }
+      });
+
+    return accepted
+      .sort(function (left, right) {
+        return left.index - right.index || left.order - right.order;
+      })
+      .map(function (candidate) {
+        var text = '<text class="brand-trend-value-label" x="' + candidate.x + '" y="' + candidate.y + '" text-anchor="' + candidate.anchor + '">' + escapeHtml(candidate.label) + '</text>';
+        if (!candidate.callout) {
+          return text;
+        }
+
+        var width = Math.max(24, String(candidate.label).length * 7 + 10);
+        var rectX = candidate.anchor === 'middle' ? candidate.x - width / 2 : candidate.x - 5;
+        var rectY = candidate.y - 14;
+        return '<g class="brand-trend-callout">' +
+          '<line class="brand-trend-callout-line" x1="' + candidate.fromX + '" y1="' + candidate.fromY + '" x2="' + candidate.x + '" y2="' + (candidate.y - 5) + '"></line>' +
+          '<rect class="brand-trend-label-bg" x="' + rectX + '" y="' + rectY + '" width="' + width + '" height="18"></rect>' +
+          text +
+          '</g>';
+      })
+      .join('');
+  }
+
+  function labelsOverlap(left, right, xGap, yGap) {
+    return Math.abs(left.x - right.x) < xGap && Math.abs(left.y - right.y) < yGap;
+  }
+
+  function withSlaCallouts(barCandidates, slaCandidates, width, top) {
+    return slaCandidates.map(function (candidate, offset) {
+      var collidesWithBar = barCandidates.some(function (barCandidate) {
+        return barCandidate.visible && labelsOverlap(candidate, barCandidate, 44, 24);
+      });
+      if (!collidesWithBar) {
+        return candidate;
+      }
+
+      var side = offset % 2 === 0 ? 1 : -1;
+      var calloutX = Math.max(54, Math.min(width - 54, candidate.x + side * 30));
+      var calloutY = Math.max(top + 12, candidate.y - 28 - (offset % 3) * 8);
+      return Object.assign({}, candidate, {
+        x: calloutX,
+        y: calloutY,
+        anchor: 'middle',
+        callout: true,
+        fromX: candidate.x - 8,
+        fromY: candidate.y + 8,
+        priority: candidate.priority + 30
+      });
+    });
+  }
+
+  function renderEmpty(svg) {
+    svg.innerHTML = '<text class="brand-trend-label" x="380" y="140" text-anchor="middle">Нет данных</text>';
+  }
+
+  function renderChart(svg, rows, type, detailed) {
+    if (!svg || rows.length === 0) {
+      if (svg) renderEmpty(svg);
+      return;
+    }
+
+    if (detailed) {
+      svg.setAttribute('data-brand-trend-detailed', '1');
+    } else {
+      svg.removeAttribute('data-brand-trend-detailed');
+    }
+
+    var width = 760;
+    var height = 280;
+    var left = 48;
+    var right = 22;
+    var top = 18;
+    var bottom = 42;
+    var plotWidth = width - left - right;
+    var plotHeight = height - top - bottom;
+    var count = rows.length;
+    var slot = plotWidth / Math.max(count, 1);
+    var xForIndex = function (index) { return left + slot * index + slot / 2; };
+    var maxBar = Math.max.apply(null, rows.map(function (row) {
+      return Math.max(numberValue(row.orderedShifts), numberValue(row.coveredShifts), numberValue(row.uniqueRespondedUsers), numberValue(row.uniqueWorkedUsers));
+    }).concat([1]));
+    var yForCount = function (value) { return top + plotHeight - (numberValue(value) / maxBar) * plotHeight; };
+    var yForPercent = function (value) { return top + plotHeight - (Math.max(0, Math.min(100, numberValue(value))) / 100) * plotHeight; };
+    var labels = rows.map(function (row, index) {
+      if (count > 10 && index % Math.ceil(count / 8) !== 0 && index !== count - 1) {
+        return '';
+      }
+      return '<text class="brand-trend-label" x="' + xForIndex(index) + '" y="' + (height - 12) + '" text-anchor="middle">' + escapeHtml(String(row.period).slice(5) || row.period) + '</text>';
+    }).join('');
+    var grid = [0, 0.5, 1].map(function (step) {
+      var y = top + plotHeight * step;
+      return '<line class="brand-trend-grid-line" x1="' + left + '" y1="' + y + '" x2="' + (width - right) + '" y2="' + y + '"></line>';
+    }).join('');
+
+    if (type === 'fulfillment') {
+      var barWidth = Math.max(4, Math.min(18, slot * 0.28));
+      var bars = rows.map(function (row, index) {
+        var x = xForIndex(index);
+        var orderedY = yForCount(row.orderedShifts);
+        var coveredY = yForCount(row.coveredShifts);
+        return '<rect class="brand-trend-bar" fill="#2563eb" x="' + (x - barWidth - 1) + '" y="' + orderedY + '" width="' + barWidth + '" height="' + (top + plotHeight - orderedY) + '"><title>' + escapeHtml(row.period + ': заказано ' + row.orderedShifts) + '</title></rect>' +
+          '<rect class="brand-trend-bar" fill="#14b8a6" x="' + (x + 1) + '" y="' + coveredY + '" width="' + barWidth + '" height="' + (top + plotHeight - coveredY) + '"><title>' + escapeHtml(row.period + ': закрыто ' + row.coveredShifts) + '</title></rect>';
+      }).join('');
+      var barLabelCandidates = rows.flatMap(function (row, index) {
+        var x = xForIndex(index);
+        var orderedY = Math.max(12, yForCount(row.orderedShifts) - 7);
+        var coveredY = Math.max(12, yForCount(row.coveredShifts) - 7);
+        var slaY = yForPercent(row.slaPercent);
+        var coveredTouchesSla = Math.abs(coveredY - slaY) < 22;
+        return [
+          {
+            index: index,
+            order: 1,
+            x: x - barWidth / 2 - 1,
+            y: orderedY,
+            anchor: 'middle',
+            label: formatCompactNumber(row.orderedShifts),
+            priority: numberValue(row.orderedShifts),
+            visible: shouldShowDenseLabel(rows, index, 'orderedShifts')
+          },
+          {
+            index: index,
+            order: 2,
+            x: coveredTouchesSla ? Math.min(width - 42, x + 30) : x + barWidth / 2 + 1,
+            y: coveredTouchesSla ? Math.min(height - bottom - 6, coveredY + 28) : coveredY,
+            anchor: 'middle',
+            label: formatCompactNumber(row.coveredShifts),
+            priority: numberValue(row.coveredShifts) * 0.85 + (coveredTouchesSla ? 25 : 0),
+            visible: shouldShowDenseLabel(rows, index, 'coveredShifts') && Math.abs(coveredY - orderedY) >= 18,
+            callout: coveredTouchesSla,
+            fromX: x + barWidth / 2 + 1,
+            fromY: coveredY + 5
+          }
+        ];
+      });
+      var slaPath = pointPath(rows, xForIndex, yForPercent, 'slaPercent');
+      var slaPoints = rows.map(function (row, index) {
+        return '<circle class="brand-trend-point" fill="#7c3aed" cx="' + xForIndex(index) + '" cy="' + yForPercent(row.slaPercent) + '" r="4"><title>' + escapeHtml(row.period + ': SLA ' + Math.round(row.slaPercent) + '%') + '</title></circle>';
+      }).join('');
+      var slaLabelCandidates = rows.map(function (row, index) {
+        return {
+          index: index,
+          order: 3,
+          x: xForIndex(index) + 8,
+          y: Math.max(12, yForPercent(row.slaPercent) - 8),
+          anchor: 'start',
+          label: formatCompactPercent(row.slaPercent),
+          priority: 120 - Math.abs(50 - numberValue(row.slaPercent)),
+          visible: shouldShowDenseLabel(rows, index, 'slaPercent')
+        };
+      });
+      var valueLabels = detailed ? filterReadableLabels(barLabelCandidates.concat(withSlaCallouts(barLabelCandidates, slaLabelCandidates, width, top))) : '';
+      svg.innerHTML = grid + bars + '<path class="brand-trend-line" stroke="#7c3aed" d="' + slaPath + '"></path>' + slaPoints + valueLabels + labels;
+      return;
+    }
+
+    var respondedPath = pointPath(rows, xForIndex, yForCount, 'uniqueRespondedUsers');
+    var workedPath = pointPath(rows, xForIndex, yForCount, 'uniqueWorkedUsers');
+    var points = rows.map(function (row, index) {
+      return '<circle class="brand-trend-point" fill="#f97316" cx="' + xForIndex(index) + '" cy="' + yForCount(row.uniqueRespondedUsers) + '" r="4"><title>' + escapeHtml(row.period + ': откликнулись ' + row.uniqueRespondedUsers) + '</title></circle>' +
+        '<circle class="brand-trend-point" fill="#16a34a" cx="' + xForIndex(index) + '" cy="' + yForCount(row.uniqueWorkedUsers) + '" r="4"><title>' + escapeHtml(row.period + ': вышли ' + row.uniqueWorkedUsers) + '</title></circle>';
+    }).join('');
+    var workerValueLabels = detailed ? filterReadableLabels(rows.flatMap(function (row, index) {
+      var x = xForIndex(index);
+      return [
+        {
+          index: index,
+          order: 1,
+          x: x + 8,
+          y: Math.max(12, yForCount(row.uniqueRespondedUsers) - 8),
+          anchor: 'start',
+          label: formatCompactNumber(row.uniqueRespondedUsers),
+          priority: numberValue(row.uniqueRespondedUsers),
+          visible: shouldShowDenseLabel(rows, index, 'uniqueRespondedUsers')
+        },
+        {
+          index: index,
+          order: 2,
+          x: x + 8,
+          y: Math.min(height - 48, yForCount(row.uniqueWorkedUsers) + 18),
+          anchor: 'start',
+          label: formatCompactNumber(row.uniqueWorkedUsers),
+          priority: numberValue(row.uniqueWorkedUsers) * 0.9,
+          visible: shouldShowDenseLabel(rows, index, 'uniqueWorkedUsers')
+        }
+      ];
+    })) : '';
+    svg.innerHTML = grid +
+      '<path class="brand-trend-line" stroke="#f97316" d="' + respondedPath + '"></path>' +
+      '<path class="brand-trend-line" stroke="#16a34a" d="' + workedPath + '"></path>' +
+      points + workerValueLabels + labels;
+  }
+
+  function init(root) {
+    if (root.getAttribute('data-brand-trend-ready') === '1') {
+      return;
+    }
+    root.setAttribute('data-brand-trend-ready', '1');
+    var modal = root.querySelector('[data-brand-trend-modal]');
+    var modalTitle = root.querySelector('[data-brand-trend-modal-title]');
+    var modalChart = root.querySelector('[data-brand-trend-modal-chart]');
+    var modalClose = root.querySelector('[data-brand-trend-modal-close]');
+    var dataNode = root.querySelector('[data-brand-trend-data]');
+    var rows = [];
+    try {
+      rows = dataNode ? JSON.parse(dataNode.textContent || '[]') : [];
+    } catch (error) {
+      rows = [];
+    }
+    var currentPeriod = root.getAttribute('data-brand-trend-initial-period') || 'day';
+    var currentGrouped = [];
+
+    function renderModalChart(type) {
+      if (!modal || !modalChart || modal.getAttribute('aria-hidden') !== 'false') {
+        return;
+      }
+
+      var sourceChart = root.querySelector('[data-brand-trend-chart="' + type + '"]');
+      var sourceTitle = sourceChart ? sourceChart.querySelector('h3') : null;
+      var sourceLegend = sourceChart ? sourceChart.querySelector('.brand-trend-legend') : null;
+      var title = sourceTitle ? sourceTitle.textContent : '';
+
+      modal.setAttribute('data-brand-trend-modal-type', type);
+      if (modalTitle) {
+        modalTitle.textContent = title;
+      }
+      modalChart.innerHTML = '<svg class="brand-trend-svg" viewBox="0 0 760 280" role="img" aria-label="' + escapeHtml(title) + '"></svg>' + (sourceLegend ? sourceLegend.outerHTML : '');
+      renderChart(modalChart.querySelector('svg'), currentGrouped, type, true);
+    }
+
+    function closeModal() {
+      if (!modal) {
+        return;
+      }
+      modal.setAttribute('aria-hidden', 'true');
+      modal.removeAttribute('data-brand-trend-modal-type');
+      if (modalChart) {
+        modalChart.innerHTML = '';
+      }
+    }
+
+    function openModal(type) {
+      if (!modal || !modalChart) {
+        return;
+      }
+      modal.setAttribute('aria-hidden', 'false');
+      renderModalChart(type);
+      if (modalClose && typeof modalClose.focus === 'function') {
+        modalClose.focus();
+      }
+    }
+
+    function update(period) {
+      currentPeriod = period;
+      root.setAttribute('data-brand-trend-current-period', currentPeriod);
+      root.querySelectorAll('[data-brand-trend-period]').forEach(function (button) {
+        button.setAttribute('aria-pressed', button.getAttribute('data-brand-trend-period') === currentPeriod ? 'true' : 'false');
+      });
+      currentGrouped = aggregateRows(rows, currentPeriod);
+      root.querySelectorAll('[data-brand-trend-chart]').forEach(function (chart) {
+        renderChart(chart.querySelector('svg'), currentGrouped, chart.getAttribute('data-brand-trend-chart'));
+      });
+      if (modal && modal.getAttribute('aria-hidden') === 'false') {
+        renderModalChart(modal.getAttribute('data-brand-trend-modal-type') || 'fulfillment');
+      }
+    }
+
+    root.addEventListener('click', function (event) {
+      var button = event.target && event.target.closest ? event.target.closest('[data-brand-trend-period]') : null;
+      if (button) {
+        update(button.getAttribute('data-brand-trend-period') || 'day');
+        return;
+      }
+
+      var expand = event.target && event.target.closest ? event.target.closest('[data-brand-trend-expand]') : null;
+      if (expand) {
+        openModal(expand.getAttribute('data-brand-trend-expand') || 'fulfillment');
+        return;
+      }
+
+      var close = event.target && event.target.closest ? event.target.closest('[data-brand-trend-modal-close], [data-brand-trend-modal-backdrop]') : null;
+      if (close) {
+        closeModal();
+      }
+    });
+
+    root.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        closeModal();
+      }
+    });
+
+    update(currentPeriod);
+  }
+
+  window.initBrandTrendCharts = function (container) {
+    var scope = container || document;
+    var roots = [];
+    if (scope.matches && scope.matches('[data-brand-trend-charts]')) {
+      roots.push(scope);
+    }
+    scope.querySelectorAll('[data-brand-trend-charts]').forEach(function (root) {
+      roots.push(root);
+    });
+    roots.forEach(init);
+  };
+
+  window.initBrandTrendCharts(document);
+})();
+</script>`;
 }
 
 function renderCityDynamicChartScript() {
@@ -4739,6 +5447,9 @@ function renderDashboardProgressiveScript() {
 
     if (typeof window.initHeatmapLeafletMaps === 'function') {
       window.initHeatmapLeafletMaps();
+    }
+    if (typeof window.initBrandTrendCharts === 'function') {
+      window.initBrandTrendCharts(document);
     }
   }
 
@@ -7149,6 +7860,8 @@ function brandAnalysisSectionUrl(filters, section) {
   addDashboardQueryParam(params, 'from', filters.from);
   addDashboardQueryParam(params, 'to', filters.to);
   addDashboardQueryParam(params, 'brandId', filters.brandId);
+  addDashboardQueryParam(params, 'city', filters.city);
+  addDashboardQueryParam(params, 'region', filters.region);
 
   return `/dashboards/brand-analysis/section?${params.toString()}`;
 }
@@ -7157,6 +7870,8 @@ function brandAnalysisReviewsUrl(filters = {}) {
   const params = new URLSearchParams();
 
   addDashboardQueryParam(params, 'brandId', filters.brandId);
+  addDashboardQueryParam(params, 'city', filters.city);
+  addDashboardQueryParam(params, 'region', filters.region);
 
   return `/dashboards/brand-analysis/reviews?${params.toString()}`;
 }
@@ -7221,6 +7936,261 @@ function renderBrandAnalysisKpiCards(summary, currentUser, filters = {}) {
       attributes: `role="button" tabindex="0" data-workplace-point-review-trigger data-detail-url="${escapeHtml(brandAnalysisReviewsUrl(filters))}"`
     }
   ], currentUser);
+}
+
+function safeJsonScript(value) {
+  return JSON.stringify(value)
+    .replace(/&/g, '\\u0026')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+function brandTrendChartPayload(rows) {
+  return safeRows(rows).map((row) => ({
+    period: String(row.period || ''),
+    orderedShifts: trendRowNumber(row, 'orderedShifts'),
+    workedShifts: trendRowNumber(row, 'workedShifts'),
+    coveredShifts: trendRowNumber(row, 'coveredShifts'),
+    slaPercent: trendRowNumber(row, 'slaPercent'),
+    respondedUserIds: Array.isArray(row.respondedUserIds) ? row.respondedUserIds.map((value) => String(value)) : [],
+    workedUserIds: Array.isArray(row.workedUserIds) ? row.workedUserIds.map((value) => String(value)) : []
+  }));
+}
+
+function renderBrandTrendLegend(items) {
+  return `<div class="brand-trend-legend">${items
+    .map((item) => `<span><span class="brand-trend-swatch" style="background: ${escapeHtml(item.color)}"></span>${escapeHtml(item.label)}</span>`)
+    .join('')}</div>`;
+}
+
+function brandTrendNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function brandTrendParseDate(value) {
+  const parts = String(value || '').slice(0, 10).split('-').map(Number);
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    return null;
+  }
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+}
+
+function brandTrendFormatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function brandTrendStartOfWeek(date) {
+  const copy = new Date(date.getTime());
+  const day = copy.getUTCDay() || 7;
+  copy.setUTCDate(copy.getUTCDate() - day + 1);
+  return copy;
+}
+
+function brandTrendBucketFor(period, value) {
+  const date = brandTrendParseDate(value);
+  if (!date) {
+    return String(value || '');
+  }
+  if (period === 'week') {
+    return brandTrendFormatDate(brandTrendStartOfWeek(date));
+  }
+  if (period === 'month') {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+  if (period === 'quarter') {
+    const quarterMonth = Math.floor(date.getUTCMonth() / 3) * 3 + 1;
+    return `${date.getUTCFullYear()}-${String(quarterMonth).padStart(2, '0')}-01`;
+  }
+  return brandTrendFormatDate(date);
+}
+
+function aggregateBrandTrendRows(rows, period) {
+  const byPeriod = new Map();
+
+  rows.forEach((row) => {
+    const key = brandTrendBucketFor(period, row.period);
+    if (!byPeriod.has(key)) {
+      byPeriod.set(key, {
+        period: key,
+        orderedShifts: 0,
+        workedShifts: 0,
+        coveredShifts: 0,
+        respondedUserIds: new Set(),
+        workedUserIds: new Set()
+      });
+    }
+
+    const current = byPeriod.get(key);
+    current.orderedShifts += brandTrendNumber(row.orderedShifts);
+    current.workedShifts += brandTrendNumber(row.workedShifts);
+    current.coveredShifts += brandTrendNumber(row.coveredShifts);
+    (row.respondedUserIds || []).forEach((id) => {
+      if (id) {
+        current.respondedUserIds.add(String(id));
+      }
+    });
+    (row.workedUserIds || []).forEach((id) => {
+      if (id) {
+        current.workedUserIds.add(String(id));
+      }
+    });
+  });
+
+  return Array.from(byPeriod.values())
+    .sort((left, right) => left.period.localeCompare(right.period))
+    .map((row) => ({
+      period: row.period,
+      orderedShifts: row.orderedShifts,
+      workedShifts: row.workedShifts,
+      coveredShifts: row.coveredShifts,
+      slaPercent: row.orderedShifts > 0 ? (row.workedShifts / row.orderedShifts) * 100 : 0,
+      uniqueRespondedUsers: row.respondedUserIds.size,
+      uniqueWorkedUsers: row.workedUserIds.size
+    }));
+}
+
+function brandTrendSvgNumber(value) {
+  return String(Math.round(brandTrendNumber(value) * 100) / 100);
+}
+
+function brandTrendPointPath(rows, xForIndex, yForValue, valueKey) {
+  return rows
+    .map((row, index) => `${index === 0 ? 'M' : 'L'}${brandTrendSvgNumber(xForIndex(index))} ${brandTrendSvgNumber(yForValue(row[valueKey]))}`)
+    .join(' ');
+}
+
+function renderBrandTrendEmptySvg() {
+  return '<text class="brand-trend-label" x="380" y="140" text-anchor="middle">\u041d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445</text>';
+}
+
+function renderBrandTrendSvg(rows, type) {
+  if (rows.length === 0) {
+    return renderBrandTrendEmptySvg();
+  }
+
+  const width = 760;
+  const height = 280;
+  const left = 48;
+  const right = 22;
+  const top = 18;
+  const bottom = 42;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const count = rows.length;
+  const slot = plotWidth / Math.max(count, 1);
+  const xForIndex = (index) => left + slot * index + slot / 2;
+  const maxBar = Math.max(
+    1,
+    ...rows.map((row) => Math.max(
+      brandTrendNumber(row.orderedShifts),
+      brandTrendNumber(row.coveredShifts),
+      brandTrendNumber(row.uniqueRespondedUsers),
+      brandTrendNumber(row.uniqueWorkedUsers)
+    ))
+  );
+  const yForCount = (value) => top + plotHeight - (brandTrendNumber(value) / maxBar) * plotHeight;
+  const yForPercent = (value) => top + plotHeight - (Math.max(0, Math.min(100, brandTrendNumber(value))) / 100) * plotHeight;
+  const labels = rows
+    .map((row, index) => {
+      if (count > 10 && index % Math.ceil(count / 8) !== 0 && index !== count - 1) {
+        return '';
+      }
+      const label = String(row.period).slice(5) || row.period;
+      return `<text class="brand-trend-label" x="${brandTrendSvgNumber(xForIndex(index))}" y="${height - 12}" text-anchor="middle">${escapeHtml(label)}</text>`;
+    })
+    .join('');
+  const grid = [0, 0.5, 1]
+    .map((step) => {
+      const y = top + plotHeight * step;
+      return `<line class="brand-trend-grid-line" x1="${left}" y1="${brandTrendSvgNumber(y)}" x2="${width - right}" y2="${brandTrendSvgNumber(y)}"></line>`;
+    })
+    .join('');
+
+  if (type === 'fulfillment') {
+    const barWidth = Math.max(4, Math.min(18, slot * 0.28));
+    const bars = rows
+      .map((row, index) => {
+        const x = xForIndex(index);
+        const orderedY = yForCount(row.orderedShifts);
+        const coveredY = yForCount(row.coveredShifts);
+        return `<rect class="brand-trend-bar" fill="#2563eb" x="${brandTrendSvgNumber(x - barWidth - 1)}" y="${brandTrendSvgNumber(orderedY)}" width="${brandTrendSvgNumber(barWidth)}" height="${brandTrendSvgNumber(top + plotHeight - orderedY)}"><title>${escapeHtml(`${row.period}: ordered ${row.orderedShifts}`)}</title></rect>` +
+          `<rect class="brand-trend-bar" fill="#14b8a6" x="${brandTrendSvgNumber(x + 1)}" y="${brandTrendSvgNumber(coveredY)}" width="${brandTrendSvgNumber(barWidth)}" height="${brandTrendSvgNumber(top + plotHeight - coveredY)}"><title>${escapeHtml(`${row.period}: closed ${row.coveredShifts}`)}</title></rect>`;
+      })
+      .join('');
+    const slaPath = brandTrendPointPath(rows, xForIndex, yForPercent, 'slaPercent');
+    const slaPoints = rows
+      .map((row, index) => `<circle class="brand-trend-point" fill="#7c3aed" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForPercent(row.slaPercent))}" r="4"><title>${escapeHtml(`${row.period}: SLA ${Math.round(row.slaPercent)}%`)}</title></circle>`)
+      .join('');
+    return `${grid}${bars}<path class="brand-trend-line" stroke="#7c3aed" d="${escapeHtml(slaPath)}"></path>${slaPoints}${labels}`;
+  }
+
+  const respondedPath = brandTrendPointPath(rows, xForIndex, yForCount, 'uniqueRespondedUsers');
+  const workedPath = brandTrendPointPath(rows, xForIndex, yForCount, 'uniqueWorkedUsers');
+  const points = rows
+    .map((row, index) => `<circle class="brand-trend-point" fill="#f97316" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForCount(row.uniqueRespondedUsers))}" r="4"><title>${escapeHtml(`${row.period}: responded ${row.uniqueRespondedUsers}`)}</title></circle>` +
+      `<circle class="brand-trend-point" fill="#16a34a" cx="${brandTrendSvgNumber(xForIndex(index))}" cy="${brandTrendSvgNumber(yForCount(row.uniqueWorkedUsers))}" r="4"><title>${escapeHtml(`${row.period}: worked ${row.uniqueWorkedUsers}`)}</title></circle>`)
+    .join('');
+
+  return `${grid}<path class="brand-trend-line" stroke="#f97316" d="${escapeHtml(respondedPath)}"></path><path class="brand-trend-line" stroke="#16a34a" d="${escapeHtml(workedPath)}"></path>${points}${labels}`;
+}
+
+function renderBrandTrendCharts(rows, filters = {}) {
+  const payload = brandTrendChartPayload(rows);
+  const initialPeriod = ['day', 'week', 'month', 'quarter'].includes(filters.period) ? filters.period : 'day';
+  const initialRows = aggregateBrandTrendRows(payload, initialPeriod);
+  const periods = [
+    ['day', 'День'],
+    ['week', 'Неделя'],
+    ['month', 'Месяц'],
+    ['quarter', 'Квартал']
+  ];
+
+  return `<div class="brand-trend-charts" data-brand-trend-charts data-brand-trend-initial-period="${escapeHtml(initialPeriod)}">
+  <div class="brand-trend-periods" role="group" aria-label="Периодичность графиков">
+    ${periods
+      .map(([period, label]) => `<button type="button" class="brand-trend-period" data-brand-trend-period="${escapeHtml(period)}" aria-pressed="${period === initialPeriod ? 'true' : 'false'}">${escapeHtml(label)}</button>`)
+      .join('')}
+  </div>
+  <div class="brand-trend-chart-grid">
+    <article class="mini-panel brand-trend-chart" data-brand-trend-chart="fulfillment">
+      <div class="brand-trend-chart-head">
+        <h3>Заказ и SLA</h3>
+        <button type="button" class="brand-trend-expand" data-brand-trend-expand="fulfillment" aria-label="Раскрыть график Заказ и SLA">↗</button>
+      </div>
+      <svg class="brand-trend-svg" viewBox="0 0 760 280" role="img" aria-label="Заказано смен, закрыто смен и SLA">${renderBrandTrendSvg(initialRows, 'fulfillment')}</svg>
+      ${renderBrandTrendLegend([
+        { label: 'Заказано смен', color: '#2563eb' },
+        { label: 'Закрыто смен', color: '#14b8a6' },
+        { label: 'SLA', color: '#7c3aed' }
+      ])}
+    </article>
+    <article class="mini-panel brand-trend-chart" data-brand-trend-chart="workers">
+      <div class="brand-trend-chart-head">
+        <h3>Отклики и выходы</h3>
+        <button type="button" class="brand-trend-expand" data-brand-trend-expand="workers" aria-label="Раскрыть график Отклики и выходы">↗</button>
+      </div>
+      <svg class="brand-trend-svg" viewBox="0 0 760 280" role="img" aria-label="Уникальные пользователи откликались и вышли">${renderBrandTrendSvg(initialRows, 'workers')}</svg>
+      ${renderBrandTrendLegend([
+        { label: 'Уникальные откликнувшиеся', color: '#f97316' },
+        { label: 'Уникальные вышедшие', color: '#16a34a' }
+      ])}
+    </article>
+  </div>
+  <script type="application/json" data-brand-trend-data>${safeJsonScript(payload)}</script>
+  <div class="brand-trend-modal" data-brand-trend-modal aria-hidden="true">
+    <div class="brand-trend-modal-backdrop" data-brand-trend-modal-backdrop></div>
+    <div class="brand-trend-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="brand-trend-modal-title">
+      <div class="brand-trend-modal-head">
+        <h3 id="brand-trend-modal-title" data-brand-trend-modal-title></h3>
+        <button type="button" class="brand-trend-modal-close" data-brand-trend-modal-close aria-label="Закрыть">×</button>
+      </div>
+      <div class="brand-trend-modal-chart" data-brand-trend-modal-chart></div>
+    </div>
+  </div>
+</div>`;
 }
 
 function renderBrandTrendRows(rows, currentUser) {
@@ -7331,7 +8301,7 @@ function renderBrandAnalysisDashboardSection({ dashboard, section, currentUser }
   if (section === 'trend') {
     return `<section class="section">
   ${renderMetricPanelHead('Динамика', 'brand-analysis.trend', currentUser)}
-  ${renderBrandTrendRows(dashboard.trendRows, currentUser)}
+  ${renderBrandTrendCharts(dashboard.trendRows, dashboard.filters || {})}
 </section>`;
   }
 
@@ -7404,6 +8374,18 @@ ${renderBrandAnalysisDashboardSection({ dashboard, section: 'statuses', currentU
       <label for="to">По</label>
       <input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}">
     </div>
+    ${renderMultiSelectField({
+      id: 'city',
+      label: '\u0413\u043e\u0440\u043e\u0434',
+      options: filterOptions(dashboard, 'city'),
+      selected: filters.city
+    })}
+    ${renderMultiSelectField({
+      id: 'region',
+      label: '\u0420\u0435\u0433\u0438\u043e\u043d',
+      options: filterOptions(dashboard, 'region'),
+      selected: filters.region
+    })}
     <button type="submit">Применить</button>
   </form>
 </section>

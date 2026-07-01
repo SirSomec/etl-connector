@@ -7441,8 +7441,10 @@ function selectedSummary(values) {
 
 function renderMultiSelectOptions({ id, options, selectedValues, labelForValue = String }) {
   const selected = selectedSet(selectedValues);
+  const availableOptions = Array.isArray(options) ? options.map((option) => String(option)) : [];
+  const optionsWithSelected = [...new Set([...availableOptions, ...selected])];
 
-  return options
+  return optionsWithSelected
     .map((option) => {
       const value = String(option);
       const label = String(labelForValue(value));

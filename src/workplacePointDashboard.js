@@ -1642,21 +1642,26 @@ async function loadWorkplacePointDashboardShell(client, input = {}, now = new Da
     throw httpError(404, `Workplace not found: ${filters.workplaceId}`);
   }
 
-  const filterOptionsRequest = filterOptionsQuery(filters);
+  const shouldLoadFilterOptions = options.loadFilterOptions !== false;
+  const filterOptionsRequest = shouldLoadFilterOptions ? filterOptionsQuery(filters) : null;
   let filterOptionRows = [];
 
-  try {
-    filterOptionRows = await client.queryJSONEachRow(
-      filterOptionsRequest.query,
-      filterOptionsRequest.params,
-      'workplace point filter options'
-    );
-  } catch (_) {
-    filterOptionRows = [];
+  if (shouldLoadFilterOptions) {
+    try {
+      filterOptionRows = await client.queryJSONEachRow(
+        filterOptionsRequest.query,
+        filterOptionsRequest.params,
+        'workplace point filter options'
+      );
+    } catch (_) {
+      filterOptionRows = [];
+    }
   }
   const filterOptions = filterOptionsFromRows(filterOptionRows);
 
-  filters = restrictFiltersToOptions(filters, filterOptions);
+  if (shouldLoadFilterOptions) {
+    filters = restrictFiltersToOptions(filters, filterOptions);
+  }
 
   return {
     ...mergeWorkplacePointRows(filters, {

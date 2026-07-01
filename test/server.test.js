@@ -1851,6 +1851,7 @@ test('GET /dashboards/workplace-analysis/point renders point detail page', async
     assert.match(text, /Point 1/);
     assert.match(text, /Загружается/);
     assert.match(text, /\/dashboards\/workplace-analysis\/point\/section\?section=summary/);
+    assert.match(text, /section=summary&amp;workplaceId=wp1&amp;from=2026-06-01&amp;to=2026-06-30&amp;profession=picker&amp;orderType=regular&amp;jobStatus=confirmed/);
     assert.doesNotMatch(text, /Уникальные завершали/);
     assert.match(text, /class="nav-link active" href="\/dashboards\/workplace-analysis"/);
   });
@@ -1859,11 +1860,10 @@ test('GET /dashboards/workplace-analysis/point renders point detail page', async
     call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace point')
   );
 
-  assert.equal(pointCalls.length, 2);
+  assert.equal(pointCalls.length, 1);
+  assert.equal(pointCalls[0][1], 'workplace point metadata');
   for (const call of pointCalls) {
     assert.equal(call[2].param_workplace_id, 'wp1');
-    assert.equal(call[2].param_from, '2026-06-01 00:00:00');
-    assert.equal(call[2].param_to, '2026-07-01 00:00:00');
   }
 });
 

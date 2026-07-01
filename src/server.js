@@ -2570,7 +2570,7 @@ function createApp({
         client,
         req.query,
         new Date(),
-        { workplaceDirectoryCache }
+        { workplaceDirectoryCache, loadFilterOptions: false }
       );
 
       recordCurrentUserActivity(req, activityEventType(req));

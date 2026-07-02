@@ -9,6 +9,7 @@ const {
 } = require('../src/preloadWorkplacePoint');
 
 const EXPECTED_OPERATIONS = [
+  'workplace point preload active workplaces',
   'workplace point preload order facts',
   'workplace point preload shift facts',
   'workplace point preload order status facts',
@@ -20,6 +21,8 @@ const EXPECTED_OPERATIONS = [
 function createRowsForOperation(operation) {
   return [{ operation }];
 }
+
+const EXPECTED_FACT_OPERATIONS = EXPECTED_OPERATIONS.slice(1);
 
 test('workplace point preload exports dashboard metadata', () => {
   assert.equal(WORKPLACE_POINT_DASHBOARD_ID, 'workplace-point');
@@ -48,6 +51,14 @@ test('refreshWorkplacePointPreload loads hot workplace facts and replaces the ra
   const client = {
     async queryJSONEachRow(query, params, operation) {
       calls.push({ query, params, operation });
+      if (operation === 'workplace point preload active workplaces') {
+        return [
+          { workplace_id: 'wp-active-1' },
+          { workplace_id: 'wp-hot-2' },
+          { workplace_id: '' },
+          {}
+        ];
+      }
       return createRowsForOperation(operation);
     }
   };
@@ -61,22 +72,32 @@ test('refreshWorkplacePointPreload loads hot workplace facts and replaces the ra
   });
 
   assert.deepEqual(calls.map((call) => call.operation), EXPECTED_OPERATIONS);
-  assert.equal(result.rowsWritten, EXPECTED_OPERATIONS.length);
+  assert.equal(result.rowsWritten, EXPECTED_FACT_OPERATIONS.length);
 
-  for (const call of calls) {
+  const activeWorkplacesCall = calls[0];
+
+  assert.equal(activeWorkplacesCall.params.param_active_workplace_from, '2026-06-18 09:15:00');
+  assert.equal(activeWorkplacesCall.params.param_active_workplace_to, '2026-07-02 09:15:00');
+  assert.equal(activeWorkplacesCall.query.includes('FROM mg_orders AS o'), true);
+  assert.equal(activeWorkplacesCall.query.includes('o.start >= {active_workplace_from:DateTime}'), true);
+  assert.equal(activeWorkplacesCall.query.includes('o.start < {active_workplace_to:DateTime}'), true);
+  assert.equal(activeWorkplacesCall.query.includes("ifNull(o.workplace, '') != ''"), true);
+  assert.equal(activeWorkplacesCall.query.includes('ifNull(o.amount, 0) > 0'), true);
+
+  for (const call of calls.slice(1)) {
     assert.equal(call.params.param_from, '2026-06-01 00:00:00');
     assert.equal(call.params.param_to, '2026-07-01 00:00:00');
     assert.equal(call.params.param_current_date, '2026-07-02');
     assert.equal(call.params.param_active_window_date, '2026-07-02');
     assert.equal(call.params.param_active_session_from, '2026-06-02 09:15:00');
     assert.equal(call.params.param_active_session_to, '2026-07-02 09:15:00');
-    assert.equal(call.params.param_workplace_ids, "['wp-hot-1','wp-hot-2']");
+    assert.equal(call.params.param_workplace_ids, "['wp-active-1','wp-hot-2','wp-hot-1']");
   }
 
   assert.equal(replacements.length, 1);
   assert.equal(replacements[0].fromDate, '2026-06-01');
   assert.equal(replacements[0].toDate, '2026-07-01');
-  assert.deepEqual(replacements[0].workplaceIds, ['wp-hot-1', 'wp-hot-2']);
+  assert.deepEqual(replacements[0].workplaceIds, ['wp-active-1', 'wp-hot-2', 'wp-hot-1']);
   assert.deepEqual(replacements[0].orderFacts, createRowsForOperation('workplace point preload order facts'));
   assert.deepEqual(replacements[0].shiftFacts, createRowsForOperation('workplace point preload shift facts'));
   assert.deepEqual(
@@ -100,6 +121,20 @@ test('refreshWorkplacePointPreload loads hot workplace facts and replaces the ra
 test('workplace point preload query builders keep joins and filters safe', () => {
   const queries = buildWorkplacePointPreloadQueries();
   const allSql = Object.values(queries).join('\n');
+
+  assert.equal(queries.activeWorkplaceIds.includes('FROM mg_orders AS o'), true);
+  assert.equal(queries.activeWorkplaceIds.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+  assert.equal(queries.activeWorkplaceIds.includes('LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace'), true);
+  assert.equal(queries.activeWorkplaceIds.includes('LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor'), true);
+  assert.equal(queries.activeWorkplaceIds.includes('c.title IS NULL OR c.title NOT IN'), true);
+  assert.equal(
+    queries.activeWorkplaceIds.includes("ifNull(ct.contract_type, ifNull(o.contract_type, '')) != 'processing'"),
+    true
+  );
+  assert.equal(queries.activeWorkplaceIds.includes('o.start >= {active_workplace_from:DateTime}'), true);
+  assert.equal(queries.activeWorkplaceIds.includes('o.start < {active_workplace_to:DateTime}'), true);
+  assert.equal(queries.activeWorkplaceIds.includes("ifNull(o.workplace, '') != ''"), true);
+  assert.equal(queries.activeWorkplaceIds.includes('ifNull(o.amount, 0) > 0'), true);
 
   assert.equal(allSql.includes('mygig_'), false);
   assert.equal(queries.orderFacts.includes('FROM mg_orders AS o'), true);
@@ -198,7 +233,7 @@ test('refreshWorkplacePointPreload handles an empty hot workplace set', async ()
 
   assert.equal(result.rowsWritten, 0);
   assert.deepEqual(calls.map((call) => call.operation), EXPECTED_OPERATIONS);
-  assert.deepEqual(calls.map((call) => call.params.param_workplace_ids), ['[]', '[]', '[]', '[]', '[]', '[]']);
+  assert.deepEqual(calls.slice(1).map((call) => call.params.param_workplace_ids), ['[]', '[]', '[]', '[]', '[]', '[]']);
   assert.equal(replacements.length, 1);
   assert.deepEqual(replacements[0].radiusRollups, []);
 });

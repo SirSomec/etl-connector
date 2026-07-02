@@ -1174,6 +1174,36 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
   assert.equal(attentionCall.query.includes('DROP TABLE'), false);
 });
 
+test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before aggregation', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis attention points') {
+        return [];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  await loadWorkplaceAnalysisDashboardSection(
+    client,
+    {},
+    'attention',
+    new Date('2026-06-04T12:00:00.000Z')
+  );
+
+  const attentionCall = calls[0];
+
+  assert.equal(attentionCall.operation, 'workplace analysis attention points');
+  assert.equal(attentionCall.query.includes('CROSS JOIN latest_workers'), false);
+  assert.equal(attentionCall.query.includes('point_search_cells AS'), true);
+  assert.equal(attentionCall.query.includes('worker_candidates AS'), true);
+  assert.match(attentionCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = psc\.lon_cell\s+AND wc\.lat_cell = psc\.lat_cell/);
+});
+
 test('loadWorkplaceAnalysisDashboardSection ignores stale attention cache without profession breakdown', async () => {
   const now = new Date('2026-06-04T12:00:00.000Z');
   const input = {

@@ -17,7 +17,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
 const DEFAULT_ATTENTION_LIMIT = 150;
 const ATTENTION_PAGE_SIZE = 15;
-const WORKPLACE_ATTENTION_CACHE_SCHEMA_VERSION = 2;
+const WORKPLACE_ATTENTION_CACHE_SCHEMA_VERSION = 3;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100000;
 const DEFAULT_SORT = 'orders';
@@ -1477,6 +1477,17 @@ function attentionPointsQuery(whereSql) {
       15000 / (111320 * greatest(abs(cos(((min(lat) + max(lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
     FROM attention_points
   ),
+  point_search_cells AS (
+    SELECT
+      ap.workplace_id AS workplace_id,
+      ap.lon AS lon,
+      ap.lat AS lat,
+      toInt32(floor(ap.lon / 0.1)) + toInt32(lon_offsets.number) - 8 AS lon_cell,
+      toInt32(floor(ap.lat / 0.1)) + toInt32(lat_offsets.number) - 8 AS lat_cell
+    FROM attention_points AS ap
+    CROSS JOIN numbers(17) AS lon_offsets
+    CROSS JOIN numbers(17) AS lat_offsets
+  ),
   worker_rows AS (
     SELECT
       worker.user AS user_id,
@@ -1484,17 +1495,10 @@ function attentionPointsQuery(whereSql) {
       worker.location__coordinates AS worker_coordinates,
       ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
     FROM mg_workers AS worker
-    CROSS JOIN point_bounds AS bounds
     LEFT JOIN mg_users AS u ON worker.user = u._id
-    WHERE bounds.points > 0
-      AND ifNull(worker.user, '') != ''
+    WHERE ifNull(worker.user, '') != ''
       AND ifNull(worker.deleted, 0) = 0
       AND ifNull(u.deleted, 0) = 0
-      AND length(worker.location__coordinates) >= 2
-      AND worker.location__coordinates[1] BETWEEN -180 AND 180
-      AND worker.location__coordinates[2] BETWEEN -90 AND 90
-      AND worker.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
-      AND worker.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
   ),
   latest_workers AS (
     SELECT
@@ -1503,6 +1507,22 @@ function attentionPointsQuery(whereSql) {
       argMax(worker_coordinates, updated_at) AS worker_coordinates
     FROM worker_rows
     GROUP BY user_id
+  ),
+  worker_candidates AS (
+    SELECT
+      lw.user_id AS user_id,
+      lw.status AS status,
+      lw.worker_coordinates AS worker_coordinates,
+      toInt32(floor(lw.worker_coordinates[1] / 0.1)) AS lon_cell,
+      toInt32(floor(lw.worker_coordinates[2] / 0.1)) AS lat_cell
+    FROM latest_workers AS lw
+    CROSS JOIN point_bounds AS bounds
+    WHERE bounds.points > 0
+      AND length(lw.worker_coordinates) >= 2
+      AND lw.worker_coordinates[1] BETWEEN -180 AND 180
+      AND lw.worker_coordinates[2] BETWEEN -90 AND 90
+      AND lw.worker_coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
+      AND lw.worker_coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
   ),
   active_session_users AS (
     SELECT DISTINCT ifNull(profile_id, '') AS user_id
@@ -1517,19 +1537,13 @@ function attentionPointsQuery(whereSql) {
       user_id,
       status,
       user_id IN (SELECT user_id FROM active_session_users) AS is_active_30d
-    FROM (
-      SELECT
-        ap.workplace_id AS workplace_id,
-        lw.user_id AS user_id,
-        lw.status AS status,
-        greatCircleDistance(ap.lon, ap.lat, lw.worker_coordinates[1], lw.worker_coordinates[2]) AS distance_m
-      FROM attention_points AS ap
-      CROSS JOIN latest_workers AS lw
-      WHERE lw.worker_coordinates[1] BETWEEN ap.lon - (15000 / (111320 * greatest(abs(cos(ap.lat * pi() / 180)), 0.2))) AND ap.lon + (15000 / (111320 * greatest(abs(cos(ap.lat * pi() / 180)), 0.2)))
-        AND lw.worker_coordinates[2] BETWEEN ap.lat - (15000 / 111000) AND ap.lat + (15000 / 111000)
-        AND greatCircleDistance(ap.lon, ap.lat, lw.worker_coordinates[1], lw.worker_coordinates[2]) <= 15000
-    )
-    WHERE distance_m <= 15000
+    FROM point_search_cells AS psc
+    INNER JOIN worker_candidates AS wc
+      ON wc.lon_cell = psc.lon_cell
+      AND wc.lat_cell = psc.lat_cell
+    WHERE wc.worker_coordinates[1] BETWEEN psc.lon - (15000 / (111320 * greatest(abs(cos(psc.lat * pi() / 180)), 0.2))) AND psc.lon + (15000 / (111320 * greatest(abs(cos(psc.lat * pi() / 180)), 0.2)))
+      AND wc.worker_coordinates[2] BETWEEN psc.lat - (15000 / 111000) AND psc.lat + (15000 / 111000)
+      AND greatCircleDistance(psc.lon, psc.lat, wc.worker_coordinates[1], wc.worker_coordinates[2]) <= 15000
   ),
   point_workers AS (
     SELECT

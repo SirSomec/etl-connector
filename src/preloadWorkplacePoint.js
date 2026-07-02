@@ -7,6 +7,7 @@ const {
 const WORKPLACE_POINT_DASHBOARD_ID = 'workplace-point';
 const WORKPLACE_POINT_PRELOAD_JOB_ID = 'workplace-point';
 const WORKPLACE_POINT_PRELOAD_SECTIONS = ['summary', 'charts', 'year-heatmap', 'radius'];
+const ACTIVE_WORKPLACE_LOOKBACK_DAYS = 14;
 const FORECAST_SLA_ACTIVE_STATUSES_SQL =
   "('booked', 'going', 'delayed', 'waiting', 'checkingin', 'inprogress', 'checkingout', 'completed', 'confirmed')";
 
@@ -45,9 +46,20 @@ function serializeStringArray(values) {
   return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
 }
 
-function uniqueHotWorkplaceIds(requests) {
+function uniqueHotWorkplaceIds(requests, activeWorkplaceRows = []) {
   const ids = [];
-  const seen = new Set();
+  const seen = new Set(ids);
+
+  for (const row of Array.isArray(activeWorkplaceRows) ? activeWorkplaceRows : []) {
+    const workplaceId = cleanText(row && row.workplace_id);
+
+    if (workplaceId === '' || seen.has(workplaceId)) {
+      continue;
+    }
+
+    seen.add(workplaceId);
+    ids.push(workplaceId);
+  }
 
   for (const request of Array.isArray(requests) ? requests : []) {
     const workplaceId = cleanText(request && request.input && request.input.workplaceId);
@@ -65,6 +77,7 @@ function uniqueHotWorkplaceIds(requests) {
 
 function preloadParams({ fromDate, toDate, now, workplaceIds }) {
   const activeSessionFrom = addDaysUTC(now, -30);
+  const activeWorkplaceFrom = addDaysUTC(now, -ACTIVE_WORKPLACE_LOOKBACK_DAYS);
 
   return {
     param_from: toDateTimeParam(fromDate),
@@ -73,6 +86,8 @@ function preloadParams({ fromDate, toDate, now, workplaceIds }) {
     param_active_window_date: formatDateUTC(now),
     param_active_session_from: formatDateTimeUTC(activeSessionFrom),
     param_active_session_to: formatDateTimeUTC(now),
+    param_active_workplace_from: formatDateTimeUTC(activeWorkplaceFrom),
+    param_active_workplace_to: formatDateTimeUTC(now),
     param_workplace_ids: serializeStringArray(workplaceIds)
   };
 }
@@ -170,6 +185,17 @@ function buildWorkplacePointPreloadQueries() {
   const dropEvents = dropEventsCte();
 
   return {
+    activeWorkplaceIds: `SELECT DISTINCT
+  ifNull(o.workplace, '') AS workplace_id
+FROM mg_orders AS o
+${actualOrderJoinsSql('o', { clientAlias: 'c', workplaceAlias: 'ow', contractorAlias: 'ct' })}
+WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
+  AND o.start >= {active_workplace_from:DateTime}
+  AND o.start < {active_workplace_to:DateTime}
+  AND ifNull(o.workplace, '') != ''
+  AND ifNull(o.amount, 0) > 0
+ORDER BY workplace_id
+FORMAT JSONEachRow`,
     orderFacts: `WITH ${filteredOrders}
 SELECT
   period_date,
@@ -335,9 +361,14 @@ async function refreshWorkplacePointPreload({
   const requests = typeof store.listDashboardPreloadRequests === 'function'
     ? store.listDashboardPreloadRequests(WORKPLACE_POINT_PRELOAD_JOB_ID, 1000)
     : [];
-  const workplaceIds = uniqueHotWorkplaceIds(requests);
-  const params = preloadParams({ fromDate, toDate, now, workplaceIds });
   const queries = buildWorkplacePointPreloadQueries();
+  const activeWorkplaceRows = await client.queryJSONEachRow(
+    queries.activeWorkplaceIds,
+    preloadParams({ fromDate, toDate, now, workplaceIds: [] }),
+    'workplace point preload active workplaces'
+  );
+  const workplaceIds = uniqueHotWorkplaceIds(requests, activeWorkplaceRows);
+  const params = preloadParams({ fromDate, toDate, now, workplaceIds });
 
   const [
     orderFacts,

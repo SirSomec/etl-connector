@@ -1813,6 +1813,7 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
 });
 
 test('GET /dashboards/workplace-analysis/point renders point detail page', async () => {
+  const cacheCalls = [];
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {
       this.calls.push(['queryJSONEachRow', operation, params, query]);
@@ -1857,6 +1858,16 @@ test('GET /dashboards/workplace-analysis/point renders point detail page', async
       throw new Error(`Unexpected operation: ${operation}`);
     }
   });
+  const workplaceDirectoryCache = {
+    async getCachedById(clientArg, workplaceId) {
+      cacheCalls.push(['getCachedById', workplaceId]);
+      return null;
+    },
+    async getById(clientArg, workplaceId) {
+      cacheCalls.push(['getById', workplaceId]);
+      return null;
+    }
+  };
 
   await withServer(client, async (baseUrl) => {
     const { response, text } = await fetchText(
@@ -1872,7 +1883,7 @@ test('GET /dashboards/workplace-analysis/point renders point detail page', async
     assert.match(text, /section=summary&amp;workplaceId=wp1&amp;from=2026-06-01&amp;to=2026-06-30&amp;profession=picker&amp;orderType=regular&amp;jobStatus=confirmed/);
     assert.doesNotMatch(text, /Уникальные завершали/);
     assert.match(text, /class="nav-link active" href="\/dashboards\/workplace-analysis"/);
-  });
+  }, baseConfig(), { workplaceDirectoryCache });
 
   const pointCalls = client.calls.filter((call) =>
     call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('workplace point')
@@ -1883,6 +1894,7 @@ test('GET /dashboards/workplace-analysis/point renders point detail page', async
   for (const call of pointCalls) {
     assert.equal(call[2].param_workplace_id, 'wp1');
   }
+  assert.deepEqual(cacheCalls, []);
 });
 
 test('GET /dashboards/workplace-analysis/point/section reloads point summary fragment without cache', async () => {
@@ -1936,6 +1948,65 @@ test('GET /dashboards/workplace-analysis/point/section reloads point summary fra
     'workplace point summary',
     'workplace point review summary'
   ]);
+});
+
+test('GET /dashboards/workplace-analysis/point/section serves point summary fragment from preload', async () => {
+  const preloadCalls = [];
+  const client = createFakeClient({
+    async queryJSONEachRow(query, params, operation) {
+      this.calls.push(['queryJSONEachRow', operation, params, query]);
+      throw new Error(`Unexpected ClickHouse operation: ${operation}`);
+    }
+  });
+  const preloadService = createFakePreloadService({
+    registerWorkplacePointRequest(input) {
+      preloadCalls.push(['registerWorkplacePointRequest', input]);
+    },
+    readWorkplacePointSection(input) {
+      preloadCalls.push(['readWorkplacePointSection', input]);
+      return {
+        summaryRows: [
+          {
+            ordered_shifts: 10,
+            completed_shifts: 8,
+            active_days: 2,
+            unique_completed_workers: 4,
+            unique_booked_workers: 6,
+            dropoffs_24h: 1
+          }
+        ],
+        reviewSummaryRows: [{ review_count: 5, avg_rating_all: 4.5, avg_rating_last_10: 4.7 }]
+      };
+    }
+  });
+
+  await withServer(
+    client,
+    async (baseUrl) => {
+      const path =
+        '/dashboards/workplace-analysis/point/section?section=summary&workplaceId=wp1&from=2026-06-01&to=2026-06-30';
+      const { response, text } = await fetchText(baseUrl, path);
+
+      assert.equal(response.status, 200);
+      assert.match(text, /metric=unique-completed-workers/);
+      assert.match(text, /10/);
+      assert.doesNotMatch(text, /<html/);
+    },
+    baseConfig(),
+    { preloadService }
+  );
+
+  assert.deepEqual(
+    client.calls.filter((call) => call[0] === 'queryJSONEachRow'),
+    []
+  );
+  assert.deepEqual(preloadCalls.map((call) => call[0]), [
+    'registerWorkplacePointRequest',
+    'readWorkplacePointSection'
+  ]);
+  assert.equal(preloadCalls[1][1].section, 'summary');
+  assert.equal(preloadCalls[1][1].fromDate, '2026-06-01');
+  assert.equal(preloadCalls[1][1].toDate, '2026-07-01');
 });
 
 test('GET /dashboards/workplace-analysis/point/details renders day details fragment', async () => {
@@ -3594,12 +3665,14 @@ test('POST /admin/preload/schedule rejects invalid schedule settings', async () 
   const invalidCases = [
     { scheduleTime: 'bad', refreshDays: '60' },
     { scheduleTime: '24:00', refreshDays: '60' },
-    { scheduleTime: '04:30', refreshDays: '44' },
+    { scheduleTime: '04:30', refreshDays: '29' },
     { scheduleTime: '04:30', refreshDays: '0' },
     { scheduleTime: '04:30', refreshDays: '0.5' },
     { scheduleTime: '04:30', refreshDays: '999999' },
-    { scheduleTime: '04:30', refreshPastDays: '44', refreshFutureDays: '45' },
-    { scheduleTime: '04:30', refreshPastDays: '45', refreshFutureDays: '44' }
+    { jobId: 'sales-by-project', scheduleTime: '04:30', refreshPastDays: '30', refreshFutureDays: '45' },
+    { jobId: 'sales-by-project', scheduleTime: '04:30', refreshPastDays: '45', refreshFutureDays: '30' },
+    { scheduleTime: '04:30', refreshPastDays: '29', refreshFutureDays: '45' },
+    { scheduleTime: '04:30', refreshPastDays: '45', refreshFutureDays: '29' }
   ];
 
   for (const invalidCase of invalidCases) {
@@ -3757,10 +3830,27 @@ test('start uses injectable dependencies and logs the listening port without sec
   };
   const clientConfigs = [];
   const logMessages = [];
+  const env = {
+    WORKPLACE_DIRECTORY_CACHE_PATH: 'C:\\runtime\\workplace-directory-cache.json'
+  };
   let createAppArgs;
   let preloadServiceArgs;
   let fakePreloadService;
   let preloadServiceClosed = false;
+  let workplaceDirectoryCacheArgs;
+  let workplaceDirectoryRefreshClient;
+  let workplaceDirectoryRefreshStopped = false;
+  const fakeWorkplaceDirectoryCache = {
+    scheduleRefresh(cacheClient) {
+      workplaceDirectoryRefreshClient = cacheClient;
+
+      return {
+        stop() {
+          workplaceDirectoryRefreshStopped = true;
+        }
+      };
+    }
+  };
   let scheduledReportStoreArgs;
   let scheduledReportMailerArgs;
   let scheduledReportRunnerArgs;
@@ -3782,8 +3872,13 @@ test('start uses injectable dependencies and logs the listening port without sec
   }
 
   const server = start({
+    env,
     loadConfigFn: () => config,
     ClientClass: FakeClient,
+    createWorkplaceDirectoryCacheFn: (args) => {
+      workplaceDirectoryCacheArgs = args;
+      return fakeWorkplaceDirectoryCache;
+    },
     createPreloadServiceFn: (args) => {
       preloadServiceArgs = args;
 
@@ -3865,6 +3960,9 @@ test('start uses injectable dependencies and logs the listening port without sec
     assert.equal(createAppArgs.config, config);
     assert.ok(createAppArgs.client instanceof FakeClient);
     assert.equal(createAppArgs.preloadService, fakePreloadService);
+    assert.equal(createAppArgs.workplaceDirectoryCache, fakeWorkplaceDirectoryCache);
+    assert.deepEqual(workplaceDirectoryCacheArgs, { env });
+    assert.equal(workplaceDirectoryRefreshClient, createAppArgs.client);
     assert.equal(createAppArgs.scheduledReportService, fakeScheduledReportService);
     assert.equal(preloadServiceArgs.client, createAppArgs.client);
     assert.equal(preloadServiceArgs.storePath, config.preload.storePath);
@@ -3906,6 +4004,7 @@ test('start uses injectable dependencies and logs the listening port without sec
 
   assert.equal(preloadServiceClosed, true);
   assert.equal(scheduledReportServiceClosed, true);
+  assert.equal(workplaceDirectoryRefreshStopped, true);
 });
 
 test('start cleans partially created scheduled report resources when scheduled wiring fails', async () => {

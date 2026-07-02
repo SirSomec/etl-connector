@@ -374,20 +374,43 @@ test('renderPreloadManagement renders multiple preload jobs with independent for
         },
         overview: { coveredFrom: '2026-05-02', coveredTo: '2026-08-01' },
         runs: []
+      },
+      {
+        job: {
+          id: 'workplace-point',
+          title: 'Карточка точки',
+          enabled: true,
+          scheduleTime: '08:00',
+          refreshPastDays: 30,
+          refreshFutureDays: 30
+        },
+        overview: { coveredFrom: '2026-06-02', coveredTo: '2026-08-02' },
+        diagnostics: {
+          workplacePoint: {
+            coverage: { days: 61 },
+            tables: { orderFacts: 10, shiftFacts: 20, radiusRollups: 4 }
+          }
+        },
+        runs: []
       }
     ]
   });
 
   assert.match(html, /sales-by-project/);
   assert.match(html, /workplace-analysis/);
+  assert.match(html, /workplace-point/);
   assert.match(html, /value="sales-by-project"/);
   assert.match(html, /value="workplace-analysis"/);
+  assert.match(html, /value="workplace-point"/);
   assert.match(html, /name="refreshPastDays"/);
   assert.match(html, /name="refreshFutureDays"/);
   assert.match(html, /name="refreshPastDays" type="number" min="45"/);
   assert.match(html, /name="refreshFutureDays" type="number" min="45"/);
+  assert.match(html, /workplace-point-refresh-past-days" name="refreshPastDays" type="number" min="30" max="366" value="30"/);
+  assert.match(html, /workplace-point-refresh-future-days" name="refreshFutureDays" type="number" min="30" max="366" value="30"/);
+  assert.match(html, /Radius rollups/);
+  assert.match(html, /<div class="kpi-value">4<\/div>/);
   assert.match(html, /value="60"/);
-  assert.doesNotMatch(html, /value="30"/);
 });
 
 test('renderPreloadManagement escapes hostile values', () => {
@@ -3000,6 +3023,8 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
         stabilityPercent: 50,
         uniqueCompletedWorkers: 5,
         uniqueBookedWorkers: 8,
+        avgCompletedShiftsPerActiveWorkerWeek: 1.2,
+        avgCompletedShiftsPerActiveWorkerMonth: 3.4,
         ratingAll: 4.6,
         ratingLast10: 4.8,
         ratingReviewCount: 34,
@@ -3065,6 +3090,10 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(html, /<input id="includeHiddenOrders" name="includeHiddenOrders" type="checkbox" value="1" checked>/);
   assert.match(html, /Уникальные завершали/);
   assert.match(html, /Уникальные бронировали/);
+  assert.match(html, /Вып\. смен\/исп\. в неделю/);
+  assert.match(html, /Вып\. смен\/исп\. в месяц/);
+  assert.match(html, /1,2/);
+  assert.match(html, /3,4/);
   assert.match(html, /Слеты &lt; 24ч/);
   assert.match(html, /5 км/);
   assert.match(html, /20 км/);
@@ -3141,6 +3170,138 @@ test('renderWorkplacePointDashboard renders filters, point metrics, and compact 
   assert.match(calendarPanelHtml, /<div class="point-calendar-cell" data-date="2026-07-02" title=/);
   assert.doesNotMatch(calendarPanelHtml, /data-date="2026-07-02" data-sla-level=/);
   assert.equal(countOccurrences(calendarPanelHtml, 'class="point-calendar-date"'), 32);
+});
+
+test('renderWorkplacePointDashboard renders year heatmap above calendar without horizontal page scroll', () => {
+  const html = renderWorkplacePointDashboard({
+    database: 'etl',
+    currentUser: { role: 'analyst', permissions: ['workplace-analysis', 'sql-inspector'] },
+    dashboard: {
+      filters: {
+        workplaceId: 'wp1',
+        from: '2026-06-01',
+        to: '2026-06-30',
+        currentDate: '2026-07-02',
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        includeDeletedOrders: false,
+        includeHiddenOrders: false
+      },
+      currentDate: '2026-07-02',
+      point: {
+        workplaceId: 'wp1',
+        title: 'Point',
+        clientTitle: 'Brand',
+        city: 'Moscow',
+        region: 'Moscow',
+        address: 'Moscow, Street'
+      },
+      summary: {},
+      filterOptions: { profession: [], orderType: [], jobStatus: [] },
+      yearHeatmapRows: [
+        { period: '2026-01-01', orderedShifts: 3, completedShifts: 2 },
+        { period: '2026-02-01', orderedShifts: 8, completedShifts: 6 },
+        { period: '2026-07-02', orderedShifts: 0, completedShifts: 0 }
+      ],
+      dailyRows: [
+        {
+          period: '2026-06-01',
+          orderedShifts: 1,
+          completedShifts: 1,
+          slaPercent: 100,
+          forecastSlaPercent: 0,
+          dropoffs24h: 0
+        }
+      ],
+      professionRows: []
+    }
+  });
+
+  const yearStart = html.indexOf('class="detail-panel year-heatmap-panel"');
+  const calendarStart = html.indexOf('class="detail-panel calendar-panel"');
+
+  assert.ok(yearStart > -1);
+  assert.ok(calendarStart > yearStart);
+  assert.match(html, /data-sql-inspector-open="workplace-point\.charts\.year-heatmap"/);
+  assert.match(html, /class="point-year-heatmap-month-label">Янв<\/div>/);
+  assert.match(html, /class="point-year-heatmap-month-label">Фев<\/div>/);
+  assert.match(html, /class="point-year-heatmap-months" style="--point-year-heatmap-week-columns: \d+;"/);
+  assert.match(html, /class="point-year-heatmap-month" style="grid-column: span 5; --point-year-heatmap-month-weeks: 5;"/);
+  assert.match(html, /<span class="point-year-heatmap-cell is-current-day" data-date="2026-07-02" data-level="0" aria-current="date"/);
+  assert.match(html, /\.point-year-heatmap\s*\{[^}]*width:\s*75%;/);
+  assert.match(html, /\.point-year-heatmap-months\s*\{[^}]*grid-template-columns:\s*repeat\(var\(--point-year-heatmap-week-columns,\s*63\),\s*minmax\(0,\s*1fr\)\);[\s\S]*?\.point-year-heatmap-grid\s*\{[^}]*grid-template-columns:\s*repeat\(var\(--point-year-heatmap-month-weeks,\s*5\),\s*minmax\(0,\s*1fr\)\);[^}]*grid-template-rows:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\);[^}]*grid-auto-flow:\s*column;/);
+  assert.doesNotMatch(html, /\.point-year-heatmap[\s\S]{0,260}overflow-x:\s*auto/);
+});
+
+test('renderWorkplacePointDashboard defers heavy point fragments and limits fragment concurrency', () => {
+  const html = renderWorkplacePointDashboard({
+    database: 'etl',
+    progressive: true,
+    currentUser: { role: 'analyst', permissions: ['workplace-analysis'] },
+    dashboard: {
+      filters: {
+        workplaceId: 'wp1',
+        from: '2026-06-01',
+        to: '2026-06-30',
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        includeDeletedOrders: false,
+        includeHiddenOrders: false
+      },
+      point: {
+        workplaceId: 'wp1',
+        title: 'Point',
+        address: 'Moscow, Street'
+      },
+      filterOptions: { profession: [], orderType: [], jobStatus: [] }
+    }
+  });
+
+  assert.match(html, /section=summary/);
+  assert.match(html, /section=charts/);
+  assert.match(html, /data-dashboard-fragment-url="[^"]*section=radius[^"]*" data-dashboard-fragment-defer="idle"/);
+  assert.match(html, /data-dashboard-fragment-url="[^"]*section=year-heatmap[^"]*" data-dashboard-fragment-defer="visible"/);
+  assert.match(html, /var dashboardFragmentLimit = 2;/);
+  assert.match(html, /function enqueueDashboardFragment\(root\)/);
+  assert.match(html, /requestIdleCallback/);
+  assert.match(html, /IntersectionObserver/);
+});
+
+test('renderWorkplacePointDashboardSection does not duplicate year heatmap in charts fragment', () => {
+  const html = renderWorkplacePointDashboardSection({
+    section: 'charts',
+    currentUser: { role: 'analyst', permissions: ['workplace-analysis', 'sql-inspector'] },
+    dashboard: {
+      filters: {
+        workplaceId: 'wp1',
+        from: '2026-06-01',
+        to: '2026-06-30',
+        profession: [],
+        orderType: [],
+        jobStatus: [],
+        includeDeletedOrders: false,
+        includeHiddenOrders: false
+      },
+      currentDate: '2026-07-02',
+      dailyRows: [
+        {
+          period: '2026-06-01',
+          orderedShifts: 1,
+          completedShifts: 1,
+          slaPercent: 100,
+          forecastSlaPercent: 0,
+          dropoffs24h: 0
+        }
+      ],
+      professionRows: []
+    }
+  });
+
+  assert.match(html, /class="detail-panel calendar-panel"/);
+  assert.doesNotMatch(html, /class="detail-panel year-heatmap-panel"/);
+  assert.doesNotMatch(html, /workplace-point\.charts\.year-heatmap/);
 });
 
 test('renderWorkplacePointDayDetails renders escaped compact table fragment', () => {

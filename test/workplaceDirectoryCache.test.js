@@ -149,6 +149,39 @@ test('workplace directory cache returns a point by id from persisted entries', a
   assert.equal(calls.length, 1);
 });
 
+test('workplace directory cache can read cached point metadata without source refresh', async () => {
+  const filePath = await tempCachePath();
+  const calls = [];
+  const cache = createWorkplaceDirectoryCache({ filePath });
+
+  await cache.refreshIfStale(fakeClient(
+    [
+      {
+        workplace_id: 'wp1',
+        workplace_title: 'Point 1',
+        technical_name: 'point-technical',
+        client_title: 'Brand A',
+        region: 'Region',
+        city: 'City',
+        street: 'Street'
+      }
+    ],
+    calls
+  ));
+
+  const recreated = createWorkplaceDirectoryCache({
+    filePath,
+    now: () => Date.parse('2026-08-10T10:00:00.000Z')
+  });
+  const entry = await recreated.getCachedById(fakeClient([], calls), 'wp1');
+  const missing = await recreated.getCachedById(fakeClient([], calls), 'wp-missing');
+
+  assert.equal(entry.workplaceId, 'wp1');
+  assert.equal(entry.title, 'Point 1');
+  assert.equal(missing, null);
+  assert.equal(calls.length, 1);
+});
+
 test('disabled workplace directory cache loads suggestions and point metadata from source every time', async () => {
   const calls = [];
   const cache = createWorkplaceDirectoryCache({
@@ -204,6 +237,30 @@ test('disabled workplace directory cache loads suggestions and point metadata fr
   assert.equal(entry.workplaceId, 'wp3');
   assert.equal(calls.length, 3);
   assert.equal(cache.scheduleRefresh({}).stop(), undefined);
+});
+
+test('workplace directory scheduled refresh does not run on the startup tick', async () => {
+  const calls = [];
+  const cache = createWorkplaceDirectoryCache({
+    filePath: await tempCachePath()
+  });
+  const scheduled = cache.scheduleRefresh(fakeClient(
+    [
+      {
+        workplace_id: 'wp1',
+        workplace_title: 'Point 1'
+      }
+    ],
+    calls
+  ), { intervalMs: 1000 });
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(calls.length, 0);
+  } finally {
+    scheduled.stop();
+  }
 });
 
 test('workplaceDirectoryCachePathFromEnv supports env override', () => {

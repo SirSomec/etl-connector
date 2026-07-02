@@ -23,7 +23,10 @@ const {
   wrapReportSql
 } = require('./scheduledReportSql');
 const { buildSalesByProjectPreloadQueries } = require('./preloadSalesByProject');
-const { SALES_PRELOAD_JOB_ID } = require('./preloadStore');
+const {
+  SALES_PRELOAD_JOB_ID,
+  WORKPLACE_POINT_PRELOAD_JOB_ID
+} = require('./preloadStore');
 const {
   actualOrderDomainCondition,
   actualOrderJoinsSql
@@ -421,7 +424,11 @@ function parseScheduleTimeFromBody(value) {
   return text;
 }
 
-function parseRefreshDaysFromBody(value) {
+function preloadScheduleWindowMinimum(jobId) {
+  return jobId === WORKPLACE_POINT_PRELOAD_JOB_ID ? 30 : 45;
+}
+
+function parseRefreshDaysFromBody(value, minimumDays = 45) {
   const text = String(value || '');
 
   if (!/^\d+$/.test(text)) {
@@ -430,7 +437,7 @@ function parseRefreshDaysFromBody(value) {
 
   const refreshDays = Number(text);
 
-  if (!Number.isInteger(refreshDays) || refreshDays < 45 || refreshDays > 366) {
+  if (!Number.isInteger(refreshDays) || refreshDays < minimumDays || refreshDays > 366) {
     throw createScheduleSettingsError();
   }
 
@@ -1015,8 +1022,10 @@ function createApp({
     const enabledValue = body && body.enabled;
     const hasWindowFields = Object.prototype.hasOwnProperty.call(safeBody, 'refreshPastDays')
       || Object.prototype.hasOwnProperty.call(safeBody, 'refreshFutureDays');
+    const jobId = String(safeBody.jobId || SALES_PRELOAD_JOB_ID);
+    const refreshMinimumDays = preloadScheduleWindowMinimum(jobId);
     const input = {
-      jobId: String(safeBody.jobId || SALES_PRELOAD_JOB_ID),
+      jobId,
       enabled: enabledValue === '1' || enabledValue === 'on' || enabledValue === 'true',
       scheduleTime: parseScheduleTimeFromBody(safeBody.scheduleTime)
     };
@@ -1025,12 +1034,14 @@ function createApp({
       input.refreshPastDays = parseRefreshDaysFromBody(
         Object.prototype.hasOwnProperty.call(safeBody, 'refreshPastDays')
           ? safeBody.refreshPastDays
-          : safeBody.refreshDays
+          : safeBody.refreshDays,
+        refreshMinimumDays
       );
       input.refreshFutureDays = parseRefreshDaysFromBody(
         Object.prototype.hasOwnProperty.call(safeBody, 'refreshFutureDays')
           ? safeBody.refreshFutureDays
-          : (safeBody.refreshDays || '45')
+          : (safeBody.refreshDays || String(refreshMinimumDays)),
+        refreshMinimumDays
       );
 
       return input;
@@ -1038,7 +1049,7 @@ function createApp({
 
     return {
       ...input,
-      refreshDays: parseRefreshDaysFromBody(safeBody.refreshDays)
+      refreshDays: parseRefreshDaysFromBody(safeBody.refreshDays, refreshMinimumDays)
     };
   }
 
@@ -1433,7 +1444,7 @@ function createApp({
         return {
           job,
           overview: typeof preloads.getOverview === 'function' ? preloads.getOverview(jobId) : {},
-          diagnostics: jobId === SALES_PRELOAD_JOB_ID ? diagnostics : null,
+          diagnostics,
           runs: typeof preloads.listRuns === 'function' ? preloads.listRuns(jobId, 20) : []
         };
       });
@@ -2595,7 +2606,7 @@ function createApp({
         client,
         req.query,
         new Date(),
-        { workplaceDirectoryCache, loadFilterOptions: false }
+        { loadFilterOptions: false }
       );
 
       recordCurrentUserActivity(req, activityEventType(req));
@@ -2631,7 +2642,8 @@ function createApp({
           section,
           new Date(),
           {
-            cache: dashboardSectionCache
+            cache: dashboardSectionCache,
+            preloadService: preloads
           }
         );
 
@@ -3112,6 +3124,7 @@ function start(options = {}) {
     loadConfigFn = loadConfig,
     ClientClass = ClickHouseClient,
     createAppFn = createApp,
+    createWorkplaceDirectoryCacheFn = createWorkplaceDirectoryCache,
     createPreloadServiceFn = createPreloadService,
     createScheduledReportStoreFn = createScheduledReportStore,
     createScheduledReportMailerFn = createScheduledReportMailer,
@@ -3126,10 +3139,7 @@ function start(options = {}) {
   const activeGigersCache = null;
   const cityAnalysisCache = null;
   const dashboardSectionCache = null;
-  const workplaceDirectoryCache = createWorkplaceDirectoryCache({
-    filePath: null,
-    disabled: true
-  });
+  const workplaceDirectoryCache = createWorkplaceDirectoryCacheFn({ env });
   let preloadService = null;
   let scheduledReportService = null;
   let scheduledReportStore = null;

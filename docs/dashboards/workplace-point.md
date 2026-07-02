@@ -47,6 +47,25 @@ o._id IN (
 )
 ```
 
+## Предзагруженная витрина
+
+Витрина `workplace-point` хранится в SQLite рядом с остальными preload-данными и покрывает секции `summary`, `charts`, `year-heatmap` и `radius`.
+
+- Планировщик обновляет витрину ежедневно в `08:00 Europe/Moscow` для окна от `-30` до `+30` дней относительно даты запуска.
+- Ручной запуск через `/admin/preload` может загрузить более широкий диапазон, например год для `year-heatmap`.
+- Секции с фильтрами читают витрину для произвольного периода, если таблица `workplace_point_coverage` полностью покрывает все даты диапазона для выбранного `workplace_id`.
+- Радиусная секция дополнительно проверяет покрытие `workplace_point_radius_coverage`, потому что зависит от окна активных AppMetrica-сессий.
+- При неполном покрытии карточка выполняет fallback в ClickHouse и регистрирует запрос в `preload_dashboard_requests`, чтобы точка попала в следующий preload.
+
+Основные таблицы витрины:
+
+- `workplace_point_order_facts` - дневные факты заказов с профессией, типом, признаками deleted/hidden и количеством смен.
+- `workplace_point_shift_facts` - факты смен, статусы, выплаты, часы, успешные `confirmed`, прогноз активных смен.
+- `workplace_point_order_status_facts` - связка заказов со статусами смен для фильтра `job_statuses`.
+- `workplace_point_booked_worker_facts` - исполнители, которые брали смены в работу.
+- `workplace_point_review_rollups` - дневные отзывы по точке.
+- `workplace_point_radius_rollups` - активные исполнители в радиусах 5/10/15/20 км.
+
 ## SQL: metadata
 
 ```sql
@@ -208,6 +227,40 @@ shift_summary AS (
     ) AS dropoffs_24h
   FROM shift_facts AS sf
   LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
+),
+worker_week_summary AS (
+  SELECT
+    1 AS aggregate_join_key,
+    avgOrNull(completed_shifts) AS avg_completed_shifts_per_active_worker_week
+  FROM (
+    SELECT
+      toMonday(toDate(start, 'Europe/Moscow')) AS period_week,
+      worker,
+      uniqExact(job_id) AS completed_shifts
+    FROM shift_facts
+    WHERE is_successful_confirmed_shift = 1
+      AND worker != ''
+      AND job_id != ''
+      AND start IS NOT NULL
+    GROUP BY period_week, worker
+  )
+),
+worker_month_summary AS (
+  SELECT
+    1 AS aggregate_join_key,
+    avgOrNull(completed_shifts) AS avg_completed_shifts_per_active_worker_month
+  FROM (
+    SELECT
+      toStartOfMonth(toDate(start, 'Europe/Moscow')) AS period_month,
+      worker,
+      uniqExact(job_id) AS completed_shifts
+    FROM shift_facts
+    WHERE is_successful_confirmed_shift = 1
+      AND worker != ''
+      AND job_id != ''
+      AND start IS NOT NULL
+    GROUP BY period_month, worker
+  )
 )
 SELECT
   os.ordered_shifts AS ordered_shifts,
@@ -215,10 +268,14 @@ SELECT
   os.active_days AS active_days,
   ifNull(ss.unique_completed_workers, 0) AS unique_completed_workers,
   ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
+  ifNull(ww.avg_completed_shifts_per_active_worker_week, 0) AS avg_completed_shifts_per_active_worker_week,
+  ifNull(wm.avg_completed_shifts_per_active_worker_month, 0) AS avg_completed_shifts_per_active_worker_month,
   ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
 FROM order_summary AS os
 LEFT JOIN shift_summary AS ss ON os.aggregate_join_key = ss.aggregate_join_key
 LEFT JOIN booked_workers AS bw ON os.aggregate_join_key = bw.aggregate_join_key
+LEFT JOIN worker_week_summary AS ww ON os.aggregate_join_key = ww.aggregate_join_key
+LEFT JOIN worker_month_summary AS wm ON os.aggregate_join_key = wm.aggregate_join_key
 FORMAT JSONEachRow
 ```
 
@@ -262,6 +319,8 @@ LEFT JOIN shift_daily AS sd ON od.period = sd.period
 ORDER BY od.period
 FORMAT JSONEachRow
 ```
+
+Секция `year-heatmap` использует этот же daily-запрос для дневной ленты за текущий год. Для нее диапазон дат всегда рассчитывается как `YYYY-01-01` - `(YYYY+1)-01-01` по текущей дате приложения и не зависит от выбранных пользователем `from`/`to`; остальные фильтры точки, профессии, типа заказа и статуса задания сохраняются.
 
 ## SQL: professions
 
@@ -469,6 +528,8 @@ if(
 - `activeDays`: число дней с заказом.
 - `uniqueCompletedWorkers`: уникальные исполнители успешных подтвержденных смен.
 - `uniqueBookedWorkers`: уникальные исполнители, у которых в истории был `status = 'booked'`.
+- `avgCompletedShiftsPerActiveWorkerWeek`: среднее число успешных подтвержденных смен на исполнителя, который выходил в календарной неделе.
+- `avgCompletedShiftsPerActiveWorkerMonth`: среднее число успешных подтвержденных смен на исполнителя, который выходил в календарном месяце.
 - `dropoffs24h`: уникальные смены с отменой/провалом от исполнителя в интервале `[start - 24h; start]`.
 - `orderLeadAvgMinutes`, `orderLeadMinMinutes`: среднее и минимальное время от создания заказа до старта.
 - `professionRows.sharePercent`: доля спроса специальности от всего спроса точки.

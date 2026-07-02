@@ -359,6 +359,20 @@ function createWorkplaceDirectoryCache(options = {}) {
       return entry ? publicSuggestion(entry) : null;
     },
 
+    async getCachedById(client, workplaceId) {
+      const id = cleanText(workplaceId);
+
+      if (id === '' || disabled) {
+        return null;
+      }
+
+      await loadFromFile();
+
+      const entry = state.entries.find((item) => item.workplaceId === id);
+
+      return entry ? publicSuggestion(entry) : null;
+    },
+
     scheduleRefresh(client, { intervalMs = WORKPLACE_DIRECTORY_CACHE_TTL_MS } = {}) {
       if (disabled) {
         return {
@@ -369,7 +383,8 @@ function createWorkplaceDirectoryCache(options = {}) {
       const run = () => {
         this.refreshIfStale(client).catch(() => {});
       };
-      const initialTimer = setTimeout(run, 0);
+      const initialDelayMs = Math.max(1000, Math.min(intervalMs, 60 * 1000));
+      const initialTimer = setTimeout(run, initialDelayMs);
       const intervalTimer = setInterval(run, intervalMs);
 
       if (typeof initialTimer.unref === 'function') {

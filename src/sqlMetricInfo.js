@@ -982,6 +982,40 @@ shift_summary AS (
     uniqExactIf(sf.job_id, de.drop_at IS NOT NULL AND sf.start IS NOT NULL AND de.drop_at >= sf.start - INTERVAL 24 HOUR AND de.drop_at <= sf.start) AS dropoffs_24h
   FROM shift_facts AS sf
   LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
+),
+worker_week_summary AS (
+  SELECT
+    1 AS aggregate_join_key,
+    avgOrNull(completed_shifts) AS avg_completed_shifts_per_active_worker_week
+  FROM (
+    SELECT
+      toMonday(toDate(start, 'Europe/Moscow')) AS period_week,
+      worker,
+      uniqExact(job_id) AS completed_shifts
+    FROM shift_facts
+    WHERE is_successful_confirmed_shift = 1
+      AND worker != ''
+      AND job_id != ''
+      AND start IS NOT NULL
+    GROUP BY period_week, worker
+  ) AS worker_weeks
+),
+worker_month_summary AS (
+  SELECT
+    1 AS aggregate_join_key,
+    avgOrNull(completed_shifts) AS avg_completed_shifts_per_active_worker_month
+  FROM (
+    SELECT
+      toStartOfMonth(toDate(start, 'Europe/Moscow')) AS period_month,
+      worker,
+      uniqExact(job_id) AS completed_shifts
+    FROM shift_facts
+    WHERE is_successful_confirmed_shift = 1
+      AND worker != ''
+      AND job_id != ''
+      AND start IS NOT NULL
+    GROUP BY period_month, worker
+  ) AS worker_months
 )
 SELECT
   os.ordered_shifts AS ordered_shifts,
@@ -993,10 +1027,14 @@ SELECT
   os.active_days AS active_days,
   ifNull(ss.unique_completed_workers, 0) AS unique_completed_workers,
   ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
+  ifNull(ww.avg_completed_shifts_per_active_worker_week, 0) AS avg_completed_shifts_per_active_worker_week,
+  ifNull(wm.avg_completed_shifts_per_active_worker_month, 0) AS avg_completed_shifts_per_active_worker_month,
   ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
 FROM order_summary AS os
 LEFT JOIN shift_summary AS ss ON os.aggregate_join_key = ss.aggregate_join_key
 LEFT JOIN booked_workers AS bw ON os.aggregate_join_key = bw.aggregate_join_key
+LEFT JOIN worker_week_summary AS ww ON os.aggregate_join_key = ww.aggregate_join_key
+LEFT JOIN worker_month_summary AS wm ON os.aggregate_join_key = wm.aggregate_join_key
 FORMAT JSONEachRow`;
 
 const WORKPLACE_POINT_REVIEW_SUMMARY_SQL = `SELECT
@@ -1840,13 +1878,15 @@ defineMetricSet({
   baseId: 'workplace-point.summary',
   sql: WORKPLACE_POINT_SUMMARY_SQL,
   metrics: [
-    { id: 'workplace-point.summary', title: 'Детализация точки: основные показатели', description: 'Показывает заказ, выполнение, SLA, стабильность, уникальных исполнителей и слеты по выбранной рабочей точке.' },
+    { id: 'workplace-point.summary', title: 'Детализация точки: основные показатели', description: 'Показывает заказ, выполнение, SLA, стабильность, уникальных исполнителей, среднее число выполненных смен на выходившего исполнителя и слеты по выбранной рабочей точке.' },
     { suffix: 'ordered-shifts', title: 'Детализация точки: заказано', description: 'Сумма планового количества смен по выбранной рабочей точке.' },
     { suffix: 'completed-shifts', title: 'Детализация точки: выполнено', description: 'Количество успешных подтвержденных смен по выбранной рабочей точке; нулевые прогулы исключаются.' },
     { suffix: 'sla', title: 'Детализация точки: SLA', description: 'Две доли: прошлое считается по успешным подтвержденным сменам до текущего дня, прогноз - по активным статусам с текущего дня до конца фильтра.' },
     { suffix: 'stability', title: 'Детализация точки: стабильность', description: 'Доля дней выбранного периода, в которые по точке был заказ.' },
     { suffix: 'unique-completed-workers', title: 'Детализация точки: уникальные завершали', description: 'Количество уникальных исполнителей, которые завершили смену на точке.' },
     { suffix: 'unique-booked-workers', title: 'Детализация точки: уникальные бронировали', description: 'Количество уникальных исполнителей, у которых была бронь смены на точке.' },
+    { suffix: 'avg-completed-shifts-per-active-worker-week', title: 'Детализация точки: выполненных смен на исполнителя в неделю', description: 'Среднее количество успешных подтвержденных смен на одного исполнителя, который выходил хотя бы раз в календарной неделе.' },
+    { suffix: 'avg-completed-shifts-per-active-worker-month', title: 'Детализация точки: выполненных смен на исполнителя в месяц', description: 'Среднее количество успешных подтвержденных смен на одного исполнителя, который выходил хотя бы раз в календарном месяце.' },
     { suffix: 'rating', title: 'Детализация точки: рейтинг', description: 'Средняя оценка точки по всем ненулевым отзывам и средняя по последним 10 оценкам.', sql: WORKPLACE_POINT_REVIEW_SUMMARY_SQL },
     { suffix: 'dropoffs-24h', title: 'Детализация точки: слеты < 24ч', description: 'Количество смен, где исполнительский слет зафиксирован менее чем за 24 часа до планового старта.' }
   ]
@@ -1868,6 +1908,7 @@ defineMetricSet({
   baseId: 'workplace-point.charts',
   sql: WORKPLACE_POINT_DAILY_SQL,
   metrics: [
+    { id: 'workplace-point.charts.year-heatmap', title: 'Годовая лента точки: заказ', description: 'Дневная тепловая лента планового заказа выбранной точки за текущий год.' },
     { id: 'workplace-point.charts.calendar-ordered-shifts', title: 'Календарь точки: заказ', description: 'Дневной плановый заказ по выбранной точке.' },
     { id: 'workplace-point.charts.calendar-sla', title: 'Календарь точки: SLA', description: 'Для прошлых дней показывает фактический SLA, для текущего и будущих дней - прогнозный SLA по активным статусам.' },
     { id: 'workplace-point.charts.calendar-dropoffs-24h', title: 'Календарь точки: слеты < 24ч', description: 'Дневное количество исполнительских слетов менее чем за 24 часа до старта.' },

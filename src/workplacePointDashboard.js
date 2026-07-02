@@ -18,7 +18,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_ORDER_TYPES = new Set(['once', 'regular']);
 const FILTER_OPTION_KEYS = ['profession', 'orderType', 'jobStatus'];
 const RADIUS_KM = [5, 10, 15, 20];
-const WORKPLACE_POINT_SECTION_NAMES = ['summary', 'charts', 'radius'];
+const WORKPLACE_POINT_SECTION_NAMES = ['summary', 'year-heatmap', 'charts', 'radius'];
 const WORKPLACE_POINT_SECTIONS = new Set(WORKPLACE_POINT_SECTION_NAMES);
 const DAY_DETAIL_COMPLETED_JOB_STATUSES = new Set(['confirmed', 'completed']);
 const DAY_DETAIL_FACTUAL_JOB_STATUSES_SQL = "('confirmed', 'completed')";
@@ -61,6 +61,14 @@ function addDaysUTC(date, days) {
 
 function firstDayOfMonthUTC(date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function firstDayOfYearUTC(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+}
+
+function lastDayOfYearUTC(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), 11, 31));
 }
 
 function buildDateKeys(from, to) {
@@ -262,6 +270,24 @@ function compactAddress(row) {
   return [row.city, row.street].map((part) => String(part || '').trim()).filter(Boolean).join(', ');
 }
 
+function mapWorkplacePointDailyRow(row) {
+  const dailyOrderedShifts = numberValue(row.ordered_shifts);
+  const dailyCompletedShifts = numberValue(row.completed_shifts);
+  const dailyForecastSlaActiveShifts = numberValue(row.forecast_sla_active_shifts);
+
+  return {
+    period: String(row.period || ''),
+    orderedShifts: dailyOrderedShifts,
+    completedShifts: dailyCompletedShifts,
+    slaPercent: percent(dailyCompletedShifts, dailyOrderedShifts),
+    forecastSlaActiveShifts: dailyForecastSlaActiveShifts,
+    forecastSlaPercent: percent(dailyForecastSlaActiveShifts, dailyOrderedShifts),
+    dropoffs24h: numberValue(row.dropoffs_24h),
+    orderLeadAvgMinutes: nullableNumberValue(row.avg_order_lead_minutes),
+    orderLeadMinMinutes: nullableNumberValue(row.min_order_lead_minutes)
+  };
+}
+
 function mergeWorkplacePointRows(filters, datasets) {
   const metadataRow = (datasets.metadataRows || [])[0] || {};
   const summaryRow = (datasets.summaryRows || [])[0] || {};
@@ -292,23 +318,11 @@ function mergeWorkplacePointRows(filters, datasets) {
     }
   }
 
-  const dailyRows = (datasets.dailyRows || []).map((row) => {
-    const dailyOrderedShifts = numberValue(row.ordered_shifts);
-    const dailyCompletedShifts = numberValue(row.completed_shifts);
-    const dailyForecastSlaActiveShifts = numberValue(row.forecast_sla_active_shifts);
-
-    return {
-      period: String(row.period || ''),
-      orderedShifts: dailyOrderedShifts,
-      completedShifts: dailyCompletedShifts,
-      slaPercent: percent(dailyCompletedShifts, dailyOrderedShifts),
-      forecastSlaActiveShifts: dailyForecastSlaActiveShifts,
-      forecastSlaPercent: percent(dailyForecastSlaActiveShifts, dailyOrderedShifts),
-      dropoffs24h: numberValue(row.dropoffs_24h),
-      orderLeadAvgMinutes: nullableNumberValue(row.avg_order_lead_minutes),
-      orderLeadMinMinutes: nullableNumberValue(row.min_order_lead_minutes)
-    };
-  });
+  const dailyRows = (datasets.dailyRows || []).map(mapWorkplacePointDailyRow);
+  const hasYearHeatmapRows = Object.prototype.hasOwnProperty.call(datasets, 'yearHeatmapRows');
+  const yearHeatmapRows = hasYearHeatmapRows
+    ? (datasets.yearHeatmapRows || []).map(mapWorkplacePointDailyRow)
+    : undefined;
   const totalProfessionOrders = (datasets.professionRows || []).reduce(
     (total, row) => total + numberValue(row.ordered_shifts),
     0
@@ -350,6 +364,8 @@ function mergeWorkplacePointRows(filters, datasets) {
       rangeDays: filters.rangeDays,
       uniqueCompletedWorkers: numberValue(summaryRow.unique_completed_workers),
       uniqueBookedWorkers: numberValue(summaryRow.unique_booked_workers),
+      avgCompletedShiftsPerActiveWorkerWeek: numberValue(summaryRow.avg_completed_shifts_per_active_worker_week),
+      avgCompletedShiftsPerActiveWorkerMonth: numberValue(summaryRow.avg_completed_shifts_per_active_worker_month),
       dropoffs24h: numberValue(summaryRow.dropoffs_24h),
       ratingAll: nullableNumberValue(reviewSummaryRow.avg_rating_all),
       ratingLast10: nullableNumberValue(reviewSummaryRow.avg_rating_last_10),
@@ -358,6 +374,7 @@ function mergeWorkplacePointRows(filters, datasets) {
       radiusActiveSessionWorkers
     },
     dailyRows,
+    ...(hasYearHeatmapRows ? { yearHeatmapRows } : {}),
     professionRows
   };
 }
@@ -722,10 +739,15 @@ function metadataRowFromDirectoryEntry(entry) {
 async function loadWorkplacePointMetadataRows(client, filters, options = {}) {
   if (
     options.workplaceDirectoryCache
-    && typeof options.workplaceDirectoryCache.getById === 'function'
+    && (
+      typeof options.workplaceDirectoryCache.getCachedById === 'function'
+      || typeof options.workplaceDirectoryCache.getById === 'function'
+    )
   ) {
     try {
-      const directoryEntry = await options.workplaceDirectoryCache.getById(client, filters.workplaceId);
+      const directoryEntry = typeof options.workplaceDirectoryCache.getCachedById === 'function'
+        ? await options.workplaceDirectoryCache.getCachedById(client, filters.workplaceId)
+        : await options.workplaceDirectoryCache.getById(client, filters.workplaceId);
       const cachedRow = metadataRowFromDirectoryEntry(directoryEntry);
 
       if (cachedRow && cachedRow.workplace_id !== '') {
@@ -817,6 +839,25 @@ function filterOptionsQuery(filters) {
   SELECT filter, value FROM job_status_options
   ORDER BY filter, value
   FORMAT JSONEachRow`
+  };
+}
+
+function normalizeWorkplacePointYearHeatmapFilters(input = {}, now = new Date()) {
+  const filters = normalizeWorkplacePointFilters(input, now);
+  const today = parseDateOnly(formatDateUTC(now));
+  const fromDate = firstDayOfYearUTC(today);
+  const toDate = lastDayOfYearUTC(today);
+  const from = formatDateUTC(fromDate);
+  const to = formatDateUTC(toDate);
+  const toExclusive = formatDateUTC(addDaysUTC(toDate, 1));
+
+  return {
+    ...filters,
+    from,
+    to,
+    fromDateTime: toDateTimeParam(from),
+    toExclusiveDateTime: toDateTimeParam(toExclusive),
+    rangeDays: buildDateKeys(from, to).length
   };
 }
 
@@ -931,6 +972,40 @@ function summaryQuery(whereSql) {
       ) AS dropoffs_24h
     FROM shift_facts AS sf
     LEFT JOIN drop_events AS de ON sf.job_id = de.job_id
+  ),
+  worker_week_summary AS (
+    SELECT
+      1 AS aggregate_join_key,
+      avgOrNull(completed_shifts) AS avg_completed_shifts_per_active_worker_week
+    FROM (
+      SELECT
+        toMonday(toDate(start, 'Europe/Moscow')) AS period_week,
+        worker,
+        uniqExact(job_id) AS completed_shifts
+      FROM shift_facts
+      WHERE is_successful_confirmed_shift = 1
+        AND worker != ''
+        AND job_id != ''
+        AND start IS NOT NULL
+      GROUP BY period_week, worker
+    ) AS worker_weeks
+  ),
+  worker_month_summary AS (
+    SELECT
+      1 AS aggregate_join_key,
+      avgOrNull(completed_shifts) AS avg_completed_shifts_per_active_worker_month
+    FROM (
+      SELECT
+        toStartOfMonth(toDate(start, 'Europe/Moscow')) AS period_month,
+        worker,
+        uniqExact(job_id) AS completed_shifts
+      FROM shift_facts
+      WHERE is_successful_confirmed_shift = 1
+        AND worker != ''
+        AND job_id != ''
+        AND start IS NOT NULL
+      GROUP BY period_month, worker
+    ) AS worker_months
   )
   SELECT
     os.ordered_shifts AS ordered_shifts,
@@ -942,10 +1017,14 @@ function summaryQuery(whereSql) {
     os.active_days AS active_days,
     ifNull(ss.unique_completed_workers, 0) AS unique_completed_workers,
     ifNull(bw.unique_booked_workers, 0) AS unique_booked_workers,
+    ifNull(ww.avg_completed_shifts_per_active_worker_week, 0) AS avg_completed_shifts_per_active_worker_week,
+    ifNull(wm.avg_completed_shifts_per_active_worker_month, 0) AS avg_completed_shifts_per_active_worker_month,
     ifNull(ss.dropoffs_24h, 0) AS dropoffs_24h
   FROM order_summary AS os
   LEFT JOIN shift_summary AS ss ON os.aggregate_join_key = ss.aggregate_join_key
   LEFT JOIN booked_workers AS bw ON os.aggregate_join_key = bw.aggregate_join_key
+  LEFT JOIN worker_week_summary AS ww ON os.aggregate_join_key = ww.aggregate_join_key
+  LEFT JOIN worker_month_summary AS wm ON os.aggregate_join_key = wm.aggregate_join_key
   FORMAT JSONEachRow`;
 }
 
@@ -1468,6 +1547,13 @@ async function readThroughCache(cache, key, loader) {
   return cache.getOrLoad(key, loader);
 }
 
+function withDataSource(dashboard, dataSource) {
+  return {
+    ...dashboard,
+    dataSource
+  };
+}
+
 function cacheKeyForWorkplacePointSection(section, filters) {
   return JSON.stringify({
     board: 'workplace-point',
@@ -1486,6 +1572,84 @@ function cacheKeyForWorkplacePointSection(section, filters) {
       includeHiddenOrders: filters.includeHiddenOrders
     }
   });
+}
+
+function dateOnlyFromDateTimeParam(value) {
+  const dateOnly = String(value || '').slice(0, 10);
+
+  return DATE_RE.test(dateOnly) ? dateOnly : '';
+}
+
+function preloadRangeForWorkplacePointSection(filters) {
+  return {
+    fromDate: filters.from,
+    toDate: dateOnlyFromDateTimeParam(filters.toExclusiveDateTime)
+  };
+}
+
+function registerWorkplacePointPreloadRequest(preloadService, { section, cacheKey, filters, input, range }) {
+  if (!preloadService || typeof preloadService.registerWorkplacePointRequest !== 'function') {
+    return;
+  }
+
+  try {
+    preloadService.registerWorkplacePointRequest({
+      section,
+      cacheKey,
+      input: {
+        ...input,
+        workplaceId: filters.workplaceId,
+        from: filters.from,
+        to: filters.to
+      },
+      fromDate: range.fromDate,
+      toDate: range.toDate
+    });
+  } catch (_) {
+    // Preload registration is opportunistic; ClickHouse remains the source of truth on failure.
+  }
+}
+
+function readWorkplacePointPreload(preloadService, { section, cacheKey, filters, range }) {
+  if (!preloadService || typeof preloadService.readWorkplacePointSection !== 'function') {
+    return null;
+  }
+
+  try {
+    const result = preloadService.readWorkplacePointSection({
+      section,
+      cacheKey,
+      filters,
+      fromDate: range.fromDate,
+      toDate: range.toDate
+    });
+
+    if (!result) {
+      return null;
+    }
+
+    return result.payload || result;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveWorkplacePointPreload(preloadService, { section, cacheKey, range, payload }) {
+  if (!preloadService || typeof preloadService.saveWorkplacePointSection !== 'function') {
+    return;
+  }
+
+  try {
+    preloadService.saveWorkplacePointSection({
+      section,
+      cacheKey,
+      fromDate: range.fromDate,
+      toDate: range.toDate,
+      payload
+    });
+  } catch (_) {
+    // Preload writes are best-effort; serving fresh ClickHouse data is more important.
+  }
 }
 
 function metadataRowsForSection(filters) {
@@ -1521,6 +1685,16 @@ async function loadWorkplacePointSectionRows(client, filters, section) {
     ]);
 
     return { dailyRows, professionRows };
+  }
+
+  if (section === 'year-heatmap') {
+    const yearHeatmapRows = await client.queryJSONEachRow(
+      dailyQuery(whereSql),
+      params,
+      'workplace point year heatmap'
+    );
+
+    return { yearHeatmapRows };
   }
 
   const radiusRows = await client.queryJSONEachRow(
@@ -1682,26 +1856,63 @@ async function loadWorkplacePointDashboardSection(
 ) {
   assertWorkplacePointSection(section);
 
-  const filters = normalizeWorkplacePointFilters(input, now);
+  const filters = section === 'year-heatmap'
+    ? normalizeWorkplacePointYearHeatmapFilters(input, now)
+    : normalizeWorkplacePointFilters(input, now);
 
   if (filters.workplaceId === '') {
     throw httpError(400, 'Missing workplaceId');
   }
 
+  const cacheKey = cacheKeyForWorkplacePointSection(section, filters);
+  const range = preloadRangeForWorkplacePointSection(filters);
+
+  registerWorkplacePointPreloadRequest(options.preloadService, {
+    section,
+    cacheKey,
+    filters,
+    input,
+    range
+  });
+
+  const preloaded = readWorkplacePointPreload(options.preloadService, {
+    section,
+    cacheKey,
+    filters,
+    range
+  });
+
+  if (preloaded) {
+    return withDataSource(mergeWorkplacePointSection(filters, preloaded), 'preload');
+  }
+
   const sectionRows = await readThroughCache(
     options.cache,
-    cacheKeyForWorkplacePointSection(section, filters),
+    cacheKey,
     () => loadWorkplacePointSectionRows(client, filters, section)
   );
 
-  return mergeWorkplacePointSection(filters, sectionRows);
+  saveWorkplacePointPreload(options.preloadService, {
+    section,
+    cacheKey,
+    range,
+    payload: sectionRows
+  });
+
+  return withDataSource(mergeWorkplacePointSection(filters, sectionRows), 'clickhouse');
 }
 
 async function loadWorkplacePointDashboard(client, input = {}, now = new Date()) {
   const shell = await loadWorkplacePointDashboardShell(client, input, now);
   const sectionRows = await Promise.all(
     WORKPLACE_POINT_SECTION_NAMES.map((section) =>
-      loadWorkplacePointSectionRows(client, shell.filters, section)
+      loadWorkplacePointSectionRows(
+        client,
+        section === 'year-heatmap'
+          ? normalizeWorkplacePointYearHeatmapFilters(input, now)
+          : shell.filters,
+        section
+      )
     )
   );
 
@@ -1717,6 +1928,7 @@ async function loadWorkplacePointDashboard(client, input = {}, now = new Date())
 
 module.exports = {
   WORKPLACE_POINT_SECTIONS,
+  cacheKeyForWorkplacePointSection,
   loadWorkplacePointDashboard,
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
@@ -1729,5 +1941,6 @@ module.exports = {
   normalizeWorkplacePointGigerDetailsInput,
   normalizeWorkplacePointDayDetailsInput,
   normalizeWorkplacePointReviewsInput,
-  normalizeWorkplacePointFilters
+  normalizeWorkplacePointFilters,
+  normalizeWorkplacePointYearHeatmapFilters
 };

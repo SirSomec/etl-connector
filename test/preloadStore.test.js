@@ -8,6 +8,7 @@ const { DatabaseSync } = require('node:sqlite');
 const {
   DEFAULT_PRELOAD_REFRESH_DAYS,
   SALES_PRELOAD_JOB_ID,
+  WORKPLACE_POINT_PRELOAD_JOB_ID,
   WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
   createPreloadStore
 } = require('../src/preloadStore');
@@ -35,6 +36,315 @@ test('preload store initializes default sales job', async () => {
     assert.equal(workplaceJob.enabled, true);
     assert.equal(workplaceJob.refreshPastDays, 45);
     assert.equal(workplaceJob.refreshFutureDays, 45);
+  } finally {
+    store.close();
+  }
+});
+
+test('preload store initializes workplace point job and sqlite tables', async () => {
+  const filePath = await tempDbPath();
+  const store = createPreloadStore({ filePath });
+
+  try {
+    const job = store.getJob(WORKPLACE_POINT_PRELOAD_JOB_ID);
+
+    assert.equal(job.id, WORKPLACE_POINT_PRELOAD_JOB_ID);
+    assert.equal(job.title, 'Карточка точки');
+    assert.equal(job.enabled, true);
+    assert.equal(job.scheduleTime, '08:00');
+    assert.equal(job.timezone, 'Europe/Moscow');
+    assert.equal(job.refreshPastDays, 30);
+    assert.equal(job.refreshFutureDays, 30);
+
+    const db = new DatabaseSync(filePath, { readOnly: true });
+
+    try {
+      const tables = new Set(
+        db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name)
+      );
+      const indexes = new Set(
+        db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all().map((row) => row.name)
+      );
+
+      for (const tableName of [
+        'workplace_point_coverage',
+        'workplace_point_order_facts',
+        'workplace_point_shift_facts',
+        'workplace_point_order_status_facts',
+        'workplace_point_booked_worker_facts',
+        'workplace_point_review_rollups',
+        'workplace_point_radius_rollups',
+        'workplace_point_radius_coverage'
+      ]) {
+        assert.equal(tables.has(tableName), true, `${tableName} should exist`);
+      }
+
+      assert.equal(indexes.has('idx_workplace_point_orders_lookup'), true);
+      assert.equal(indexes.has('idx_workplace_point_shifts_status'), true);
+      assert.equal(indexes.has('idx_workplace_point_booked_lookup'), true);
+    } finally {
+      db.close();
+    }
+  } finally {
+    store.close();
+  }
+});
+
+test('preload store replaces workplace point range and reads covered sections with filters', async () => {
+  const store = createPreloadStore({
+    filePath: await tempDbPath(),
+    now: () => new Date('2026-07-02T08:00:00.000Z')
+  });
+
+  try {
+    store.replaceWorkplacePointRange({
+      fromDate: '2026-07-01',
+      toDate: '2026-07-03',
+      workplaceIds: ['wp1', 'wp2'],
+      orderFacts: [
+        {
+          period_date: '2026-07-01',
+          workplace_id: 'wp1',
+          order_id: 'o1',
+          profession: 'picker',
+          order_type: 'regular',
+          amount: 5,
+          pieceworks: 0,
+          order_lead_minutes: 120,
+          include_deleted: 0,
+          include_hidden: 0
+        },
+        {
+          period_date: '2026-07-02',
+          workplace_id: 'wp1',
+          order_id: 'o2',
+          profession: 'driver',
+          order_type: 'regular',
+          amount: 3,
+          pieceworks: 0,
+          order_lead_minutes: 60,
+          include_deleted: 0,
+          include_hidden: 0
+        },
+        {
+          period_date: '2026-07-01',
+          workplace_id: 'wp2',
+          order_id: 'o3',
+          profession: 'picker',
+          order_type: 'regular',
+          amount: 99,
+          pieceworks: 0,
+          order_lead_minutes: 30,
+          include_deleted: 0,
+          include_hidden: 0
+        }
+      ],
+      shiftFacts: [
+        {
+          period_date: '2026-07-01',
+          workplace_id: 'wp1',
+          order_id: 'o1',
+          job_id: 'j1',
+          worker_id: 'worker-1',
+          status: 'confirmed',
+          is_successful_confirmed_shift: 1,
+          is_forecast_active_shift: 0,
+          is_dropoff_24h: 0
+        },
+        {
+          period_date: '2026-07-02',
+          workplace_id: 'wp1',
+          order_id: 'o2',
+          job_id: 'j2',
+          worker_id: 'worker-2',
+          status: 'booked',
+          is_successful_confirmed_shift: 0,
+          is_forecast_active_shift: 1,
+          is_dropoff_24h: 1
+        }
+      ],
+      orderStatusFacts: [
+        { period_date: '2026-07-01', workplace_id: 'wp1', order_id: 'o1', status: 'confirmed' },
+        { period_date: '2026-07-02', workplace_id: 'wp1', order_id: 'o2', status: 'booked' },
+        { period_date: '2026-07-01', workplace_id: 'wp2', order_id: 'o3', status: 'confirmed' }
+      ],
+      bookedWorkerFacts: [
+        { period_date: '2026-07-01', workplace_id: 'wp1', order_id: 'o1', job_id: 'j1', worker_id: 'worker-1' },
+        { period_date: '2026-07-02', workplace_id: 'wp1', order_id: 'o2', job_id: 'j2', worker_id: 'worker-2' },
+        { period_date: '2026-07-02', workplace_id: 'wp1', order_id: 'o2', job_id: 'j2', worker_id: 'worker-3' }
+      ],
+      reviewRollups: [
+        { workplace_id: 'wp1', review_count: 12, avg_rating_all: 4.25, avg_rating_last_10: 4.6 }
+      ],
+      radiusRollups: [
+        {
+          workplace_id: 'wp1',
+          active_window_date: '2026-07-02',
+          radius_km: 5,
+          workers: 10,
+          active_session_workers: 4
+        }
+      ]
+    });
+
+    assert.equal(store.hasWorkplacePointCoverage('wp1', '2026-07-01', '2026-07-03'), true);
+    assert.equal(store.hasWorkplacePointCoverage('wp2', '2026-07-01', '2026-07-03'), true);
+    assert.equal(store.hasWorkplacePointCoverage('wp1', '2026-07-01', '2026-07-04'), false);
+    assert.equal(store.hasWorkplacePointCoverage('wp-missing', '2026-07-01', '2026-07-03'), false);
+
+    const missingWorkplace = store.readWorkplacePointSectionRows({
+      section: 'summary',
+      filters: {
+        workplaceId: 'wp-missing',
+        currentDate: '2026-07-02'
+      },
+      fromDate: '2026-07-01',
+      toDate: '2026-07-03'
+    });
+
+    assert.equal(missingWorkplace, null);
+
+    const summary = store.readWorkplacePointSectionRows({
+      section: 'summary',
+      filters: {
+        workplaceId: 'wp1',
+        profession: ['picker'],
+        orderType: ['regular'],
+        jobStatus: ['confirmed'],
+        currentDate: '2026-07-02'
+      },
+      fromDate: '2026-07-01',
+      toDate: '2026-07-03'
+    });
+    const charts = store.readWorkplacePointSectionRows({
+      section: 'charts',
+      filters: {
+        workplaceId: 'wp1',
+        profession: ['picker'],
+        orderType: ['regular'],
+        jobStatus: ['confirmed'],
+        currentDate: '2026-07-02'
+      },
+      fromDate: '2026-07-01',
+      toDate: '2026-07-03'
+    });
+
+    assert.deepEqual(summary.summaryRows.map((row) => ({ ...row })), [
+      {
+        ordered_shifts: 5,
+        completed_shifts: 1,
+        sla_ordered_shifts: 5,
+        sla_completed_shifts: 1,
+        forecast_sla_ordered_shifts: 0,
+        forecast_sla_active_shifts: 0,
+        active_days: 1,
+        unique_completed_workers: 1,
+        unique_booked_workers: 1,
+        avg_completed_shifts_per_active_worker_week: 1,
+        avg_completed_shifts_per_active_worker_month: 1,
+        dropoffs_24h: 0
+      }
+    ]);
+    assert.deepEqual(summary.reviewSummaryRows.map((row) => ({ ...row })), [
+      { review_count: 12, avg_rating_all: 4.25, avg_rating_last_10: 4.6 }
+    ]);
+    assert.deepEqual(charts.dailyRows.map((row) => ({ ...row })), [
+      {
+        period: '2026-07-01',
+        ordered_shifts: 5,
+        avg_order_lead_minutes: 120,
+        min_order_lead_minutes: 120,
+        completed_shifts: 1,
+        forecast_sla_active_shifts: 0,
+        dropoffs_24h: 0
+      }
+    ]);
+    assert.deepEqual(charts.professionRows.map((row) => ({ ...row })), [
+      { profession: 'picker', ordered_shifts: 5 }
+    ]);
+
+    const yearHeatmap = store.readWorkplacePointSectionRows({
+      section: 'year-heatmap',
+      filters: {
+        workplaceId: 'wp1',
+        profession: ['picker'],
+        orderType: ['regular'],
+        jobStatus: ['confirmed'],
+        currentDate: '2026-07-02'
+      },
+      fromDate: '2026-01-01',
+      toDate: '2027-01-01'
+    });
+
+    assert.deepEqual(yearHeatmap.yearHeatmapRows.map((row) => ({ ...row })), [
+      {
+        period: '2026-07-01',
+        ordered_shifts: 5,
+        avg_order_lead_minutes: 120,
+        min_order_lead_minutes: 120,
+        completed_shifts: 1,
+        forecast_sla_active_shifts: 0,
+        dropoffs_24h: 0
+      }
+    ]);
+  } finally {
+    store.close();
+  }
+});
+
+test('preload store requires workplace point fact ids and full radius coverage', async () => {
+  const store = createPreloadStore({ filePath: await tempDbPath() });
+
+  try {
+    assert.throws(
+      () =>
+        store.replaceWorkplacePointRange({
+          fromDate: '2026-07-01',
+          toDate: '2026-07-02',
+          orderFacts: [{ period_date: '2026-07-01', workplace_id: 'wp1', order_id: '' }]
+        }),
+      /orderFacts requires non-empty order_id/
+    );
+    assert.throws(
+      () =>
+        store.replaceWorkplacePointRange({
+          fromDate: '2026-07-01',
+          toDate: '2026-07-02',
+          shiftFacts: [{ period_date: '2026-07-01', workplace_id: 'wp1', job_id: '' }]
+        }),
+      /shiftFacts requires non-empty job_id/
+    );
+
+    store.replaceWorkplacePointRange({
+      fromDate: '2026-07-01',
+      toDate: '2026-07-02',
+      radiusRollups: [
+        { workplace_id: 'wp1', active_window_date: '2026-07-02', radius_km: 5, workers: 7, active_session_workers: 3 }
+      ]
+    });
+
+    assert.equal(store.hasWorkplacePointRadiusCoverage('wp1', '2026-07-02'), true);
+    assert.equal(store.hasWorkplacePointRadiusCoverage('wp1', '2026-07-03'), false);
+    assert.equal(
+      store.readWorkplacePointSectionRows({
+        section: 'radius',
+        filters: { workplaceId: 'wp1', activeSessionToDateTime: '2026-07-03T00:00:00' },
+        fromDate: '2026-07-01',
+        toDate: '2026-07-02'
+      }),
+      null
+    );
+
+    const radius = store.readWorkplacePointSectionRows({
+      section: 'radius',
+      filters: { workplaceId: 'wp1', activeSessionToDateTime: '2026-07-02T12:00:00' },
+      fromDate: '2026-07-01',
+      toDate: '2026-07-02'
+    });
+
+    assert.deepEqual(radius.radiusRows.map((row) => ({ ...row })), [
+      { radius_km: 5, workers: 7, active_session_workers: 3 }
+    ]);
   } finally {
     store.close();
   }
@@ -219,6 +529,93 @@ test('preload store reports sales diagnostics for coverage and fact tables', asy
           toDate: '2026-06-02',
           startedAt: '2026-06-15T10:00:00.000Z',
           finishedAt: '2026-06-15T10:00:00.000Z',
+          rowsWritten: 3,
+          errorMessage: ''
+        }
+      ]
+    });
+  } finally {
+    store.close();
+  }
+});
+
+test('preload store reports workplace point overview and diagnostics', async () => {
+  const store = createPreloadStore({
+    filePath: await tempDbPath(),
+    now: () => new Date('2026-07-02T08:00:00.000Z')
+  });
+
+  try {
+    const run = store.startRun({
+      jobId: WORKPLACE_POINT_PRELOAD_JOB_ID,
+      trigger: 'manual',
+      fromDate: '2026-07-01',
+      toDate: '2026-07-03'
+    });
+
+    store.replaceWorkplacePointRange({
+      fromDate: '2026-07-01',
+      toDate: '2026-07-03',
+      orderFacts: [
+        {
+          period_date: '2026-07-01',
+          workplace_id: 'wp1',
+          order_id: 'o1',
+          profession: 'picker',
+          order_type: 'regular',
+          amount: 5
+        }
+      ],
+      shiftFacts: [
+        {
+          period_date: '2026-07-01',
+          workplace_id: 'wp1',
+          order_id: 'o1',
+          job_id: 'j1',
+          worker_id: 'worker-1',
+          status: 'confirmed',
+          is_successful_confirmed_shift: 1
+        }
+      ],
+      radiusRollups: [
+        {
+          workplace_id: 'wp1',
+          active_window_date: '2026-07-02',
+          radius_km: 5,
+          workers: 10,
+          active_session_workers: 4
+        }
+      ]
+    });
+    store.finishRun(run.id, { status: 'success', rowsWritten: 3 });
+
+    assert.deepEqual(store.getWorkplacePointOverview(), {
+      coveredFrom: '2026-07-01',
+      coveredTo: '2026-07-03',
+      lastSuccessAt: '2026-07-02T08:00:00.000Z',
+      lastError: ''
+    });
+    assert.deepEqual(store.getWorkplacePointDiagnostics(), {
+      coverage: {
+        minDate: '2026-07-01',
+        maxDate: '2026-07-02',
+        days: 2
+      },
+      tables: {
+        orderFacts: 1,
+        shiftFacts: 1,
+        radiusRollups: 1
+      },
+      lastRuns: [
+        {
+          id: run.id,
+          jobId: WORKPLACE_POINT_PRELOAD_JOB_ID,
+          trigger: 'manual',
+          status: 'success',
+          fromDate: '2026-07-01',
+          toDate: '2026-07-03',
+          startedAt: '2026-07-02T08:00:00.000Z',
+          finishedAt: '2026-07-02T08:00:00.000Z',
           rowsWritten: 3,
           errorMessage: ''
         }

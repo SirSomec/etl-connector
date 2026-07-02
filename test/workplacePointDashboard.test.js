@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  WORKPLACE_POINT_SECTIONS,
+  cacheKeyForWorkplacePointSection,
   loadWorkplacePointDashboard,
   loadWorkplacePointDashboardSection,
   loadWorkplacePointDashboardShell,
@@ -14,7 +16,8 @@ const {
   normalizeWorkplacePointGigerDetailsInput,
   normalizeWorkplacePointDayDetailsInput,
   normalizeWorkplacePointReviewsInput,
-  normalizeWorkplacePointFilters
+  normalizeWorkplacePointFilters,
+  normalizeWorkplacePointYearHeatmapFilters
 } = require('../src/workplacePointDashboard');
 
 const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
@@ -399,6 +402,8 @@ test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius 
         active_days: 2,
         unique_completed_workers: 5,
         unique_booked_workers: 8,
+        avg_completed_shifts_per_active_worker_week: 2.5,
+        avg_completed_shifts_per_active_worker_month: 7.25,
         dropoffs_24h: 2
       }
     ],
@@ -453,6 +458,8 @@ test('mergeWorkplacePointRows maps summary, daily rows, professions, and radius 
   assert.equal(dashboard.summary.stabilityPercent, 100);
   assert.equal(dashboard.summary.uniqueCompletedWorkers, 5);
   assert.equal(dashboard.summary.uniqueBookedWorkers, 8);
+  assert.equal(dashboard.summary.avgCompletedShiftsPerActiveWorkerWeek, 2.5);
+  assert.equal(dashboard.summary.avgCompletedShiftsPerActiveWorkerMonth, 7.25);
   assert.equal(dashboard.summary.dropoffs24h, 2);
   assert.deepEqual(dashboard.summary.radiusWorkers, {
     5: 11,
@@ -519,6 +526,15 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
           }
         ];
       }
+      if (operation === 'workplace point year heatmap') {
+        return [
+          {
+            period: '2026-01-05',
+            ordered_shifts: 6,
+            completed_shifts: 3
+          }
+        ];
+      }
       if (operation === 'workplace point professions') {
         return [{ profession: 'picker', ordered_shifts: 10 }];
       }
@@ -551,12 +567,19 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   assert.equal(dashboard.summary.radiusActiveSessionWorkers[5], 5);
   assert.equal(dashboard.dailyRows[0].orderLeadAvgMinutes, 1440);
   assert.equal(dashboard.dailyRows[0].orderLeadMinMinutes, 60);
-  assert.equal(calls.length, 7);
+  assert.equal(dashboard.yearHeatmapRows[0].period, '2026-01-05');
+  assert.equal(dashboard.yearHeatmapRows[0].orderedShifts, 6);
+  assert.equal(calls.length, 8);
 
   for (const call of calls) {
     assert.equal(call.params.param_workplace_id, 'wp1; DROP TABLE mg_orders');
-    assert.equal(call.params.param_from, '2026-06-01 00:00:00');
-    assert.equal(call.params.param_to, '2026-07-01 00:00:00');
+    if (call.operation === 'workplace point year heatmap') {
+      assert.equal(call.params.param_from, '2026-01-01 00:00:00');
+      assert.equal(call.params.param_to, '2027-01-01 00:00:00');
+    } else {
+      assert.equal(call.params.param_from, '2026-06-01 00:00:00');
+      assert.equal(call.params.param_to, '2026-07-01 00:00:00');
+    }
     assert.equal(call.params.param_active_session_from, '2026-05-16 12:00:00');
     assert.equal(call.params.param_active_session_to, '2026-06-15 12:00:00');
     assert.equal(call.query.includes('DROP TABLE'), false);
@@ -579,7 +602,7 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   assert.equal(filterOptionsCall.query.includes('SELECT DISTINCT order_id'), true);
   assert.equal(filterOptionsCall.query.includes('INNER JOIN mg_jobs AS j ON j.source = o._id'), false);
 
-  for (const operation of ['workplace point summary', 'workplace point daily']) {
+  for (const operation of ['workplace point summary', 'workplace point daily', 'workplace point year heatmap']) {
     const query = calls.find((call) => call.operation === operation).query;
 
     assert.equal(query.includes('mg_job_history'), true);
@@ -593,6 +616,10 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   );
   assert.equal(
     calls.find((call) => call.operation === 'workplace point daily').query.includes('min_order_lead_minutes'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point year heatmap').query.includes('avg_order_lead_minutes'),
     true
   );
 
@@ -610,6 +637,22 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   );
   assert.equal(
     calls.find((call) => call.operation === 'workplace point summary').query.includes('dropoffs_24h'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point summary').query.includes('avg_completed_shifts_per_active_worker_week'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point summary').query.includes('avg_completed_shifts_per_active_worker_month'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point summary').query.includes('toMonday(toDate(start'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point summary').query.includes('toStartOfMonth(toDate(start'),
     true
   );
   assert.equal(
@@ -1161,6 +1204,101 @@ test('loadWorkplacePointDashboardShell loads metadata and filters only', async (
   assert.deepEqual(dashboard.professionRows, []);
 });
 
+test('normalizeWorkplacePointYearHeatmapFilters uses the current full year and ignores selected dates', () => {
+  const filters = normalizeWorkplacePointYearHeatmapFilters(
+    {
+      workplaceId: ' wp1 ',
+      from: '2026-06-01',
+      to: '2026-06-30',
+      profession: ['picker', 'driver'],
+      orderType: 'regular',
+      jobStatus: 'confirmed',
+      includeHiddenOrders: '1'
+    },
+    new Date('2026-07-02T12:00:00.000Z')
+  );
+
+  assert.equal(filters.workplaceId, 'wp1');
+  assert.equal(filters.from, '2026-01-01');
+  assert.equal(filters.to, '2026-12-31');
+  assert.equal(filters.fromDateTime, '2026-01-01 00:00:00');
+  assert.equal(filters.toExclusiveDateTime, '2027-01-01 00:00:00');
+  assert.equal(filters.rangeDays, 365);
+  assert.deepEqual(filters.profession, ['picker', 'driver']);
+  assert.deepEqual(filters.orderType, ['regular']);
+  assert.deepEqual(filters.jobStatus, ['confirmed']);
+  assert.equal(filters.includeHiddenOrders, true);
+});
+
+test('cacheKeyForWorkplacePointSection keeps year heatmap independent from selected dates', () => {
+  const first = normalizeWorkplacePointYearHeatmapFilters(
+    { workplaceId: 'wp1', from: '2026-06-01', to: '2026-06-30', profession: 'picker' },
+    new Date('2026-07-02T12:00:00.000Z')
+  );
+  const second = normalizeWorkplacePointYearHeatmapFilters(
+    { workplaceId: 'wp1', from: '2026-02-01', to: '2026-02-28', profession: 'picker' },
+    new Date('2026-07-02T12:00:00.000Z')
+  );
+
+  assert.equal(
+    cacheKeyForWorkplacePointSection('year-heatmap', first),
+    cacheKeyForWorkplacePointSection('year-heatmap', second)
+  );
+  assert.notEqual(
+    cacheKeyForWorkplacePointSection('year-heatmap', first),
+    cacheKeyForWorkplacePointSection('charts', first)
+  );
+});
+
+test('loadWorkplacePointDashboardSection loads year heatmap with current-year parameters', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point year heatmap') {
+        return [{ period: '2026-01-02', ordered_shifts: 5, completed_shifts: 3 }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplacePointDashboardSection(
+    client,
+    {
+      workplaceId: 'wp1',
+      from: '2026-06-01',
+      to: '2026-06-30',
+      profession: 'picker'
+    },
+    'year-heatmap',
+    new Date('2026-07-02T12:00:00.000Z')
+  );
+
+  assert.equal(WORKPLACE_POINT_SECTIONS.has('year-heatmap'), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].operation, 'workplace point year heatmap');
+  assert.equal(calls[0].params.param_from, '2026-01-01 00:00:00');
+  assert.equal(calls[0].params.param_to, '2027-01-01 00:00:00');
+  assert.equal(calls[0].params.param_professions, "['picker']");
+  assert.equal(dashboard.filters.from, '2026-01-01');
+  assert.equal(dashboard.filters.to, '2026-12-31');
+  assert.deepEqual(dashboard.yearHeatmapRows, [
+    {
+      period: '2026-01-02',
+      orderedShifts: 5,
+      completedShifts: 3,
+      slaPercent: 60,
+      forecastSlaActiveShifts: 0,
+      forecastSlaPercent: 0,
+      dropoffs24h: 0,
+      orderLeadAvgMinutes: null,
+      orderLeadMinMinutes: null
+    }
+  ]);
+});
+
 test('loadWorkplacePointDashboardShell renders metadata when filter options fail', async () => {
   const calls = [];
   const client = {
@@ -1254,6 +1392,61 @@ test('loadWorkplacePointDashboardShell uses directory cache metadata before live
   assert.deepEqual(dashboard.filters.profession, ['picker']);
 });
 
+test('loadWorkplacePointDashboardShell uses nonblocking directory lookup before live metadata fallback', async () => {
+  const calls = [];
+  const cacheCalls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace point metadata') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Live Point',
+            technical_name: '',
+            client_id: 'client-1',
+            city: 'City',
+            region: 'Region',
+            street: 'Street'
+          }
+        ];
+      }
+
+      if (operation === 'workplace point metadata client') {
+        return [{ client_title: 'Live Brand' }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const workplaceDirectoryCache = {
+    async getCachedById(cacheClient, workplaceId) {
+      cacheCalls.push(['getCachedById', cacheClient === client, workplaceId]);
+      return null;
+    },
+    async getById() {
+      cacheCalls.push(['getById']);
+      throw new Error('Blocking directory lookup should not be used by point shell');
+    }
+  };
+
+  const dashboard = await loadWorkplacePointDashboardShell(
+    client,
+    { workplaceId: 'wp1', from: '2026-06-01', to: '2026-06-30' },
+    new Date('2026-06-15T12:00:00.000Z'),
+    { workplaceDirectoryCache, loadFilterOptions: false }
+  );
+
+  assert.equal(dashboard.point.title, 'Live Point');
+  assert.equal(dashboard.point.clientTitle, 'Live Brand');
+  assert.deepEqual(cacheCalls, [['getCachedById', true, 'wp1']]);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'workplace point metadata',
+    'workplace point metadata client'
+  ]);
+});
+
 test('loadWorkplacePointDashboard constrains point metrics to actual orders and removes aggregate cross joins', async () => {
   const calls = [];
   const client = {
@@ -1283,6 +1476,7 @@ test('loadWorkplacePointDashboard constrains point metrics to actual orders and 
       'workplace point filter options',
       'workplace point summary',
       'workplace point daily',
+      'workplace point year heatmap',
       'workplace point professions'
     ].includes(call.operation)
   );
@@ -1390,6 +1584,7 @@ test('loadWorkplacePointDashboardSection loads and caches summary, charts, and r
   assert.equal(summary.summary.ratingAll, 4.2);
   assert.equal(charts.dailyRows.length, 1);
   assert.equal(charts.professionRows.length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(charts, 'yearHeatmapRows'), false);
   assert.equal(radius.summary.radiusWorkers[5], 12);
   assert.deepEqual(calls.map((call) => call.operation), [
     'workplace point summary',
@@ -1417,6 +1612,187 @@ test('loadWorkplacePointDashboardSection loads and caches summary, charts, and r
     'workplace point radius workers',
     'workplace point summary',
     'workplace point review summary'
+  ]);
+});
+
+test('loadWorkplacePointDashboardSection reads covered section rows from workplace point preload', async () => {
+  const clientCalls = [];
+  const serviceCalls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      clientCalls.push({ query, params, operation });
+      throw new Error(`Unexpected ClickHouse operation: ${operation}`);
+    }
+  };
+  const preloadService = {
+    registerWorkplacePointRequest(input) {
+      serviceCalls.push(['register', input]);
+    },
+    readWorkplacePointSection(input) {
+      serviceCalls.push(['read', input]);
+      return {
+        summaryRows: [
+          {
+            ordered_shifts: 12,
+            completed_shifts: 9,
+            sla_ordered_shifts: 7,
+            sla_completed_shifts: 6,
+            active_days: 3,
+            unique_completed_workers: 5,
+            unique_booked_workers: 8,
+            dropoffs_24h: 1
+          }
+        ],
+        reviewSummaryRows: [{ review_count: 4, avg_rating_all: 4.5, avg_rating_last_10: 4.7 }]
+      };
+    }
+  };
+  const input = {
+    workplaceId: 'wp1',
+    from: '2026-06-01',
+    to: '2026-06-30',
+    profession: 'picker'
+  };
+
+  const dashboard = await loadWorkplacePointDashboardSection(
+    client,
+    input,
+    'summary',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  const filters = normalizeWorkplacePointFilters(input, new Date('2026-06-15T12:00:00.000Z'));
+  const cacheKey = cacheKeyForWorkplacePointSection('summary', filters);
+
+  assert.deepEqual(clientCalls, []);
+  assert.equal(dashboard.dataSource, 'preload');
+  assert.equal(dashboard.summary.orderedShifts, 12);
+  assert.equal(Math.round(dashboard.summary.slaPercent * 100) / 100, 85.71);
+  assert.equal(dashboard.summary.ratingAll, 4.5);
+  assert.deepEqual(serviceCalls, [
+    [
+      'register',
+      {
+        section: 'summary',
+        cacheKey,
+        input: {
+          ...input,
+          from: '2026-06-01',
+          to: '2026-06-30',
+          workplaceId: 'wp1'
+        },
+        fromDate: '2026-06-01',
+        toDate: '2026-07-01'
+      }
+    ],
+    [
+      'read',
+      {
+        section: 'summary',
+        cacheKey,
+        filters,
+        fromDate: '2026-06-01',
+        toDate: '2026-07-01'
+      }
+    ]
+  ]);
+});
+
+test('loadWorkplacePointDashboardSection falls back to ClickHouse and saves rows when preload misses', async () => {
+  const serviceCalls = [];
+  const clientCalls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      clientCalls.push({ query, params, operation });
+
+      if (operation === 'workplace point daily') {
+        return [{ period: '2026-06-01', ordered_shifts: 5, completed_shifts: 4 }];
+      }
+
+      if (operation === 'workplace point professions') {
+        return [{ profession: 'picker', ordered_shifts: 5 }];
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+  const preloadService = {
+    registerWorkplacePointRequest(input) {
+      serviceCalls.push(['register', input]);
+    },
+    readWorkplacePointSection(input) {
+      serviceCalls.push(['read', input]);
+      return null;
+    },
+    saveWorkplacePointSection(input) {
+      serviceCalls.push(['save', input]);
+    }
+  };
+  const input = {
+    workplaceId: 'wp1',
+    from: '2026-06-01',
+    to: '2026-06-30',
+    profession: 'picker'
+  };
+
+  const dashboard = await loadWorkplacePointDashboardSection(
+    client,
+    input,
+    'charts',
+    new Date('2026-06-15T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  const filters = normalizeWorkplacePointFilters(input, new Date('2026-06-15T12:00:00.000Z'));
+  const cacheKey = cacheKeyForWorkplacePointSection('charts', filters);
+
+  assert.equal(dashboard.dataSource, 'clickhouse');
+  assert.equal(dashboard.dailyRows[0].orderedShifts, 5);
+  assert.equal(dashboard.professionRows[0].profession, 'picker');
+  assert.deepEqual(clientCalls.map((call) => call.operation), [
+    'workplace point daily',
+    'workplace point professions'
+  ]);
+  assert.deepEqual(serviceCalls, [
+    [
+      'register',
+      {
+        section: 'charts',
+        cacheKey,
+        input: {
+          ...input,
+          from: '2026-06-01',
+          to: '2026-06-30',
+          workplaceId: 'wp1'
+        },
+        fromDate: '2026-06-01',
+        toDate: '2026-07-01'
+      }
+    ],
+    [
+      'read',
+      {
+        section: 'charts',
+        cacheKey,
+        filters,
+        fromDate: '2026-06-01',
+        toDate: '2026-07-01'
+      }
+    ],
+    [
+      'save',
+      {
+        section: 'charts',
+        cacheKey,
+        fromDate: '2026-06-01',
+        toDate: '2026-07-01',
+        payload: {
+          dailyRows: [{ period: '2026-06-01', ordered_shifts: 5, completed_shifts: 4 }],
+          professionRows: [{ profession: 'picker', ordered_shifts: 5 }]
+        }
+      }
+    ]
   ]);
 });
 

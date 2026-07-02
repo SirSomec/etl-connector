@@ -7,6 +7,7 @@ const {
 } = require('../src/preloadScheduler');
 const {
   SALES_PRELOAD_JOB_ID,
+  WORKPLACE_POINT_PRELOAD_JOB_ID,
   WORKPLACE_ANALYSIS_PRELOAD_JOB_ID
 } = require('../src/preloadStore');
 const { createPreloadService } = require('../src/preloadService');
@@ -44,6 +45,22 @@ test('scheduledRangeForJob enforces at least 45 days backward and forward', () =
   assert.deepEqual(range, {
     fromDate: '2026-05-02',
     toDate: '2026-08-01'
+  });
+});
+
+test('scheduledRangeForJob allows workplace point thirty day scheduled window', () => {
+  const range = scheduledRangeForJob(
+    {
+      id: WORKPLACE_POINT_PRELOAD_JOB_ID,
+      refreshPastDays: 30,
+      refreshFutureDays: 30
+    },
+    new Date('2026-07-02T05:00:00.000Z')
+  );
+
+  assert.deepEqual(range, {
+    fromDate: '2026-06-02',
+    toDate: '2026-08-02'
   });
 });
 
@@ -652,6 +669,114 @@ test('preload service facade delegates generic workplace analysis methods', asyn
     ),
     true
   );
+});
+
+test('preload service facade delegates workplace point methods', async () => {
+  const calls = [];
+  const store = {
+    listJobs() {
+      return [{ id: WORKPLACE_POINT_PRELOAD_JOB_ID }];
+    },
+    getSalesByProjectOverview() {
+      return {};
+    },
+    getSalesByProjectDiagnostics() {
+      return {};
+    },
+    getJob(jobId) {
+      return { id: jobId };
+    },
+    listRuns() {
+      return [];
+    },
+    saveJobSchedule() {
+      return null;
+    },
+    registerDashboardPreloadRequest(input) {
+      calls.push({ method: 'registerDashboardPreloadRequest', input });
+      return input;
+    },
+    readWorkplacePointSectionRows(input) {
+      calls.push({ method: 'readWorkplacePointSectionRows', input });
+      return null;
+    },
+    readDashboardPreloadResult(input) {
+      calls.push({ method: 'readDashboardPreloadResult', input });
+      return { payload: { summaryRows: [{ stale: true }] } };
+    },
+    saveDashboardPreloadResult(input) {
+      calls.push({ method: 'saveDashboardPreloadResult', input });
+      return input;
+    },
+    close() {}
+  };
+  const scheduler = {
+    reschedule() {},
+    runNow(input) {
+      calls.push({ method: 'runNow', input });
+      return Promise.resolve({ status: 'success', rowsWritten: 4 });
+    },
+    stop() {},
+    drain() {
+      return Promise.resolve([]);
+    }
+  };
+  const service = createPreloadService({ client: {}, store, scheduler });
+
+  await service.runWorkplacePoint({ fromDate: '2026-06-02', toDate: '2026-08-02' });
+  service.registerWorkplacePointRequest({
+    section: 'summary',
+    cacheKey: 'summary-key',
+    input: { workplaceId: 'wp1' }
+  });
+  const preloaded = service.readWorkplacePointSection({
+    section: 'summary',
+    cacheKey: 'summary-key',
+    filters: { workplaceId: 'wp1' },
+    fromDate: '2026-07-01',
+    toDate: '2026-07-03'
+  });
+  service.saveWorkplacePointSection({
+    section: 'summary',
+    cacheKey: 'summary-key',
+    fromDate: '2026-07-01',
+    toDate: '2026-07-03',
+    payload: { summaryRows: [] }
+  });
+
+  assert.equal(preloaded, null);
+
+  assert.deepEqual(calls, [
+    {
+      method: 'runNow',
+      input: {
+        jobId: WORKPLACE_POINT_PRELOAD_JOB_ID,
+        trigger: 'manual',
+        fromDate: '2026-06-02',
+        toDate: '2026-08-02'
+      }
+    },
+    {
+      method: 'registerDashboardPreloadRequest',
+      input: {
+        jobId: WORKPLACE_POINT_PRELOAD_JOB_ID,
+        dashboardId: 'workplace-point',
+        section: 'summary',
+        cacheKey: 'summary-key',
+        input: { workplaceId: 'wp1' }
+      }
+    },
+    {
+      method: 'readWorkplacePointSectionRows',
+      input: {
+        section: 'summary',
+        cacheKey: 'summary-key',
+        filters: { workplaceId: 'wp1' },
+        fromDate: '2026-07-01',
+        toDate: '2026-07-03'
+      }
+    }
+  ]);
 });
 
 test('preload service close waits for active scheduler run before closing store', async () => {

@@ -3319,6 +3319,80 @@ function layout({
       white-space: nowrap;
     }
 
+    .year-heatmap-panel {
+      grid-column: 1 / -1;
+      min-width: 0;
+    }
+
+    .point-year-heatmap {
+      display: grid;
+      gap: 10px;
+      width: 75%;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .point-year-heatmap-months {
+      display: grid;
+      grid-template-columns: repeat(var(--point-year-heatmap-week-columns, 63), minmax(0, 1fr));
+      gap: 0;
+      min-width: 0;
+    }
+
+    .point-year-heatmap-month {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+      box-shadow: inset 1px 0 0 var(--line);
+    }
+
+    .point-year-heatmap-month-label {
+      margin-bottom: 5px;
+      padding-left: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.2;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: clip;
+      white-space: nowrap;
+    }
+
+    .point-year-heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(var(--point-year-heatmap-month-weeks, 5), minmax(0, 1fr));
+      grid-template-rows: repeat(7, minmax(0, 1fr));
+      grid-auto-flow: column;
+      gap: 0;
+      min-width: 0;
+    }
+
+    .point-year-heatmap-cell {
+      min-width: 0;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 2px;
+      background: #e5e7eb;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.78);
+    }
+
+    .point-year-heatmap-cell.empty {
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .point-year-heatmap-cell[data-level="1"] { background: #bfdbfe; }
+    .point-year-heatmap-cell[data-level="2"] { background: #60a5fa; }
+    .point-year-heatmap-cell[data-level="3"] { background: #2563eb; }
+    .point-year-heatmap-cell[data-level="4"] { background: #1d4ed8; }
+
+    .point-year-heatmap-cell.is-current-day {
+      outline: 2px solid #111827;
+      outline-offset: 1px;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+    }
+
     .mini-chart {
       display: grid;
       gap: 8px;
@@ -5491,14 +5565,20 @@ function renderDashboardProgressiveScript() {
     replaceWithHtml(root, '<section class="section"><div class="error">' + message + '</div></section>');
   }
 
-  document.querySelectorAll('[data-dashboard-fragment-url], [data-city-analysis-fragment-url]').forEach(function (root) {
-    if (root.getAttribute('data-dashboard-fragment-defer')) {
-      return;
-    }
+  var dashboardFragmentQueue = [];
+  var dashboardFragmentActive = 0;
+  var dashboardFragmentLimit = 2;
 
+  function fetchDashboardFragment(root) {
     var url = root.getAttribute('data-dashboard-fragment-url') || root.getAttribute('data-city-analysis-fragment-url');
 
-    fetch(url)
+    if (!url) {
+      return Promise.resolve();
+    }
+
+    root.setAttribute('data-dashboard-fragment-loaded', '1');
+
+    return fetch(url)
       .then(function (response) {
         return response.text().then(function (html) {
           if (!response.ok) {
@@ -5514,42 +5594,95 @@ function renderDashboardProgressiveScript() {
 
         renderError(root, message);
       });
-  });
+  }
 
-  function loadDeferredDashboardFragment(root) {
+  function pumpDashboardFragmentQueue() {
+    while (dashboardFragmentActive < dashboardFragmentLimit && dashboardFragmentQueue.length > 0) {
+      loadQueuedDashboardFragment(dashboardFragmentQueue.shift());
+    }
+  }
+
+  function loadQueuedDashboardFragment(root) {
     if (!root || root.getAttribute('data-dashboard-fragment-loaded') === '1') {
       return;
     }
 
-    var url = root.getAttribute('data-dashboard-fragment-url') || root.getAttribute('data-city-analysis-fragment-url');
+    dashboardFragmentActive += 1;
+    fetchDashboardFragment(root).finally(function () {
+      dashboardFragmentActive -= 1;
+      pumpDashboardFragmentQueue();
+    });
+  }
 
-    if (!url) {
+  function enqueueDashboardFragment(root) {
+    if (!root || root.getAttribute('data-dashboard-fragment-loaded') === '1') {
       return;
     }
 
-    root.setAttribute('data-dashboard-fragment-loaded', '1');
-
-    fetch(url)
-      .then(function (response) {
-        return response.text().then(function (html) {
-          if (!response.ok && !html) {
-            renderError(root, '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0431\u043b\u043e\u043a.');
-            return;
-          }
-
-          replaceWithHtml(root, html);
-        });
-      })
-      .catch(function (error) {
-        var message = error && error.message ? error.message : '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0431\u043b\u043e\u043a.';
-
-        renderError(root, message);
-      });
+    dashboardFragmentQueue.push(root);
+    pumpDashboardFragmentQueue();
   }
+
+  function loadDeferredDashboardFragment(root) {
+    enqueueDashboardFragment(root);
+  }
+
+  function scheduleIdleDashboardFragment(root) {
+    var runIdle = window.requestIdleCallback || function (callback) {
+      return setTimeout(callback, 500);
+    };
+
+    runIdle(function () {
+      enqueueDashboardFragment(root);
+    });
+  }
+
+  function scheduleVisibleDashboardFragment(root) {
+    if (!('IntersectionObserver' in window)) {
+      scheduleIdleDashboardFragment(root);
+      return;
+    }
+
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) {
+          return;
+        }
+
+        observer.unobserve(root);
+        enqueueDashboardFragment(root);
+      });
+    }, { rootMargin: '200px 0px' });
+
+    observer.observe(root);
+  }
+
+  document.querySelectorAll('[data-dashboard-fragment-url], [data-city-analysis-fragment-url]').forEach(function (root) {
+    var deferMode = root.getAttribute('data-dashboard-fragment-defer');
+
+    if (deferMode === 'idle') {
+      scheduleIdleDashboardFragment(root);
+      return;
+    }
+
+    if (deferMode === 'visible') {
+      scheduleVisibleDashboardFragment(root);
+      return;
+    }
+
+    if (deferMode) {
+      return;
+    }
+
+    enqueueDashboardFragment(root);
+  });
 
   document.addEventListener('change', function () {
     document.querySelectorAll('[data-dashboard-fragment-defer]').forEach(function (root) {
       var selector = root.getAttribute('data-dashboard-fragment-defer');
+      if (selector === 'idle' || selector === 'visible') {
+        return;
+      }
       var trigger = selector ? document.querySelector(selector) : null;
 
       if (trigger && trigger.checked) {
@@ -6858,27 +6991,53 @@ function safeHtmlId(value) {
 }
 
 function renderPreloadDiagnostics(diagnostics, jobId) {
-  const salesDiagnostics = diagnostics && diagnostics.salesByProject ? diagnostics.salesByProject : {};
+  const diagnosticsByJob = {
+    'sales-by-project': {
+      source: diagnostics && diagnostics.salesByProject ? diagnostics.salesByProject : diagnostics,
+      cards: [
+        ['Coverage days', 'coverage.days'],
+        ['Daily rows', 'tables.dailyRows'],
+        ['Order facts', 'tables.orderFacts'],
+        ['Shift facts', 'tables.shiftFacts']
+      ]
+    },
+    'workplace-point': {
+      source: diagnostics && diagnostics.workplacePoint ? diagnostics.workplacePoint : null,
+      cards: [
+        ['Coverage days', 'coverage.days'],
+        ['Order facts', 'tables.orderFacts'],
+        ['Shift facts', 'tables.shiftFacts'],
+        ['Radius rollups', 'tables.radiusRollups']
+      ]
+    }
+  };
+  const config = diagnosticsByJob[jobId];
+  const selectedDiagnostics = config && config.source ? config.source : null;
 
-  if (jobId !== 'sales-by-project' && !diagnostics) {
+  if (!config || !selectedDiagnostics) {
     return '';
   }
 
-  const preloadTables = salesDiagnostics.tables || {};
-  const preloadCoverage = salesDiagnostics.coverage || {};
+  const valueByPath = (source, path) => path
+    .split('.')
+    .reduce((value, key) => (value && Object.prototype.hasOwnProperty.call(value, key) ? value[key] : 0), source);
+  const cardsHtml = config.cards.map(([label, path]) => (
+    `<div class="kpi-card"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(valueByPath(selectedDiagnostics, path) || 0)}</div></div>`
+  )).join('');
 
   return `<div class="preload-diagnostics">
   <h3>Состояние SQLite-витрины</h3>
   <div class="kpi-grid">
-    <div class="kpi-card"><div class="kpi-label">Coverage days</div><div class="kpi-value">${escapeHtml(preloadCoverage.days || 0)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Daily rows</div><div class="kpi-value">${escapeHtml(preloadTables.dailyRows || 0)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Order facts</div><div class="kpi-value">${escapeHtml(preloadTables.orderFacts || 0)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Shift facts</div><div class="kpi-value">${escapeHtml(preloadTables.shiftFacts || 0)}</div></div>
+    ${cardsHtml}
   </div>
 </div>`;
 }
 
-function preloadScheduleWindowValue(value, fallback = 45) {
+function preloadScheduleWindowMinimum(jobId) {
+  return jobId === 'workplace-point' ? 30 : 45;
+}
+
+function preloadScheduleWindowValue(value, fallback = 45, minimum = 45) {
   if (value === undefined || value === null || value === '') {
     return fallback;
   }
@@ -6889,7 +7048,7 @@ function preloadScheduleWindowValue(value, fallback = 45) {
     return value;
   }
 
-  return Math.max(45, numericValue);
+  return Math.max(minimum, numericValue);
 }
 
 function renderPreloadJobPanel(panel, csrfToken) {
@@ -6900,11 +7059,20 @@ function renderPreloadJobPanel(panel, csrfToken) {
   const htmlId = safeHtmlId(jobId);
   const rows = Array.isArray(panel.runs) ? panel.runs : [];
   const rowsHtml = rows.map(renderPreloadRunRow).join('');
-  const refreshPastDays = preloadScheduleWindowValue(safeJob.refreshPastDays ?? safeJob.refreshDays);
-  const refreshFutureDays = preloadScheduleWindowValue(safeJob.refreshFutureDays);
+  const scheduleWindowMinimum = preloadScheduleWindowMinimum(jobId);
+  const refreshPastDays = preloadScheduleWindowValue(
+    safeJob.refreshPastDays ?? safeJob.refreshDays,
+    scheduleWindowMinimum,
+    scheduleWindowMinimum
+  );
+  const refreshFutureDays = preloadScheduleWindowValue(
+    safeJob.refreshFutureDays,
+    scheduleWindowMinimum,
+    scheduleWindowMinimum
+  );
   const diagnosticsHtml = renderPreloadDiagnostics(panel.diagnostics, jobId);
 
-  return `<section class="section">
+  const panelHtml = `<section class="section">
   <h2>${escapeHtml(title)}</h2>
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-label">Витрина</div><div class="kpi-value">${escapeHtml(jobId)}</div></div>
@@ -6940,6 +7108,13 @@ function renderPreloadJobPanel(panel, csrfToken) {
   <h2>История запусков: ${escapeHtml(title)}</h2>
   <div class="table-scroll"><table><thead><tr><th>ID</th><th>Тип</th><th>Статус</th><th>Период</th><th>Старт</th><th>Финиш</th><th>Строк</th><th>Ошибка</th></tr></thead><tbody>${rowsHtml || '<tr><td colspan="8">Запусков пока нет.</td></tr>'}</tbody></table></div>
 </section>`;
+
+  if (scheduleWindowMinimum === 45) {
+    return panelHtml;
+  }
+
+  return panelHtml
+    .replaceAll('type="number" min="45" max="366"', `type="number" min="${escapeHtml(scheduleWindowMinimum)}" max="366"`);
 }
 
 function renderPreloadManagement({
@@ -10338,6 +10513,16 @@ function renderWorkplacePointKpis(summary, currentUser) {
       valueHtml: renderGigerDetailTrigger(formatNumber(summary.uniqueBookedWorkers), workplacePointGigerUrl(filters, 'unique-booked-workers')),
       metricId: 'workplace-point.summary.unique-booked-workers'
     },
+    {
+      label: 'Вып. смен/исп. в неделю',
+      value: formatNumber(summary.avgCompletedShiftsPerActiveWorkerWeek, 1),
+      metricId: 'workplace-point.summary.avg-completed-shifts-per-active-worker-week'
+    },
+    {
+      label: 'Вып. смен/исп. в месяц',
+      value: formatNumber(summary.avgCompletedShiftsPerActiveWorkerMonth, 1),
+      metricId: 'workplace-point.summary.avg-completed-shifts-per-active-worker-month'
+    },
     workplacePointRatingCard(summary, filters),
     { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' },
     { label: '5 км', value: formatRadiusWorkerValue(summary, 5), valueHtml: renderRadiusWorkerValue(summary, filters, 5), metricId: 'workplace-point.summary.radius-5km' },
@@ -10371,6 +10556,16 @@ function renderWorkplacePointSummaryKpis(summary, currentUser) {
         workplacePointGigerUrl(filters, 'unique-booked-workers')
       ),
       metricId: 'workplace-point.summary.unique-booked-workers'
+    },
+    {
+      label: 'Вып. смен/исп. в неделю',
+      value: formatNumber(summary.avgCompletedShiftsPerActiveWorkerWeek, 1),
+      metricId: 'workplace-point.summary.avg-completed-shifts-per-active-worker-week'
+    },
+    {
+      label: 'Вып. смен/исп. в месяц',
+      value: formatNumber(summary.avgCompletedShiftsPerActiveWorkerMonth, 1),
+      metricId: 'workplace-point.summary.avg-completed-shifts-per-active-worker-month'
     },
     workplacePointRatingCard(summary, filters),
     { label: 'Слеты < 24ч', value: formatNumber(summary.dropoffs24h), metricId: 'workplace-point.summary.dropoffs-24h' }
@@ -10858,10 +11053,160 @@ function renderPointCalendar(rows, filters, currentDateValue = new Date(), curre
 </div>`;
 }
 
+function shortMonthLabelFromDateKey(value) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value || '');
+  }
+
+  const monthNames = [
+    'Янв',
+    'Фев',
+    'Мар',
+    'Апр',
+    'Май',
+    'Июн',
+    'Июл',
+    'Авг',
+    'Сен',
+    'Окт',
+    'Ноя',
+    'Дек'
+  ];
+
+  return monthNames[date.getUTCMonth()];
+}
+
+function yearRangeFromCurrentDateValue(currentDateValue) {
+  const currentDateKey = currentDateKeyFromValue(currentDateValue) || currentDateKeyFromValue(new Date());
+  const year = currentDateKey ? currentDateKey.slice(0, 4) : String(new Date().getUTCFullYear());
+
+  return {
+    from: `${year}-01-01`,
+    to: `${year}-12-31`
+  };
+}
+
+function yearHeatmapLevel(value, maxValue) {
+  const numericValue = Number(value) || 0;
+  const numericMax = Number(maxValue) || 0;
+
+  if (numericValue <= 0 || numericMax <= 0) {
+    return 0;
+  }
+
+  const ratio = numericValue / numericMax;
+
+  if (ratio <= 0.25) {
+    return 1;
+  }
+
+  if (ratio <= 0.5) {
+    return 2;
+  }
+
+  if (ratio <= 0.75) {
+    return 3;
+  }
+
+  return 4;
+}
+
+function renderPointYearHeatmapEmptyCells(count) {
+  return Array.from(
+    { length: count },
+    () => '<span class="point-year-heatmap-cell empty" aria-hidden="true"></span>'
+  ).join('');
+}
+
+function pointYearHeatmapRows(rows, currentDateValue) {
+  const range = yearRangeFromCurrentDateValue(currentDateValue);
+  const rowsByPeriod = new Map((Array.isArray(rows) ? rows : []).map((row) => [String(row.period || ''), row]));
+  const dateKeys = buildCalendarDateKeys(range.from, range.to);
+
+  return dateKeys.map((period) => ({
+    period,
+    orderedShifts: 0,
+    completedShifts: 0,
+    slaPercent: 0,
+    dropoffs24h: 0,
+    orderLeadAvgMinutes: null,
+    orderLeadMinMinutes: null,
+    ...(rowsByPeriod.get(period) || {})
+  }));
+}
+
+function renderPointYearHeatmapCell(row, currentDateKey, maxValue) {
+  const level = yearHeatmapLevel(row.orderedShifts, maxValue);
+  const title = `${row.period}: заказ ${formatNumber(row.orderedShifts)}; выполнено ${formatNumber(row.completedShifts || 0)}`;
+  const isCurrentDay = currentDateKey && row.period === currentDateKey;
+  const cellClass = isCurrentDay ? 'point-year-heatmap-cell is-current-day' : 'point-year-heatmap-cell';
+  const currentDayAttribute = isCurrentDay ? ' aria-current="date"' : '';
+
+  return `<span class="${cellClass}" data-date="${escapeHtml(row.period)}" data-level="${escapeHtml(level)}"${currentDayAttribute} title="${escapeHtml(title)}"></span>`;
+}
+
+function pointYearHeatmapMonthGeometry(group) {
+  const leadingEmptyCount = weekdayOffsetFromMonday(group.rows[0].period);
+  const totalCells = leadingEmptyCount + group.rows.length;
+  const trailingEmptyCount = (7 - (totalCells % 7)) % 7;
+
+  return {
+    leadingEmptyCount,
+    trailingEmptyCount,
+    weekColumns: (totalCells + trailingEmptyCount) / 7
+  };
+}
+
+function renderPointYearHeatmapMonth(group, currentDateKey, maxValue) {
+  const geometry = pointYearHeatmapMonthGeometry(group);
+  const cells = group.rows.map((row) => renderPointYearHeatmapCell(row, currentDateKey, maxValue)).join('');
+  const monthWeekColumns = String(geometry.weekColumns);
+
+  return `<div class="point-year-heatmap-month" style="grid-column: span ${escapeHtml(monthWeekColumns)}; --point-year-heatmap-month-weeks: ${escapeHtml(monthWeekColumns)};">
+    <div class="point-year-heatmap-month-label">${escapeHtml(shortMonthLabelFromDateKey(group.rows[0].period))}</div>
+    <div class="point-year-heatmap-grid">${renderPointYearHeatmapEmptyCells(geometry.leadingEmptyCount)}${cells}${renderPointYearHeatmapEmptyCells(geometry.trailingEmptyCount)}</div>
+  </div>`;
+}
+
+function renderPointYearHeatmap(rows, currentDateValue = new Date(), currentUser) {
+  const detailPanelClass = renderPanelClass('year-heatmap-panel');
+  const heatmapRows = pointYearHeatmapRows(rows, currentDateValue);
+  const currentDateKey = currentDateKeyFromValue(currentDateValue);
+  const maxValue = Math.max(0, ...heatmapRows.map((row) => Number(row.orderedShifts) || 0));
+  const monthGroups = groupPointCalendarRowsByMonth(heatmapRows);
+  const totalWeekColumns = monthGroups.reduce(
+    (total, group) => total + pointYearHeatmapMonthGeometry(group).weekColumns,
+    0
+  );
+  const months = monthGroups
+    .map((group) => renderPointYearHeatmapMonth(group, currentDateKey, maxValue))
+    .join('');
+
+  const heatmap = renderMetricInfoScope({
+    className: 'metric-visual-output',
+    metricId: 'workplace-point.charts.year-heatmap',
+    currentUser,
+    content: `<div class="point-year-heatmap" aria-label="Дневная тепловая лента заказа за текущий год">
+    <div class="point-year-heatmap-months" style="--point-year-heatmap-week-columns: ${escapeHtml(totalWeekColumns || 63)};">${months}</div>
+  </div>`
+  });
+
+  return `<div class="${detailPanelClass}">
+  <h2>Дневная лента за год</h2>
+  ${heatmap}
+</div>`;
+}
+
 function renderWorkplacePointCharts(dashboard, currentUser) {
   const maxProfessionOrders = Math.max(0, ...dashboard.professionRows.map((row) => Number(row.orderedShifts) || 0));
+  const yearHeatmapHtml = Array.isArray(dashboard.yearHeatmapRows)
+    ? renderPointYearHeatmap(dashboard.yearHeatmapRows, dashboard.currentDate, currentUser)
+    : '';
 
   return `<div class="detail-grid point-detail-grid">
+  ${yearHeatmapHtml}
   ${renderPointCalendar(dashboard.dailyRows, dashboard.filters, dashboard.currentDate, currentUser)}
   ${renderMiniChart({
     title: 'Профессии точки',
@@ -10893,9 +11238,15 @@ function renderWorkplacePointDashboard({
     <p class="loading">Загружается</p>
   </section>
 </div>
-<div data-dashboard-fragment-url="${escapeHtml(workplacePointSectionUrl(filters, 'radius'))}">
+<div data-dashboard-fragment-url="${escapeHtml(workplacePointSectionUrl(filters, 'radius'))}" data-dashboard-fragment-defer="idle">
   <section class="section">
     <h2>База вокруг точки</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>
+<div data-dashboard-fragment-url="${escapeHtml(workplacePointSectionUrl(filters, 'year-heatmap'))}" data-dashboard-fragment-defer="visible">
+  <section class="section">
+    <h2>Дневная лента за год</h2>
     <p class="loading">Загружается</p>
   </section>
 </div>
@@ -10992,6 +11343,14 @@ function renderWorkplacePointDashboardSection({ dashboard, section, currentUser 
     return `<section class="section">
   ${renderMetricPanelHead('База вокруг точки', 'workplace-point.radius', currentUser)}
   ${renderWorkplacePointRadiusKpis({ ...dashboard.summary, filters: dashboard.filters }, currentUser)}
+</section>`;
+  }
+
+  if (section === 'year-heatmap') {
+    return `<section class="section">
+  <div class="detail-grid point-detail-grid">
+    ${renderPointYearHeatmap(dashboard.yearHeatmapRows || [], dashboard.currentDate, currentUser)}
+  </div>
 </section>`;
   }
 

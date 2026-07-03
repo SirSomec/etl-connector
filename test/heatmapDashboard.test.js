@@ -486,11 +486,19 @@ test('heatmap SQL uses actual order domain and bounded worker joins', async () =
 
   assert.equal(demandCall.query.includes('CROSS JOIN demand_bounds AS bounds'), true);
   assert.equal(demandCall.query.includes('INNER JOIN demand_bounds AS bounds ON bounds.points > 0'), false);
-  assert.match(demandCall.query, /active_workers AS \([\s\S]*CROSS JOIN demand_bounds AS bounds[\s\S]*WHERE bounds\.points > 0/s);
-  assert.equal(demandCall.query.includes('CROSS JOIN active_workers AS aw'), true);
+  assert.match(demandCall.query, /worker_candidates AS \([\s\S]*CROSS JOIN demand_bounds AS bounds[\s\S]*WHERE bounds\.points > 0/s);
+  assert.equal(demandCall.query.includes('CROSS JOIN active_workers AS aw'), false);
   assert.equal(demandCall.query.includes('INNER JOIN active_workers AS aw'), false);
-  assert.equal(demandCall.query.includes('aw.worker_coordinates[1] BETWEEN dp.lon'), true);
-  assert.equal(demandCall.query.includes('aw.worker_coordinates[2] BETWEEN dp.lat'), true);
+  assert.equal(demandCall.query.includes('demand_search_cells AS'), true);
+  assert.equal(demandCall.query.includes('abs(toInt32(lon_offsets.number) - 8) <='), true);
+  assert.equal(demandCall.query.includes('abs(toInt32(lat_offsets.number) - 8) <='), true);
+  assert.equal(demandCall.query.includes('candidate_users AS'), true);
+  assert.equal(demandCall.query.includes('active_worker_candidates AS'), true);
+  assert.match(demandCall.query, /INNER JOIN active_session_users AS au ON au\.user_id = wc\.user_id/);
+  assert.match(demandCall.query, /INNER JOIN active_worker_candidates AS awc\s+ON awc\.lon_cell = dsc\.lon_cell\s+AND awc\.lat_cell = dsc\.lat_cell/);
+  assert.match(demandCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
+  assert.equal(demandCall.query.includes('awc.worker_coordinates[1] BETWEEN dsc.lon'), true);
+  assert.equal(demandCall.query.includes('awc.worker_coordinates[2] BETWEEN dsc.lat'), true);
   assert.equal(demandCall.query.includes('greatCircleDistance'), true);
   assert.equal(demandCall.query.includes('<= 15000'), true);
   assert.equal(demandCall.query.includes('CROSS JOIN mg_workers AS worker'), false);

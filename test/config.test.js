@@ -41,6 +41,7 @@ test('loadConfig returns required values and safe defaults', () => {
     config.preload.storePath,
     path.join(process.cwd(), 'data', 'preload.sqlite')
   );
+  assert.equal(config.preload.clickhouseRequestTimeoutMs, 600000);
   assert.equal(
     config.requestReportStatus.storePath,
     path.join(process.cwd(), 'data', 'request-report-shift-statuses.json')
@@ -80,10 +81,14 @@ test('scheduled report numeric config validates ranges', () => {
 
 test('loadConfig accepts preload store path override', () => {
   const config = loadConfig(baseEnv({
-    PRELOAD_STORE_PATH: 'C:\\runtime\\preload.sqlite'
+    PRELOAD_STORE_PATH: 'C:\\runtime\\preload.sqlite',
+    CLICKHOUSE_REQUEST_TIMEOUT_MS: '120000',
+    PRELOAD_CLICKHOUSE_REQUEST_TIMEOUT_MS: '900000'
   }));
 
   assert.equal(config.preload.storePath, 'C:\\runtime\\preload.sqlite');
+  assert.equal(config.clickhouse.requestTimeoutMs, 120000);
+  assert.equal(config.preload.clickhouseRequestTimeoutMs, 900000);
 });
 
 test('loadConfig includes user activity store path', () => {

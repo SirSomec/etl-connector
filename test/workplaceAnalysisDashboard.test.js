@@ -305,6 +305,12 @@ test('loadWorkplaceAnalysisGigerDetails loads paged active gigers for a point an
     assert.equal(call.query.includes('mg_workers'), true);
     assert.equal(call.query.includes('mg_users'), true);
     assert.equal(call.query.includes('greatCircleDistance'), true);
+    assert.equal(call.query.includes('CROSS JOIN mg_workers AS worker'), false);
+    assert.equal(call.query.includes('candidate_gigers AS'), true);
+    assert.equal(call.query.includes('candidate_users AS'), true);
+    assert.match(call.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
+    assert.equal(call.query.includes('worker.location__coordinates[1] BETWEEN sw.lon -'), true);
+    assert.equal(call.query.includes('worker.location__coordinates[2] BETWEEN sw.lat -'), true);
     assert.equal(call.query.includes('wp-1'), false);
   }
 });
@@ -346,7 +352,12 @@ test('loadWorkplaceAnalysisGigerDetails filters attention workers by status and 
   assert.equal(detailsCall.params.param_active_from, '2026-06-04 00:00:00');
   assert.equal(detailsCall.params.param_active_to, '2026-06-12 00:00:00');
   assert.equal(detailsCall.params.param_status, 'ready');
-  assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), true);
+  assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), false);
+  assert.equal(detailsCall.query.includes('CROSS JOIN latest_workers'), false);
+  assert.equal(detailsCall.query.includes('candidate_gigers AS'), true);
+  assert.equal(detailsCall.query.includes('candidate_users AS'), true);
+  assert.match(detailsCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
+  assert.equal(detailsCall.query.includes("AND au.user_id != ''"), true);
   assert.equal(detailsCall.query.includes('status = {status:String}'), true);
   assert.equal(detailsCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
 });
@@ -1199,9 +1210,12 @@ test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before
 
   assert.equal(attentionCall.operation, 'workplace analysis attention points');
   assert.equal(attentionCall.query.includes('CROSS JOIN latest_workers'), false);
+  assert.equal(attentionCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), false);
   assert.equal(attentionCall.query.includes('point_search_cells AS'), true);
   assert.equal(attentionCall.query.includes('worker_candidates AS'), true);
+  assert.equal(attentionCall.query.includes('candidate_users AS'), true);
   assert.match(attentionCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = psc\.lon_cell\s+AND wc\.lat_cell = psc\.lat_cell/);
+  assert.match(attentionCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
 });
 
 test('loadWorkplaceAnalysisDashboardSection ignores stale attention cache without profession breakdown', async () => {
@@ -1670,9 +1684,14 @@ test('loadWorkplaceAnalysisDashboard adds cached active gigers and refreshes sta
   assert.equal(activeCall.query.includes('appmetrica_sessions'), true);
   assert.equal(activeCall.query.includes('mg_workers'), true);
   assert.equal(activeCall.query.includes("ifNull(worker.status, '') IN ('ready', 'worked', 'booked')"), true);
-  assert.equal(activeCall.query.includes('parseDateTimeBestEffortOrNull(session_start_datetime) >= now() - INTERVAL 30 DAY'), true);
-  assert.equal(activeCall.query.includes('aw.worker_coordinates[1] BETWEEN sw.workplace_coordinates[1] -'), true);
-  assert.equal(activeCall.query.includes('aw.worker_coordinates[2] BETWEEN sw.workplace_coordinates[2] -'), true);
+  assert.equal(activeCall.query.includes('parseDateTimeBestEffortOrNull(s.session_start_datetime) >= now() - INTERVAL 30 DAY'), true);
+  assert.equal(activeCall.query.includes('CROSS JOIN active_workers AS aw'), false);
+  assert.equal(activeCall.query.includes('candidate_users AS'), true);
+  assert.equal(activeCall.query.includes('point_worker_pairs AS'), true);
+  assert.match(activeCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = wsc\.lon_cell\s+AND wc\.lat_cell = wsc\.lat_cell/);
+  assert.match(activeCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
+  assert.equal(activeCall.query.includes('wc.worker_coordinates[1] BETWEEN wsc.lon -'), true);
+  assert.equal(activeCall.query.includes('wc.worker_coordinates[2] BETWEEN wsc.lat -'), true);
   assert.equal(activeCall.query.includes('greatCircleDistance'), true);
 });
 

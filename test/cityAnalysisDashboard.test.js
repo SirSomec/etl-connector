@@ -133,10 +133,17 @@ test('loadCityAnalysisGigerDetails loads paged geo base users with safe paramete
     assert.equal(call.params.param_limit, 20);
     assert.equal(call.params.param_offset, 20);
     assert.equal(call.query.includes('located_users'), true);
+    assert.equal(call.query.includes('city_search_cells AS'), true);
+    assert.equal(call.query.includes('CROSS JOIN city_workplaces AS cw'), false);
     assert.equal(call.query.includes('mg_workers'), true);
-    assert.equal(call.query.includes('mg_users'), true);
     assert.equal(call.query.includes('DROP TABLE'), false);
   }
+
+  const detailsCall = calls.find((call) => call.operation === 'city analysis giger details');
+  const totalCall = calls.find((call) => call.operation === 'city analysis giger details total');
+
+  assert.equal(detailsCall.query.includes('mg_users'), true);
+  assert.equal(totalCall.query.includes('mg_users'), false);
 });
 
 test('loadCityAnalysisGigerDetails supports app, booked, completed and dynamic-day metrics', async () => {
@@ -144,23 +151,35 @@ test('loadCityAnalysisGigerDetails supports app, booked, completed and dynamic-d
     {
       metric: 'app-active-users',
       expected: 'app_active_users',
-      extra: 'parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {from:DateTime}'
+      extra: 'parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {from:DateTime}',
+      join: 'INNER JOIN app_active_users AS app ON app.user_id = located.user_id',
+      workerJoin: 'INNER JOIN app_active_users AS metric_users ON metric_users.user_id = worker.user',
+      absent: ['app_30d_active_users AS', 'booked_users AS', 'completed_users AS']
     },
     {
       metric: 'booked-users',
       expected: 'booked_users',
-      extra: "ifNull(history.status, '') = 'booked'"
+      extra: "ifNull(history.status, '') = 'booked'",
+      join: 'INNER JOIN booked_users AS booked ON booked.user_id = located.user_id',
+      workerJoin: 'INNER JOIN booked_users AS metric_users ON metric_users.user_id = worker.user',
+      absent: ['app_active_users AS', 'app_30d_active_users AS', 'completed_users AS']
     },
     {
       metric: 'completed-users',
       expected: 'completed_users',
-      extra: 'is_successful_confirmed_shift = 1'
+      extra: 'is_successful_confirmed_shift = 1',
+      join: 'INNER JOIN completed_users AS completed ON completed.user_id = located.user_id',
+      workerJoin: 'INNER JOIN completed_users AS metric_users ON metric_users.user_id = worker.user',
+      absent: ['app_active_users AS', 'app_30d_active_users AS', 'booked_users AS']
     },
     {
       metric: 'dynamic-app-active-users',
       date: '2026-06-03',
       expected: 'app_active_users',
-      extra: "toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime)) = {metric_date:Date}"
+      extra: "toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime)) = {metric_date:Date}",
+      join: 'INNER JOIN app_active_users AS app ON app.user_id = located.user_id',
+      workerJoin: 'INNER JOIN app_active_users AS metric_users ON metric_users.user_id = worker.user',
+      absent: ['app_30d_active_users AS', 'booked_users AS', 'completed_users AS']
     }
   ];
 
@@ -193,9 +212,31 @@ test('loadCityAnalysisGigerDetails supports app, booked, completed and dynamic-d
     );
 
     const detailsCall = calls.find((call) => call.operation === 'city analysis giger details');
+    const totalCall = calls.find((call) => call.operation === 'city analysis giger details total');
 
     assert.equal(detailsCall.query.includes(scenario.expected), true);
     assert.equal(detailsCall.query.includes(scenario.extra), true);
+    assert.equal(detailsCall.query.includes(' IN (SELECT user_id FROM '), false);
+    assert.equal(detailsCall.query.includes(scenario.join), true);
+    assert.equal(detailsCall.query.includes(scenario.workerJoin), true);
+    assert.equal(totalCall.query.includes(scenario.workerJoin), true);
+    assert.equal(totalCall.query.includes('latest_worker_profiles AS'), false);
+
+    for (const absent of scenario.absent) {
+      assert.equal(detailsCall.query.includes(absent), false);
+      assert.equal(totalCall.query.includes(absent), false);
+    }
+
+    if (scenario.metric.includes('app')) {
+      assert.equal(
+        detailsCall.query.includes("INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')"),
+        false
+      );
+      assert.equal(
+        totalCall.query.includes("INNER JOIN located_users AS located ON located.user_id = ifNull(s.profile_id, '')"),
+        false
+      );
+    }
 
     if (scenario.date) {
       assert.equal(detailsCall.params.param_metric_date, scenario.date);
@@ -1051,6 +1092,9 @@ test('city geo base sections locate users from filtered demand workplaces', asyn
     assert.equal(call.query.includes('raw_points < 100'), true);
     assert.equal(call.query.includes('bounds.lon_margin'), true);
     assert.equal(call.query.includes('bounds.lat_margin'), true);
+    assert.equal(call.query.includes('city_search_cells AS'), true);
+    assert.match(call.query, /INNER JOIN candidate_workers AS worker\s+ON worker\.lon_cell = csc\.lon_cell\s+AND worker\.lat_cell = csc\.lat_cell/);
+    assert.equal(call.query.includes('CROSS JOIN city_workplaces AS cw'), false);
     assert.doesNotMatch(call.query, /bounds\.min_lon\s*-\s*1\b/);
     assert.doesNotMatch(call.query, /bounds\.min_lat\s*-\s*0\.25\b/);
   }
@@ -1232,10 +1276,12 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
     summaryCall.query,
     /candidate_workers AS \([\s\S]*FROM mg_workers AS worker\s+CROSS JOIN city_bounds AS bounds\s+WHERE/s
   );
+  assert.match(summaryCall.query, /city_search_cells AS \(/);
   assert.match(
     summaryCall.query,
-    /located_users AS \([\s\S]*FROM candidate_workers AS worker\s+CROSS JOIN city_workplaces AS cw/s
+    /located_users AS \([\s\S]*FROM city_search_cells AS csc\s+INNER JOIN candidate_workers AS worker\s+ON worker\.lon_cell = csc\.lon_cell\s+AND worker\.lat_cell = csc\.lat_cell/s
   );
+  assert.equal(summaryCall.query.includes('CROSS JOIN city_workplaces AS cw'), false);
   assert.match(
     summaryCall.query,
     /worker\.location__coordinates\[1\]\s+BETWEEN\s+bounds\.min_lon\s*-\s*bounds\.lon_margin\s+AND\s+bounds\.max_lon\s*\+\s*bounds\.lon_margin/s
@@ -1244,8 +1290,8 @@ test('loadCityAnalysisDashboard queries city datasets with safe parameters', asy
     summaryCall.query,
     /worker\.location__coordinates\[2\]\s+BETWEEN\s+bounds\.min_lat\s*-\s*bounds\.lat_margin\s+AND\s+bounds\.max_lat\s*\+\s*bounds\.lat_margin/s
   );
-  assert.equal(summaryCall.query.includes('worker.location__coordinates[1] BETWEEN cw.workplace_coordinates[1] -'), true);
-  assert.equal(summaryCall.query.includes('worker.location__coordinates[2] BETWEEN cw.workplace_coordinates[2] -'), true);
+  assert.equal(summaryCall.query.includes('worker.location__coordinates[1] BETWEEN csc.lon -'), true);
+  assert.equal(summaryCall.query.includes('worker.location__coordinates[2] BETWEEN csc.lat -'), true);
   assert.equal(summaryCall.query.includes('greatCircleDistance'), true);
   assert.equal(summaryCall.query.includes('<= 15000'), true);
   assert.equal(summaryCall.query.includes('appmetrica_sessions'), true);

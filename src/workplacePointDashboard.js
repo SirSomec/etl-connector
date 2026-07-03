@@ -1133,57 +1133,74 @@ function professionsQuery(whereSql) {
 
 function radiusWorkersQuery() {
   return `WITH workplace AS (
-    SELECT location__coordinates AS workplace_coordinates
+    SELECT
+      location__coordinates AS workplace_coordinates,
+      location__coordinates[1] AS lon,
+      location__coordinates[2] AS lat
     FROM mg_workplaces
     WHERE _id = {workplace_id:String}
       AND length(location__coordinates) >= 2
+      AND location__coordinates[1] BETWEEN -180 AND 180
+      AND location__coordinates[2] BETWEEN -90 AND 90
     LIMIT 1
   ),
   radii AS (
-    SELECT arrayJoin([5, 10, 15, 20]) AS radius_km
-  ),
-  active_workers AS (
     SELECT
-      _id AS worker_id,
-      user AS user_id,
-      location__coordinates AS worker_coordinates
-    FROM mg_workers
-    WHERE length(location__coordinates) >= 2
-      AND ifNull(deleted, 0) = 0
-      AND ifNull(status, '') IN ('ready', 'worked', 'booked')
+      arrayJoin([5, 10, 15, 20]) AS radius_km,
+      1 AS join_key
+  ),
+  worker_candidates AS (
+    SELECT
+      worker._id AS worker_id,
+      ifNull(worker.user, '') AS user_id,
+      worker.location__coordinates AS worker_coordinates,
+      greatCircleDistance(
+        w.lon,
+        w.lat,
+        worker.location__coordinates[1],
+        worker.location__coordinates[2]
+      ) AS distance_m
+    FROM mg_workers AS worker
+    INNER JOIN workplace AS w ON 1 = 1
+    WHERE length(worker.location__coordinates) >= 2
+      AND ifNull(worker.deleted, 0) = 0
+      AND ifNull(worker.status, '') IN ('ready', 'worked', 'booked')
+      AND ifNull(worker.user, '') != ''
+      AND worker.location__coordinates[1] BETWEEN -180 AND 180
+      AND worker.location__coordinates[2] BETWEEN -90 AND 90
+      AND worker.location__coordinates[1] BETWEEN w.lon - (20000 / (111320 * greatest(abs(cos(w.lat * pi() / 180)), 0.2))) AND w.lon + (20000 / (111320 * greatest(abs(cos(w.lat * pi() / 180)), 0.2)))
+      AND worker.location__coordinates[2] BETWEEN w.lat - (20000 / 111000) AND w.lat + (20000 / 111000)
+      AND greatCircleDistance(w.lon, w.lat, worker.location__coordinates[1], worker.location__coordinates[2]) <= 20000
+  ),
+  candidate_users AS (
+    SELECT DISTINCT user_id
+    FROM worker_candidates
   ),
   active_session_users AS (
-    SELECT DISTINCT ifNull(profile_id, '') AS user_id
-    FROM appmetrica_sessions
-    WHERE ifNull(profile_id, '') != ''
-      AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_session_from:DateTime}
-      AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_session_to:DateTime}
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    INNER JOIN candidate_users AS cu
+      ON cu.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_session_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_session_to:DateTime}
+  ),
+  candidate_distances AS (
+    SELECT
+      wc.worker_id AS worker_id,
+      wc.distance_m AS distance_m,
+      if(asu.user_id != '', 1, 0) AS has_active_session,
+      1 AS join_key
+    FROM worker_candidates AS wc
+    LEFT JOIN active_session_users AS asu ON asu.user_id = wc.user_id
   )
   SELECT
     r.radius_km AS radius_km,
-    uniqExactIf(
-      aw.worker_id,
-      greatCircleDistance(
-        w.workplace_coordinates[1],
-        w.workplace_coordinates[2],
-        aw.worker_coordinates[1],
-        aw.worker_coordinates[2]
-      ) <= r.radius_km * 1000
-    ) AS workers,
-    uniqExactIf(
-      aw.worker_id,
-      greatCircleDistance(
-        w.workplace_coordinates[1],
-        w.workplace_coordinates[2],
-        aw.worker_coordinates[1],
-        aw.worker_coordinates[2]
-      ) <= r.radius_km * 1000
-      AND asu.user_id != ''
-    ) AS active_session_workers
+    uniqExactIf(cd.worker_id, cd.distance_m <= r.radius_km * 1000) AS workers,
+    uniqExactIf(cd.worker_id, cd.distance_m <= r.radius_km * 1000 AND cd.has_active_session = 1) AS active_session_workers
   FROM radii AS r
   CROSS JOIN workplace AS w
-  CROSS JOIN active_workers AS aw
-  LEFT JOIN active_session_users AS asu ON aw.user_id = asu.user_id
+  LEFT JOIN candidate_distances AS cd ON cd.join_key = r.join_key
   GROUP BY r.radius_km
   ORDER BY r.radius_km
   FORMAT JSONEachRow`;
@@ -1297,24 +1314,22 @@ function workplacePointShiftGigerDetailsCtes(input, whereSql) {
 
 function workplacePointRadiusGigerDetailsCtes(input) {
   const activeWhere = WORKPLACE_POINT_GIGER_METRICS[input.metric].activeOnly
-    ? '\n      AND user_id IN (SELECT user_id FROM active_session_users)'
+    ? "\n    WHERE au.user_id != ''"
     : '';
 
   return `workplace AS (
-    SELECT location__coordinates AS workplace_coordinates
+    SELECT
+      location__coordinates AS workplace_coordinates,
+      location__coordinates[1] AS lon,
+      location__coordinates[2] AS lat
     FROM mg_workplaces
     WHERE _id = {workplace_id:String}
       AND length(location__coordinates) >= 2
+      AND location__coordinates[1] BETWEEN -180 AND 180
+      AND location__coordinates[2] BETWEEN -90 AND 90
     LIMIT 1
   ),
-  active_session_users AS (
-    SELECT DISTINCT ifNull(profile_id, '') AS user_id
-    FROM appmetrica_sessions
-    WHERE ifNull(profile_id, '') != ''
-      AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_session_from:DateTime}
-      AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_session_to:DateTime}
-  ),
-  raw_gigers AS (
+  candidate_gigers AS (
     SELECT
       worker.user AS user_id,
       worker._id AS worker_id,
@@ -1322,28 +1337,46 @@ function workplacePointRadiusGigerDetailsCtes(input) {
       ifNull(u.phone, '') AS phone,
       ifNull(worker.status, '') AS status,
       greatCircleDistance(
-        workplace.workplace_coordinates[1],
-        workplace.workplace_coordinates[2],
+        workplace.lon,
+        workplace.lat,
         worker.location__coordinates[1],
         worker.location__coordinates[2]
       ) AS distance_m
-    FROM workplace
-    CROSS JOIN mg_workers AS worker
+    FROM mg_workers AS worker
+    INNER JOIN workplace ON 1 = 1
     LEFT JOIN mg_users AS u ON worker.user = u._id
     WHERE length(worker.location__coordinates) >= 2
       AND ifNull(worker.deleted, 0) = 0
       AND ifNull(worker.status, '') IN ('ready', 'worked', 'booked')
       AND ifNull(worker.user, '') != ''
+      AND worker.location__coordinates[1] BETWEEN -180 AND 180
+      AND worker.location__coordinates[2] BETWEEN -90 AND 90
+      AND worker.location__coordinates[1] BETWEEN workplace.lon - ({radius_m:UInt64} / (111320 * greatest(abs(cos(workplace.lat * pi() / 180)), 0.2))) AND workplace.lon + ({radius_m:UInt64} / (111320 * greatest(abs(cos(workplace.lat * pi() / 180)), 0.2)))
+      AND worker.location__coordinates[2] BETWEEN workplace.lat - ({radius_m:UInt64} / 111000) AND workplace.lat + ({radius_m:UInt64} / 111000)
+      AND greatCircleDistance(workplace.lon, workplace.lat, worker.location__coordinates[1], worker.location__coordinates[2]) <= {radius_m:UInt64}
+  ),
+  candidate_users AS (
+    SELECT DISTINCT user_id
+    FROM candidate_gigers
+  ),
+  active_session_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    INNER JOIN candidate_users AS cu
+      ON cu.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_session_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_session_to:DateTime}
   ),
   eligible_gigers AS (
     SELECT
-      user_id,
-      worker_id,
-      full_name,
-      phone,
-      status
-    FROM raw_gigers
-    WHERE distance_m <= {radius_m:UInt64}${activeWhere}
+      cg.user_id AS user_id,
+      cg.worker_id AS worker_id,
+      cg.full_name AS full_name,
+      cg.phone AS phone,
+      cg.status AS status
+    FROM candidate_gigers AS cg
+    LEFT JOIN active_session_users AS au ON au.user_id = cg.user_id${activeWhere}
   )`;
 }
 

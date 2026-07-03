@@ -3136,6 +3136,10 @@ function start(options = {}) {
   } = options;
   const config = loadConfigFn(env);
   const client = new ClientClass(config.clickhouse);
+  const preloadClient = new ClientClass({
+    ...config.clickhouse,
+    requestTimeoutMs: config.preload.clickhouseRequestTimeoutMs || 600000
+  });
   const activeGigersCache = null;
   const cityAnalysisCache = null;
   const dashboardSectionCache = null;
@@ -3233,7 +3237,7 @@ function start(options = {}) {
 
   try {
     preloadService = createPreloadServiceFn({
-      client,
+      client: preloadClient,
       storePath: config.preload.storePath,
       activeGigersCache,
       sanitizeError: (error) => sanitizeForResponse(error && error.message, config)

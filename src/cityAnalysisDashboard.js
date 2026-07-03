@@ -955,39 +955,65 @@ function cityBoundsCte() {
   )`;
 }
 
-function candidateWorkersCte() {
+function candidateWorkersCte(workerUserJoin = '') {
   return `candidate_workers AS (
     SELECT
       worker.user AS user_id,
       worker.status AS status,
-      worker.location__coordinates AS location__coordinates
+      worker.location__coordinates AS location__coordinates,
+      toInt32(floor(worker.location__coordinates[1] / 0.1)) AS lon_cell,
+      toInt32(floor(worker.location__coordinates[2] / 0.1)) AS lat_cell
     FROM mg_workers AS worker
+    ${workerUserJoin}
     CROSS JOIN city_bounds AS bounds
     WHERE bounds.robust_points > 0
       AND ifNull(worker.user, '') != ''
       AND length(worker.location__coordinates) >= 2
+      AND worker.location__coordinates[1] BETWEEN -180 AND 180
+      AND worker.location__coordinates[2] BETWEEN -90 AND 90
       AND worker.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
       AND worker.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
   )`;
 }
 
 function locatedUsersCte() {
-  return `located_users AS (
+  return `city_search_cells AS (
+    SELECT
+      cw.workplace_coordinates AS workplace_coordinates,
+      cw.workplace_coordinates[1] AS lon,
+      cw.workplace_coordinates[2] AS lat,
+      toInt32(floor(cw.workplace_coordinates[1] / 0.1)) + toInt32(lon_offsets.number) - 8 AS lon_cell,
+      toInt32(floor(cw.workplace_coordinates[2] / 0.1)) + toInt32(lat_offsets.number) - 8 AS lat_cell
+    FROM city_workplaces AS cw
+    CROSS JOIN numbers(17) AS lon_offsets
+    CROSS JOIN numbers(17) AS lat_offsets
+    WHERE abs(toInt32(lon_offsets.number) - 8) <= least(
+        8,
+        greatest(
+          1,
+          toInt32(ceil((15000 / (111320 * greatest(abs(cos(cw.workplace_coordinates[2] * pi() / 180)), 0.2))) / 0.1)) + 1
+        )
+      )
+      AND abs(toInt32(lat_offsets.number) - 8) <= 3
+  ),
+  located_users AS (
     SELECT
       worker.user_id AS user_id,
       max(ifNull(worker.status, '') IN ('ready', 'booked', 'worked')) AS is_ready_base,
       max(ifNull(worker.status, '') = 'ready') AS is_ready_status,
       max(ifNull(worker.status, '') = 'booked') AS is_booked_status,
       max(ifNull(worker.status, '') = 'worked') AS is_worked_status
-    FROM candidate_workers AS worker
-    CROSS JOIN city_workplaces AS cw
-    WHERE worker.location__coordinates[1] BETWEEN cw.workplace_coordinates[1] - (15000 / (111320 * greatest(abs(cos(cw.workplace_coordinates[2] * pi() / 180)), 0.2)))
-      AND cw.workplace_coordinates[1] + (15000 / (111320 * greatest(abs(cos(cw.workplace_coordinates[2] * pi() / 180)), 0.2)))
-      AND worker.location__coordinates[2] BETWEEN cw.workplace_coordinates[2] - (15000 / 111000)
-      AND cw.workplace_coordinates[2] + (15000 / 111000)
+    FROM city_search_cells AS csc
+    INNER JOIN candidate_workers AS worker
+      ON worker.lon_cell = csc.lon_cell
+      AND worker.lat_cell = csc.lat_cell
+    WHERE worker.location__coordinates[1] BETWEEN csc.lon - (15000 / (111320 * greatest(abs(cos(csc.lat * pi() / 180)), 0.2)))
+      AND csc.lon + (15000 / (111320 * greatest(abs(cos(csc.lat * pi() / 180)), 0.2)))
+      AND worker.location__coordinates[2] BETWEEN csc.lat - (15000 / 111000)
+      AND csc.lat + (15000 / 111000)
       AND greatCircleDistance(
-        cw.workplace_coordinates[1],
-        cw.workplace_coordinates[2],
+        csc.lon,
+        csc.lat,
         worker.location__coordinates[1],
         worker.location__coordinates[2]
       ) <= 15000
@@ -1358,33 +1384,33 @@ const CITY_GIGER_METRICS = {
   'worked-status-located-users': { label: 'worked', condition: 'located.is_worked_status = 1' },
   'app-active-users': {
     label: 'Входили в приложение',
-    condition: 'located.user_id IN (SELECT user_id FROM app_active_users)'
+    condition: '1 = 1'
   },
   'app-30d-active-users': {
     label: 'Активная за 30 дней',
-    condition: 'located.user_id IN (SELECT user_id FROM app_30d_active_users)'
+    condition: '1 = 1'
   },
   'booked-users': {
     label: 'Откликались',
-    condition: 'located.user_id IN (SELECT user_id FROM booked_users)'
+    condition: '1 = 1'
   },
   'completed-users': {
     label: 'Завершали',
-    condition: 'located.user_id IN (SELECT user_id FROM completed_users)'
+    condition: '1 = 1'
   },
   'dynamic-app-active-users': {
     label: 'Входили в приложение',
-    condition: 'located.user_id IN (SELECT user_id FROM app_active_users)',
+    condition: '1 = 1',
     dynamic: true
   },
   'dynamic-booked-users': {
     label: 'Откликались',
-    condition: 'located.user_id IN (SELECT user_id FROM booked_users)',
+    condition: '1 = 1',
     dynamic: true
   },
   'dynamic-completed-users': {
     label: 'Завершали',
-    condition: 'located.user_id IN (SELECT user_id FROM completed_users)',
+    condition: '1 = 1',
     dynamic: true
   }
 };
@@ -1448,6 +1474,35 @@ function cityGigerAppActiveUsersCte(input) {
   return appActiveUsersCte();
 }
 
+function cityGigerDetailsAppActiveUsersCte(input) {
+  if (input.metric === 'dynamic-app-active-users') {
+    return `app_active_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    WHERE ifNull(s.profile_id, '') != ''
+      AND toDate(parseDateTimeBestEffortOrNull(s.session_start_datetime)) = {metric_date:Date}
+  )`;
+  }
+
+  return `app_active_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {to:DateTime}
+  )`;
+}
+
+function cityGigerDetailsApp30dActiveUsersCte() {
+  return `app_30d_active_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_30d_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_30d_to:DateTime}
+  )`;
+}
+
 function cityGigerBookedUsersCte(input) {
   const dateWhere = input.metric === 'dynamic-booked-users' ? '\n      AND fo.period = toString({metric_date:Date})' : '';
 
@@ -1483,6 +1538,66 @@ function cityGigerCompletedUsersCte(input) {
   )`;
 }
 
+function cityGigerMetricCtes(input) {
+  if (input.metric === 'app-active-users' || input.metric === 'dynamic-app-active-users') {
+    return cityGigerDetailsAppActiveUsersCte(input);
+  }
+
+  if (input.metric === 'app-30d-active-users') {
+    return cityGigerDetailsApp30dActiveUsersCte();
+  }
+
+  if (input.metric === 'booked-users' || input.metric === 'dynamic-booked-users') {
+    return cityGigerBookedUsersCte(input);
+  }
+
+  if (input.metric === 'completed-users' || input.metric === 'dynamic-completed-users') {
+    return cityGigerCompletedUsersCte(input);
+  }
+
+  return '';
+}
+
+function cityGigerMetricJoin(input) {
+  if (input.metric === 'app-active-users' || input.metric === 'dynamic-app-active-users') {
+    return '\n    INNER JOIN app_active_users AS app ON app.user_id = located.user_id';
+  }
+
+  if (input.metric === 'app-30d-active-users') {
+    return '\n    INNER JOIN app_30d_active_users AS app30 ON app30.user_id = located.user_id';
+  }
+
+  if (input.metric === 'booked-users' || input.metric === 'dynamic-booked-users') {
+    return '\n    INNER JOIN booked_users AS booked ON booked.user_id = located.user_id';
+  }
+
+  if (input.metric === 'completed-users' || input.metric === 'dynamic-completed-users') {
+    return '\n    INNER JOIN completed_users AS completed ON completed.user_id = located.user_id';
+  }
+
+  return '';
+}
+
+function cityGigerMetricWorkerJoin(input) {
+  if (input.metric === 'app-active-users' || input.metric === 'dynamic-app-active-users') {
+    return 'INNER JOIN app_active_users AS metric_users ON metric_users.user_id = worker.user';
+  }
+
+  if (input.metric === 'app-30d-active-users') {
+    return 'INNER JOIN app_30d_active_users AS metric_users ON metric_users.user_id = worker.user';
+  }
+
+  if (input.metric === 'booked-users' || input.metric === 'dynamic-booked-users') {
+    return 'INNER JOIN booked_users AS metric_users ON metric_users.user_id = worker.user';
+  }
+
+  if (input.metric === 'completed-users' || input.metric === 'dynamic-completed-users') {
+    return 'INNER JOIN completed_users AS metric_users ON metric_users.user_id = worker.user';
+  }
+
+  return '';
+}
+
 function cityGigerProfilesCte() {
   return `latest_worker_profiles AS (
     SELECT
@@ -1511,33 +1626,53 @@ function cityGigerProfilesCte() {
   )`;
 }
 
-function cityGigerDetailsStatusWhere(input) {
-  return input.status === '' ? '' : '\n      AND profile.status = {status:String}';
+function cityGigerDetailsStatusWhere(input, profileAlias = 'profile') {
+  return input.status === '' ? '' : `\n      AND ${profileAlias}.status = {status:String}`;
 }
 
-function cityGigerDetailsCtes(input, whereSql) {
-  const condition = CITY_GIGER_METRICS[input.metric].condition;
+function cityGigerDetailsBaseCtes(input, whereSql, options = {}) {
+  const metricCtes = cityGigerMetricCtes(input);
+  const includeProfiles = options.includeProfiles || input.status !== '';
 
   return `${filteredOrdersCte(whereSql)},
   ${demandCityWorkplacesCtes()},
   ${cityBoundsCte()},
-  ${candidateWorkersCte()},
-  ${locatedUsersCte()},
-  ${cityGigerAppActiveUsersCte(input)},
-  ${app30dActiveUsersCte()},
-  ${cityGigerBookedUsersCte(input)},
-  ${cityGigerCompletedUsersCte(input)},
-  ${cityGigerProfilesCte()},
+  ${metricCtes === '' ? '' : `${metricCtes},
+  `}${candidateWorkersCte(cityGigerMetricWorkerJoin(input))},
+  ${locatedUsersCte()}${includeProfiles ? `,
+  ${cityGigerProfilesCte()}` : ''}`;
+}
+
+function cityGigerEligibleIdsCte(input) {
+  const condition = CITY_GIGER_METRICS[input.metric].condition;
+  const statusJoin = input.status === ''
+    ? ''
+    : '\n    INNER JOIN latest_worker_profiles AS filter_profile ON filter_profile.user_id = located.user_id';
+
+  return `eligible_giger_ids AS (
+    SELECT
+      located.user_id AS user_id
+    FROM located_users AS located${cityGigerMetricJoin(input)}${statusJoin}
+    WHERE ${condition}${cityGigerDetailsStatusWhere(input, 'filter_profile')}
+  )`;
+}
+
+function cityGigerDetailsIdsCtes(input, whereSql, options = {}) {
+  return `${cityGigerDetailsBaseCtes(input, whereSql, options)},
+  ${cityGigerEligibleIdsCte(input)}`;
+}
+
+function cityGigerDetailsCtes(input, whereSql) {
+  return `${cityGigerDetailsIdsCtes(input, whereSql, { includeProfiles: true })},
   eligible_gigers AS (
     SELECT
-      located.user_id AS user_id,
+      ids.user_id AS user_id,
       ifNull(profile.worker_id, '') AS worker_id,
       ifNull(profile.full_name, '') AS full_name,
       ifNull(profile.phone, '') AS phone,
       ifNull(profile.status, '') AS status
-    FROM located_users AS located
-    LEFT JOIN latest_worker_profiles AS profile ON profile.user_id = located.user_id
-    WHERE ${condition}${cityGigerDetailsStatusWhere(input)}
+    FROM eligible_giger_ids AS ids
+    LEFT JOIN latest_worker_profiles AS profile ON profile.user_id = ids.user_id
   )`;
 }
 
@@ -1546,9 +1681,9 @@ function cityGigerDetailsLimitClause(input) {
 }
 
 function cityGigerDetailsTotalQuery(input, whereSql) {
-  return `WITH ${cityGigerDetailsCtes(input, whereSql)}
+  return `WITH ${cityGigerDetailsIdsCtes(input, whereSql, { includeProfiles: input.status !== '' })}
   SELECT count() AS total_gigers
-  FROM eligible_gigers
+  FROM eligible_giger_ids
   FORMAT JSONEachRow`;
 }
 

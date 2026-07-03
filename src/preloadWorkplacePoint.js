@@ -285,56 +285,105 @@ FORMAT JSONEachRow`,
     radiusRollups: `WITH hot_workplaces AS (
   SELECT
     w._id AS workplace_id,
-    w.location__coordinates[1] AS workplace_lat,
-    w.location__coordinates[2] AS workplace_lon
+    w.location__coordinates[1] AS workplace_lon,
+    w.location__coordinates[2] AS workplace_lat
   FROM mg_workplaces AS w
   WHERE length({workplace_ids:Array(String)}) > 0
     AND w._id IN {workplace_ids:Array(String)}
     AND length(w.location__coordinates) >= 2
+    AND w.location__coordinates[1] BETWEEN -180 AND 180
+    AND w.location__coordinates[2] BETWEEN -90 AND 90
 ),
 radii AS (
   SELECT arrayJoin([5, 10, 15, 20]) AS radius_km
 ),
-active_workers AS (
+point_bounds AS (
+  SELECT
+    count() AS points,
+    min(workplace_lon) AS min_lon,
+    max(workplace_lon) AS max_lon,
+    min(workplace_lat) AS min_lat,
+    max(workplace_lat) AS max_lat,
+    20000 / 111000 AS lat_margin,
+    20000 / (111320 * greatest(abs(cos(((min(workplace_lat) + max(workplace_lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
+  FROM hot_workplaces
+),
+workplace_search_cells AS (
+  SELECT
+    w.workplace_id AS workplace_id,
+    w.workplace_lon AS workplace_lon,
+    w.workplace_lat AS workplace_lat,
+    toInt32(floor(w.workplace_lon / 0.1)) + toInt32(lon_offsets.number) - 10 AS lon_cell,
+    toInt32(floor(w.workplace_lat / 0.1)) + toInt32(lat_offsets.number) - 10 AS lat_cell
+  FROM hot_workplaces AS w
+  CROSS JOIN numbers(21) AS lon_offsets
+  CROSS JOIN numbers(21) AS lat_offsets
+),
+worker_candidates AS (
   SELECT
     aw._id AS worker_id,
     ifNull(aw.user, '') AS user_id,
-    aw.location__coordinates[1] AS worker_lat,
-    aw.location__coordinates[2] AS worker_lon
+    aw.location__coordinates[1] AS worker_lon,
+    aw.location__coordinates[2] AS worker_lat,
+    toInt32(floor(aw.location__coordinates[1] / 0.1)) AS lon_cell,
+    toInt32(floor(aw.location__coordinates[2] / 0.1)) AS lat_cell
   FROM mg_workers AS aw
-  WHERE length(aw.location__coordinates) >= 2
+  CROSS JOIN point_bounds AS bounds
+  WHERE bounds.points > 0
+    AND length(aw.location__coordinates) >= 2
     AND ifNull(aw.deleted, 0) = 0
     AND ifNull(aw.status, '') IN ('ready', 'worked', 'booked')
+    AND ifNull(aw.user, '') != ''
+    AND aw.location__coordinates[1] BETWEEN -180 AND 180
+    AND aw.location__coordinates[2] BETWEEN -90 AND 90
+    AND aw.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
+    AND aw.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
+),
+worker_distance_candidates AS (
+  SELECT
+    wsc.workplace_id AS workplace_id,
+    wc.worker_id AS worker_id,
+    wc.user_id AS user_id,
+    greatCircleDistance(
+      wsc.workplace_lon,
+      wsc.workplace_lat,
+      wc.worker_lon,
+      wc.worker_lat
+    ) AS distance_m
+  FROM workplace_search_cells AS wsc
+  INNER JOIN worker_candidates AS wc
+    ON wc.lon_cell = wsc.lon_cell
+    AND wc.lat_cell = wsc.lat_cell
+  WHERE wc.worker_lon BETWEEN wsc.workplace_lon - (20000 / (111320 * greatest(abs(cos(wsc.workplace_lat * pi() / 180)), 0.2))) AND wsc.workplace_lon + (20000 / (111320 * greatest(abs(cos(wsc.workplace_lat * pi() / 180)), 0.2)))
+    AND wc.worker_lat BETWEEN wsc.workplace_lat - (20000 / 111000) AND wsc.workplace_lat + (20000 / 111000)
+    AND greatCircleDistance(
+      wsc.workplace_lon,
+      wsc.workplace_lat,
+      wc.worker_lon,
+      wc.worker_lat
+    ) <= 20.0 * 1000
+),
+candidate_users AS (
+  SELECT DISTINCT user_id
+  FROM worker_distance_candidates
 ),
 active_session_users AS (
-  SELECT DISTINCT ifNull(profile_id, '') AS user_id
-  FROM appmetrica_sessions
-  WHERE ifNull(profile_id, '') != ''
-    AND parseDateTimeBestEffortOrNull(session_start_datetime) >= {active_session_from:DateTime}
-    AND parseDateTimeBestEffortOrNull(session_start_datetime) < {active_session_to:DateTime}
+  SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+  FROM appmetrica_sessions AS s
+  INNER JOIN candidate_users AS cu
+    ON cu.user_id = ifNull(s.profile_id, '')
+  WHERE ifNull(s.profile_id, '') != ''
+    AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_session_from:DateTime}
+    AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_session_to:DateTime}
 ),
 candidate_distances AS (
   SELECT
-    w.workplace_id AS workplace_id,
-    aw.worker_id AS worker_id,
+    wdc.workplace_id AS workplace_id,
+    wdc.worker_id AS worker_id,
     if(asu.user_id != '', 1, 0) AS has_active_session,
-    greatCircleDistance(
-      w.workplace_lat,
-      w.workplace_lon,
-      aw.worker_lat,
-      aw.worker_lon
-    ) AS distance_m
-  FROM hot_workplaces AS w
-  CROSS JOIN active_workers AS aw
-  LEFT JOIN active_session_users AS asu ON aw.user_id = asu.user_id
-  WHERE abs(aw.worker_lat - w.workplace_lat) <= 20.0 / 111.0
-    AND abs(aw.worker_lon - w.workplace_lon) <= 20.0 / greatest(111.0 * cos(w.workplace_lat * pi() / 180), 0.01)
-    AND greatCircleDistance(
-      w.workplace_lat,
-      w.workplace_lon,
-      aw.worker_lat,
-      aw.worker_lon
-    ) <= 20.0 * 1000
+    wdc.distance_m AS distance_m
+  FROM worker_distance_candidates AS wdc
+  LEFT JOIN active_session_users AS asu ON wdc.user_id = asu.user_id
 )
 SELECT
   w.workplace_id,

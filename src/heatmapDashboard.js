@@ -491,12 +491,18 @@ function demandPointsQuery(whereSql, filters) {
       15000 / (111320 * greatest(abs(cos(((min(lat) + max(lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
     FROM demand_points
   ),
-  app_active_users AS (
-    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
-    FROM appmetrica_sessions AS s
-    WHERE ifNull(s.profile_id, '') != ''
-      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_from:DateTime}
-      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_to:DateTime}
+  demand_search_cells AS (
+    SELECT
+      dp.workplace_id AS workplace_id,
+      dp.lon AS lon,
+      dp.lat AS lat,
+      toInt32(floor(dp.lon / 0.1)) + toInt32(lon_offsets.number) - 8 AS lon_cell,
+      toInt32(floor(dp.lat / 0.1)) + toInt32(lat_offsets.number) - 8 AS lat_cell
+    FROM demand_points AS dp
+    CROSS JOIN numbers(17) AS lon_offsets
+    CROSS JOIN numbers(17) AS lat_offsets
+    WHERE abs(toInt32(lon_offsets.number) - 8) <= least(8, greatest(1, toInt32(ceil((15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) / 0.1)) + 1))
+      AND abs(toInt32(lat_offsets.number) - 8) <= 3
   ),
   worker_rows AS (
     SELECT
@@ -505,7 +511,6 @@ function demandPointsQuery(whereSql, filters) {
       worker.location__coordinates AS worker_coordinates,
       ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
     FROM mg_workers AS worker
-    INNER JOIN app_active_users AS active ON active.user_id = worker.user
     LEFT JOIN mg_users AS u ON worker.user = u._id
     WHERE ifNull(worker.user, '') != ''
       AND ifNull(worker.deleted, 0) = 0
@@ -520,14 +525,38 @@ function demandPointsQuery(whereSql, filters) {
     FROM worker_rows
     GROUP BY user_id
   ),
-  active_workers AS (
+  worker_candidates AS (
     SELECT
       user_id AS user_id,
-      worker_coordinates AS worker_coordinates
+      worker_coordinates AS worker_coordinates,
+      toInt32(floor(worker_coordinates[1] / 0.1)) AS lon_cell,
+      toInt32(floor(worker_coordinates[2] / 0.1)) AS lat_cell
     FROM latest_workers
     CROSS JOIN demand_bounds AS bounds
     WHERE bounds.points > 0
       AND ${activeWorkersWhere(filters)}
+  ),
+  candidate_users AS (
+    SELECT DISTINCT user_id
+    FROM worker_candidates
+  ),
+  active_session_users AS (
+    SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
+    FROM appmetrica_sessions AS s
+    INNER JOIN candidate_users AS cu
+      ON cu.user_id = ifNull(s.profile_id, '')
+    WHERE ifNull(s.profile_id, '') != ''
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_from:DateTime}
+      AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_to:DateTime}
+  ),
+  active_worker_candidates AS (
+    SELECT
+      wc.user_id AS user_id,
+      wc.worker_coordinates AS worker_coordinates,
+      wc.lon_cell AS lon_cell,
+      wc.lat_cell AS lat_cell
+    FROM worker_candidates AS wc
+    INNER JOIN active_session_users AS au ON au.user_id = wc.user_id
   ),
   influence_pairs AS (
     SELECT
@@ -537,23 +566,25 @@ function demandPointsQuery(whereSql, filters) {
       multiIf(distance_m <= 5000, 1.0, distance_m <= 10000, 0.5, distance_m <= 15000, 0.25, 0.0) AS influence_weight
     FROM (
       SELECT
-        dp.workplace_id AS workplace_id,
-        aw.user_id AS user_id,
+        dsc.workplace_id AS workplace_id,
+        awc.user_id AS user_id,
         greatCircleDistance(
-          dp.lon,
-          dp.lat,
-          aw.worker_coordinates[1],
-          aw.worker_coordinates[2]
+          dsc.lon,
+          dsc.lat,
+          awc.worker_coordinates[1],
+          awc.worker_coordinates[2]
         ) AS distance_m
-      FROM demand_points AS dp
-      CROSS JOIN active_workers AS aw
-      WHERE aw.worker_coordinates[1] BETWEEN dp.lon - (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2))) AND dp.lon + (15000 / (111320 * greatest(abs(cos(dp.lat * pi() / 180)), 0.2)))
-        AND aw.worker_coordinates[2] BETWEEN dp.lat - (15000 / 111000) AND dp.lat + (15000 / 111000)
+      FROM demand_search_cells AS dsc
+      INNER JOIN active_worker_candidates AS awc
+        ON awc.lon_cell = dsc.lon_cell
+        AND awc.lat_cell = dsc.lat_cell
+      WHERE awc.worker_coordinates[1] BETWEEN dsc.lon - (15000 / (111320 * greatest(abs(cos(dsc.lat * pi() / 180)), 0.2))) AND dsc.lon + (15000 / (111320 * greatest(abs(cos(dsc.lat * pi() / 180)), 0.2)))
+        AND awc.worker_coordinates[2] BETWEEN dsc.lat - (15000 / 111000) AND dsc.lat + (15000 / 111000)
         AND greatCircleDistance(
-          dp.lon,
-          dp.lat,
-          aw.worker_coordinates[1],
-          aw.worker_coordinates[2]
+          dsc.lon,
+          dsc.lat,
+          awc.worker_coordinates[1],
+          awc.worker_coordinates[2]
         ) <= 15000
     )
   ),

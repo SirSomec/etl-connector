@@ -214,7 +214,12 @@ test('loadWorkplacePointGigerDetails loads radius active-session workers by radi
   assert.equal(detailsCall.params.param_active_session_from, '2026-05-16 12:00:00');
   assert.equal(detailsCall.params.param_active_session_to, '2026-06-15 12:00:00');
   assert.equal(detailsCall.query.includes('greatCircleDistance'), true);
-  assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), true);
+  assert.equal(detailsCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), false);
+  assert.equal(detailsCall.query.includes('CROSS JOIN mg_workers AS worker'), false);
+  assert.equal(detailsCall.query.includes('candidate_gigers AS'), true);
+  assert.equal(detailsCall.query.includes('candidate_users AS'), true);
+  assert.match(detailsCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
+  assert.equal(detailsCall.query.includes("au.user_id != ''"), true);
   assert.equal(detailsCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
 });
 
@@ -633,6 +638,26 @@ test('loadWorkplacePointDashboard queries point detail datasets with safe parame
   );
   assert.equal(
     calls.find((call) => call.operation === 'workplace point radius workers').query.includes('active_session_workers'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point radius workers').query.includes('candidate_users AS'),
+    true
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point radius workers').query.includes('CROSS JOIN active_workers AS aw'),
+    false
+  );
+  assert.match(
+    calls.find((call) => call.operation === 'workplace point radius workers').query,
+    /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point radius workers').query.includes('LEFT JOIN candidate_distances AS cd ON cd.distance_m <='),
+    false
+  );
+  assert.equal(
+    calls.find((call) => call.operation === 'workplace point radius workers').query.includes('cd.join_key = r.join_key'),
     true
   );
   assert.equal(

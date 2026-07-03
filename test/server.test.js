@@ -3816,7 +3816,8 @@ test('start uses injectable dependencies and logs the listening port without sec
       password: 'super-secret'
     },
     preload: {
-      storePath: 'C:\\runtime\\preload.sqlite'
+      storePath: 'C:\\runtime\\preload.sqlite',
+      clickhouseRequestTimeoutMs: 900000
     },
     scheduledReports: {
       storePath: 'C:\\runtime\\scheduled-reports.sqlite',
@@ -3956,7 +3957,10 @@ test('start uses injectable dependencies and logs the listening port without sec
     const text = await response.text();
 
     assert.equal(text, 'started');
-    assert.deepEqual(clientConfigs, [config.clickhouse]);
+    assert.deepEqual(clientConfigs, [
+      config.clickhouse,
+      { ...config.clickhouse, requestTimeoutMs: config.preload.clickhouseRequestTimeoutMs }
+    ]);
     assert.equal(createAppArgs.config, config);
     assert.ok(createAppArgs.client instanceof FakeClient);
     assert.equal(createAppArgs.preloadService, fakePreloadService);
@@ -3964,7 +3968,11 @@ test('start uses injectable dependencies and logs the listening port without sec
     assert.deepEqual(workplaceDirectoryCacheArgs, { env });
     assert.equal(workplaceDirectoryRefreshClient, createAppArgs.client);
     assert.equal(createAppArgs.scheduledReportService, fakeScheduledReportService);
-    assert.equal(preloadServiceArgs.client, createAppArgs.client);
+    assert.notEqual(preloadServiceArgs.client, createAppArgs.client);
+    assert.deepEqual(
+      preloadServiceArgs.client.clickhouseConfig,
+      { ...config.clickhouse, requestTimeoutMs: config.preload.clickhouseRequestTimeoutMs }
+    );
     assert.equal(preloadServiceArgs.storePath, config.preload.storePath);
     assert.deepEqual(scheduledReportStoreArgs, {
       filePath: config.scheduledReports.storePath,

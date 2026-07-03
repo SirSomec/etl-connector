@@ -185,19 +185,25 @@ test('workplace point preload query builders keep joins and filters safe', () =>
   assert.equal(queries.radiusRollups.includes('FROM mg_workplaces AS w'), true);
   assert.equal(queries.radiusRollups.includes('FROM mg_workers AS aw'), true);
   assert.equal(queries.radiusRollups.includes('active_session_users AS'), true);
+  assert.equal(queries.radiusRollups.includes('workplace_search_cells AS'), true);
+  assert.equal(queries.radiusRollups.includes('worker_candidates AS'), true);
+  assert.equal(queries.radiusRollups.includes('candidate_users AS'), true);
+  assert.match(queries.radiusRollups, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
   assert.equal(queries.radiusRollups.includes('{active_session_from:DateTime}'), true);
   assert.equal(queries.radiusRollups.includes('{active_session_to:DateTime}'), true);
   assert.equal(queries.radiusRollups.includes('{active_window_date:Date} AS active_window_date'), true);
   assert.equal(queries.radiusRollups.includes('AS active_session_workers'), true);
   assert.equal(queries.radiusRollups.includes('length({workplace_ids:Array(String)}) > 0'), true);
   assert.equal(queries.radiusRollups.includes('w._id IN {workplace_ids:Array(String)}'), true);
-  assert.equal(queries.radiusRollups.includes('abs(aw.worker_lat - w.workplace_lat) <='), true);
-  assert.equal(queries.radiusRollups.includes('abs(aw.worker_lon - w.workplace_lon) <='), true);
+  assert.equal(queries.radiusRollups.includes('CROSS JOIN active_workers AS aw'), false);
+  assert.match(queries.radiusRollups, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = wsc\.lon_cell\s+AND wc\.lat_cell = wsc\.lat_cell/);
+  assert.equal(queries.radiusRollups.includes('wc.worker_lon BETWEEN wsc.workplace_lon'), true);
+  assert.equal(queries.radiusRollups.includes('wc.worker_lat BETWEEN wsc.workplace_lat'), true);
   assert.equal(queries.radiusRollups.includes('FROM hot_workplaces AS w'), true);
   assert.equal(queries.radiusRollups.includes('CROSS JOIN radii AS r'), true);
   assert.equal(queries.radiusRollups.includes('LEFT JOIN candidate_distances AS cd ON cd.workplace_id = w.workplace_id'), true);
   assert.equal(queries.radiusRollups.includes('GROUP BY w.workplace_id, r.radius_km'), true);
-  const radiusWhereIndex = queries.radiusRollups.indexOf('WHERE abs(aw.worker_lat - w.workplace_lat) <=');
+  const radiusWhereIndex = queries.radiusRollups.indexOf('WHERE wc.worker_lon BETWEEN wsc.workplace_lon');
   const radiusDistanceFilterIndex = queries.radiusRollups.indexOf(') <= 20.0 * 1000');
   assert.ok(
     radiusWhereIndex >= 0

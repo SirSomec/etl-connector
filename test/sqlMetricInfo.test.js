@@ -219,6 +219,8 @@ test('workplace point radius metrics show radius workers SQL, not summary SQL', 
   assert.match(info.sql, /appmetrica_sessions/);
   assert.match(info.sql, /greatCircleDistance/);
   assert.match(info.sql, /active_session_workers/);
+  assert.doesNotMatch(info.sql, /LEFT JOIN candidate_distances AS cd ON cd\.distance_m <=/);
+  assert.match(info.sql, /cd\.join_key = r\.join_key/);
   assert.doesNotMatch(info.sql, /sum\(amount\) AS ordered_shifts/);
 });
 
@@ -237,6 +239,7 @@ test('city composition metrics show the exact grouped SQL for visible row values
   const brands = getSqlMetricInfo('city-analysis.composition.brands.ordered-shifts');
   const professions = getSqlMetricInfo('city-analysis.composition.professions.ordered-shifts');
   const rateBuckets = getSqlMetricInfo('city-analysis.composition.rate-buckets.ordered-shifts');
+  const summary = getSqlMetricInfo('city-analysis.summary.total-located-users');
 
   assert.match(brands.sql, /ordered_shifts/);
   assert.match(brands.sql, /share_percent/);
@@ -247,6 +250,9 @@ test('city composition metrics show the exact grouped SQL for visible row values
   assert.match(rateBuckets.sql, /avgIf\(salary_per_hour, salary_per_hour > 0\) AS avg_salary_per_hour/);
   assert.match(rateBuckets.sql, /share_percent/);
   assert.doesNotMatch(rateBuckets.sql, /brand AS label/);
+  assert.match(summary.sql, /city_search_cells AS/);
+  assert.match(summary.sql, /INNER JOIN candidate_workers AS worker/);
+  assert.doesNotMatch(summary.sql, /CROSS JOIN city_workplaces AS cw/);
 });
 
 test('sql inspector sales metrics document actual order and finance domain filters', () => {
@@ -267,12 +273,21 @@ test('geo and cancellation metrics show the specialized SQL used for those value
 
   assert.match(activeGigers.sql, /activeGigers5kmQuery|active_gigers_5km/);
   assert.match(activeGigers.sql, /greatCircleDistance/);
+  assert.match(activeGigers.sql, /candidate_users AS/);
+  assert.doesNotMatch(activeGigers.sql, /CROSS JOIN active_workers AS aw/);
   assert.match(heatmap.sql, /influence_weight/);
   assert.match(heatmap.sql, /appmetrica_sessions/);
   assert.match(heatmap.sql, /CROSS JOIN demand_bounds AS bounds/);
   assert.match(heatmap.sql, /WHERE bounds\.points > 0/);
   assert.doesNotMatch(heatmap.sql, /INNER JOIN demand_bounds AS bounds ON bounds\.points > 0/);
-  assert.match(heatmap.sql, /CROSS JOIN active_workers AS aw/);
+  assert.match(heatmap.sql, /demand_search_cells AS/);
+  assert.match(heatmap.sql, /abs\(toInt32\(lon_offsets\.number\) - 8\) <=/);
+  assert.match(heatmap.sql, /abs\(toInt32\(lat_offsets\.number\) - 8\) <=/);
+  assert.match(heatmap.sql, /worker_candidates AS/);
+  assert.match(heatmap.sql, /candidate_users AS/);
+  assert.match(heatmap.sql, /active_worker_candidates AS/);
+  assert.match(heatmap.sql, /INNER JOIN active_worker_candidates AS awc/);
+  assert.doesNotMatch(heatmap.sql, /CROSS JOIN active_workers AS aw/);
   assert.doesNotMatch(heatmap.sql, /INNER JOIN active_workers AS aw/);
   assert.match(cancellations.sql, /is_worker_cancelled_24h/);
   assert.match(cancellations.sql, /INTERVAL 24 HOUR/);

@@ -58,6 +58,7 @@ CLICKHOUSE_USER=rouser
 CLICKHOUSE_PASSWORD=change-me
 CLICKHOUSE_CA_PATH=/usr/local/share/ca-certificates/Yandex/RootCA.crt
 CLICKHOUSE_REQUEST_TIMEOUT_MS=120000
+PRELOAD_CLICKHOUSE_REQUEST_TIMEOUT_MS=600000
 DASHBOARD_SECTION_CACHE_PATH=./data/dashboard-section-cache.json
 WORKPLACE_DIRECTORY_CACHE_PATH=./data/workplace-directory-cache.json
 PRELOAD_STORE_PATH=./data/preload.sqlite

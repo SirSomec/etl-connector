@@ -1,6 +1,7 @@
 const path = require('node:path');
 
 const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sqlite');
+const DEFAULT_PRELOAD_CLICKHOUSE_REQUEST_TIMEOUT_MS = 600000;
 const DEFAULT_USER_ACTIVITY_STORE_PATH = path.join(process.cwd(), 'data', 'user-activity.sqlite');
 const DEFAULT_REQUEST_REPORT_STATUS_STORE_PATH = path.join(
   process.cwd(),
@@ -99,7 +100,13 @@ function loadConfig(env = process.env) {
         '/usr/local/share/ca-certificates/Yandex/RootCA.crt'
     },
     preload: {
-      storePath: env.PRELOAD_STORE_PATH || DEFAULT_PRELOAD_STORE_PATH
+      storePath: env.PRELOAD_STORE_PATH || DEFAULT_PRELOAD_STORE_PATH,
+      clickhouseRequestTimeoutMs: readPositiveInt(
+        env,
+        'PRELOAD_CLICKHOUSE_REQUEST_TIMEOUT_MS',
+        DEFAULT_PRELOAD_CLICKHOUSE_REQUEST_TIMEOUT_MS,
+        60 * 60 * 1000
+      )
     },
     activity: {
       storePath: env.USER_ACTIVITY_STORE_PATH || DEFAULT_USER_ACTIVITY_STORE_PATH

@@ -16,6 +16,10 @@ const {
 
 const { createDashboardSectionCache } = require('../src/dashboardSectionCache');
 
+function parseSerializedStringArray(value) {
+  return [...String(value).matchAll(/'([^']*)'/g)].map((match) => match[1]);
+}
+
 function extractMgJobJoinOnClauses(query, alias) {
   const marker = `INNER JOIN mg_jobs AS ${alias} ON `;
   const clauses = [];
@@ -1123,6 +1127,8 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
             client_title: 'Бренд',
             city: 'Москва',
             street: 'Ленина 1',
+            lon: 37.6,
+            lat: 55.7,
             ordered_7d: 10,
             covered_7d: 4,
             free_7d: 6,
@@ -1131,6 +1137,22 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
             max_daily_free: 5,
             days_with_free: 2,
             nearest_free_date: '2026-06-04',
+            total_workers_15km: 20,
+            active_workers_30d_15km: 3,
+            total_status_ready: 8,
+            total_status_booked: 2,
+            total_status_worked: 1,
+            total_status_other: 9,
+            active_status_ready: 2,
+            active_status_booked: 1
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis attention worker metrics') {
+        return [
+          {
+            workplace_id: 'wp1',
             total_workers_15km: 20,
             active_workers_30d_15km: 3,
             total_status_ready: 8,
@@ -1159,11 +1181,14 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
     'attention',
     new Date('2026-06-04T12:00:00.000Z')
   );
-  const attentionCall = calls[0];
+  const attentionCall = calls.find((call) => call.operation === 'workplace analysis attention points');
+  const metricCall = calls.find((call) => call.operation === 'workplace analysis attention worker metrics');
 
   assert.equal(dashboard.attentionPoints.length, 1);
   assert.equal(dashboard.attentionPoints[0].workplaceId, 'wp1');
   assert.equal(dashboard.attentionPoints[0].free7d, 6);
+  assert.equal(dashboard.attentionPoints[0].totalWorkers15km, 20);
+  assert.equal(dashboard.attentionPoints[0].activeWorkers30d15km, 3);
   assert.deepEqual(dashboard.attentionPoints[0].freeProfessions7d, [
     { profession: 'Picker', free7d: 4 },
     { profession: 'Courier<script>', free7d: 2 }
@@ -1171,18 +1196,94 @@ test('loadWorkplaceAnalysisDashboardSection loads attention tab with closing sta
   assert.equal(attentionCall.operation, 'workplace analysis attention points');
   assert.equal(attentionCall.params.param_from, '2026-06-04 00:00:00');
   assert.equal(attentionCall.params.param_to, '2026-06-12 00:00:00');
-  assert.equal(attentionCall.params.param_active_from, '2026-05-05 00:00:00');
-  assert.equal(attentionCall.params.param_active_to, '2026-06-05 00:00:00');
   assert.equal(attentionCall.params.param_clients, "['Бренд']");
   assert.equal(attentionCall.query.includes('completed'), true);
   assert.equal(attentionCall.query.includes('free_professions_7d'), true);
   assert.equal(attentionCall.query.includes('free_profession_counts_7d'), true);
   assert.equal(attentionCall.query.includes('doccheck'), false);
-  assert.equal(attentionCall.query.includes('greatCircleDistance'), true);
-  assert.equal(attentionCall.query.includes('<= 15000'), true);
+  assert.equal(attentionCall.query.includes('greatCircleDistance'), false);
   assert.equal(attentionCall.query.includes('influence_weight'), false);
-  assert.equal(attentionCall.query.includes('appmetrica_sessions'), true);
+  assert.equal(attentionCall.query.includes('appmetrica_sessions'), false);
   assert.equal(attentionCall.query.includes('DROP TABLE'), false);
+  assert.equal(metricCall.params.param_workplace_ids, "['wp1']");
+  assert.equal(metricCall.params.param_point_lons, '[37.6]');
+  assert.equal(metricCall.params.param_point_lats, '[55.7]');
+  assert.equal(metricCall.params.param_active_from, '2026-05-05 00:00:00');
+  assert.equal(metricCall.params.param_active_to, '2026-06-05 00:00:00');
+  assert.equal(metricCall.query.includes('greatCircleDistance'), true);
+  assert.equal(metricCall.query.includes('<= 15000'), true);
+  assert.equal(metricCall.query.includes('appmetrica_sessions'), true);
+});
+
+test('loadWorkplaceAnalysisDashboardSection loads attention worker metrics in bounded geo batches', async () => {
+  const baseRows = Array.from({ length: 26 }, (_, index) => ({
+    workplace_id: `wp-${index + 1}`,
+    workplace_title: `Point ${index + 1}`,
+    client_title: 'Brand',
+    city: 'City',
+    street: 'Street',
+    lon: 37.1 + index * 0.001,
+    lat: 55.1 + index * 0.001,
+    ordered_7d: 10,
+    covered_7d: 5,
+    free_7d: 5,
+    free_professions_7d: ['Picker'],
+    free_profession_counts_7d: [5],
+    max_daily_free: 5,
+    days_with_free: 1,
+    nearest_free_date: '2026-06-04'
+  }));
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+
+      if (operation === 'workplace analysis attention points') {
+        return baseRows;
+      }
+
+      if (operation === 'workplace analysis attention worker metrics') {
+        return parseSerializedStringArray(params.param_workplace_ids).map((workplaceId, index) => ({
+          workplace_id: workplaceId,
+          total_workers_15km: 100 + index,
+          active_workers_30d_15km: 10 + index,
+          total_status_ready: 50,
+          total_status_booked: 20,
+          total_status_worked: 10,
+          total_status_other: 20,
+          active_status_ready: 5,
+          active_status_booked: 2,
+          active_status_worked: 1,
+          active_status_other: 2
+        }));
+      }
+
+      throw new Error(`Unexpected operation: ${operation}`);
+    }
+  };
+
+  const dashboard = await loadWorkplaceAnalysisDashboardSection(
+    client,
+    {},
+    'attention',
+    new Date('2026-06-04T12:00:00.000Z')
+  );
+  const attentionCall = calls.find((call) => call.operation === 'workplace analysis attention points');
+  const metricCalls = calls.filter((call) => call.operation === 'workplace analysis attention worker metrics');
+
+  assert.equal(dashboard.attentionPagination.totalWorkplaces, 26);
+  assert.equal(dashboard.attentionPoints[0].totalWorkers15km, 100);
+  assert.equal(dashboard.attentionPoints[0].activeWorkers30d15km, 10);
+  assert.equal(attentionCall.query.includes('appmetrica_sessions'), false);
+  assert.equal(attentionCall.query.includes('mg_workers AS worker'), false);
+  assert.equal(metricCalls.length, 2);
+  assert.deepEqual(metricCalls.map((call) => parseSerializedStringArray(call.params.param_workplace_ids).length), [25, 1]);
+  assert.equal(metricCalls[0].params.param_active_from, '2026-05-05 00:00:00');
+  assert.equal(metricCalls[0].params.param_active_to, '2026-06-05 00:00:00');
+  assert.match(metricCalls[0].query, /selected_points AS/);
+  assert.match(metricCalls[0].query, /arrayZip\(\{workplace_ids:Array\(String\)\}, \{point_lons:Array\(Float64\)\}, \{point_lats:Array\(Float64\)\}\)/);
+  assert.match(metricCalls[0].query, /FROM mg_workers AS worker\s+CROSS JOIN point_bounds AS bounds/);
+  assert.doesNotMatch(metricCalls[0].query, /filtered_orders AS/);
 });
 
 test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before aggregation', async () => {
@@ -1192,6 +1293,23 @@ test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before
       calls.push({ query, params, operation });
 
       if (operation === 'workplace analysis attention points') {
+        return [
+          {
+            workplace_id: 'wp1',
+            workplace_title: 'Point',
+            lon: 37.6,
+            lat: 55.7,
+            ordered_7d: 1,
+            covered_7d: 0,
+            free_7d: 1,
+            max_daily_free: 1,
+            days_with_free: 1,
+            nearest_free_date: '2026-06-04'
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis attention worker metrics') {
         return [];
       }
 
@@ -1206,23 +1324,28 @@ test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before
     new Date('2026-06-04T12:00:00.000Z')
   );
 
-  const attentionCall = calls[0];
+  const attentionCall = calls.find((call) => call.operation === 'workplace analysis attention points');
+  const metricCall = calls.find((call) => call.operation === 'workplace analysis attention worker metrics');
 
   assert.equal(attentionCall.operation, 'workplace analysis attention points');
-  assert.equal(attentionCall.query.includes('CROSS JOIN latest_workers'), false);
-  assert.equal(attentionCall.query.includes('latest_workers AS'), false);
-  assert.equal(attentionCall.query.includes('argMax('), false);
-  assert.equal(attentionCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), false);
-  assert.equal(attentionCall.query.includes('point_search_cells AS'), true);
-  assert.equal(attentionCall.query.includes('worker_candidates AS'), true);
-  assert.equal(attentionCall.query.includes('candidate_users AS'), true);
-  assert.equal(attentionCall.query.includes('point_worker_users AS'), true);
-  assert.equal(attentionCall.query.includes('GROUP BY workplace_id, user_id'), true);
-  assert.equal(attentionCall.query.includes('uniqExact(pwp.user_id)'), false);
-  assert.equal(attentionCall.query.includes('uniqExactIf(pwp.user_id'), false);
-  assert.match(attentionCall.query, /worker_candidates AS \([\s\S]*FROM mg_workers AS worker\s+CROSS JOIN point_bounds AS bounds[\s\S]*WHERE bounds\.points > 0/s);
-  assert.match(attentionCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = psc\.lon_cell\s+AND wc\.lat_cell = psc\.lat_cell/);
-  assert.match(attentionCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
+  assert.equal(attentionCall.query.includes('mg_workers AS worker'), false);
+  assert.equal(attentionCall.query.includes('appmetrica_sessions'), false);
+  assert.equal(metricCall.operation, 'workplace analysis attention worker metrics');
+  assert.equal(metricCall.query.includes('CROSS JOIN latest_workers'), false);
+  assert.equal(metricCall.query.includes('latest_workers AS'), false);
+  assert.equal(metricCall.query.includes('argMax('), false);
+  assert.equal(metricCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), false);
+  assert.equal(metricCall.query.includes('selected_points AS'), true);
+  assert.equal(metricCall.query.includes('point_search_cells AS'), true);
+  assert.equal(metricCall.query.includes('worker_candidates AS'), true);
+  assert.equal(metricCall.query.includes('candidate_users AS'), true);
+  assert.equal(metricCall.query.includes('point_worker_users AS'), true);
+  assert.equal(metricCall.query.includes('GROUP BY workplace_id, user_id'), true);
+  assert.equal(metricCall.query.includes('uniqExact(pwp.user_id)'), false);
+  assert.equal(metricCall.query.includes('uniqExactIf(pwp.user_id'), false);
+  assert.match(metricCall.query, /worker_candidates AS \([\s\S]*FROM mg_workers AS worker\s+CROSS JOIN point_bounds AS bounds[\s\S]*WHERE bounds\.points > 0/s);
+  assert.match(metricCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = psc\.lon_cell\s+AND wc\.lat_cell = psc\.lat_cell/);
+  assert.match(metricCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
 });
 
 test('loadWorkplaceAnalysisDashboardSection ignores stale attention cache without profession breakdown', async () => {

@@ -17,6 +17,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LIMIT = 12;
 const DEFAULT_ATTENTION_LIMIT = 150;
 const ATTENTION_PAGE_SIZE = 15;
+const ATTENTION_WORKER_BATCH_SIZE = 25;
 const WORKPLACE_ATTENTION_CACHE_SCHEMA_VERSION = 4;
 const DEFAULT_PAGE = 1;
 const MAX_PAGE = 100000;
@@ -1045,6 +1046,10 @@ function serializeStringArray(values) {
   return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
 }
 
+function serializeNumberArray(values) {
+  return `[${values.map((value) => String(Number(value))).join(',')}]`;
+}
+
 function baseParamsForFilters(filters) {
   const params = {
     param_from: filters.fromDateTime,
@@ -1509,6 +1514,40 @@ function attentionPointsQuery(whereSql) {
       ORDER BY pfr.workplace_id ASC, pfr.free DESC, pfr.profession ASC
     )
     GROUP BY workplace_id
+  )
+  SELECT
+    ap.workplace_id AS workplace_id,
+    ap.workplace_title AS workplace_title,
+    ap.technical_name AS technical_name,
+    ap.client_title AS client_title,
+    ap.city AS city,
+    ap.region AS region,
+    ap.street AS street,
+    ap.lon AS lon,
+    ap.lat AS lat,
+    ap.ordered_7d AS ordered_7d,
+    ap.covered_7d AS covered_7d,
+    ap.free_7d AS free_7d,
+    pp.free_professions_7d AS free_professions_7d,
+    pp.free_profession_counts_7d AS free_profession_counts_7d,
+    ap.max_daily_free AS max_daily_free,
+    ap.days_with_free AS days_with_free,
+    toString(ap.nearest_free_date) AS nearest_free_date
+  FROM attention_points AS ap
+  LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
+  ORDER BY free_7d DESC, max_daily_free DESC, workplace_id ASC
+  FORMAT JSONEachRow`;
+}
+
+function attentionWorkerMetricsQuery() {
+  return `WITH selected_points AS (
+    SELECT
+      tupleElement(point, 1) AS workplace_id,
+      tupleElement(point, 2) AS lon,
+      tupleElement(point, 3) AS lat
+    FROM (
+      SELECT arrayJoin(arrayZip({workplace_ids:Array(String)}, {point_lons:Array(Float64)}, {point_lats:Array(Float64)})) AS point
+    )
   ),
   point_bounds AS (
     SELECT
@@ -1519,7 +1558,7 @@ function attentionPointsQuery(whereSql) {
       max(lat) AS max_lat,
       15000 / 111000 AS lat_margin,
       15000 / (111320 * greatest(abs(cos(((min(lat) + max(lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
-    FROM attention_points
+    FROM selected_points
   ),
   point_search_cells AS (
     SELECT
@@ -1528,7 +1567,7 @@ function attentionPointsQuery(whereSql) {
       ap.lat AS lat,
       toInt32(floor(ap.lon / 0.1)) + toInt32(lon_offsets.number) - 8 AS lon_cell,
       toInt32(floor(ap.lat / 0.1)) + toInt32(lat_offsets.number) - 8 AS lat_cell
-    FROM attention_points AS ap
+    FROM selected_points AS ap
     CROSS JOIN numbers(17) AS lon_offsets
     CROSS JOIN numbers(17) AS lat_offsets
   ),
@@ -1604,35 +1643,19 @@ function attentionPointsQuery(whereSql) {
     GROUP BY pwu.workplace_id
   )
   SELECT
-    ap.workplace_id AS workplace_id,
-    ap.workplace_title AS workplace_title,
-    ap.technical_name AS technical_name,
-    ap.client_title AS client_title,
-    ap.city AS city,
-    ap.region AS region,
-    ap.street AS street,
-    ap.ordered_7d AS ordered_7d,
-    ap.covered_7d AS covered_7d,
-    ap.free_7d AS free_7d,
-    pp.free_professions_7d AS free_professions_7d,
-    pp.free_profession_counts_7d AS free_profession_counts_7d,
-    ap.max_daily_free AS max_daily_free,
-    ap.days_with_free AS days_with_free,
-    toString(ap.nearest_free_date) AS nearest_free_date,
-    ifNull(pw.total_workers_15km, 0) AS total_workers_15km,
-    ifNull(pw.active_workers_30d_15km, 0) AS active_workers_30d_15km,
-    ifNull(pw.total_status_ready, 0) AS total_status_ready,
-    ifNull(pw.total_status_booked, 0) AS total_status_booked,
-    ifNull(pw.total_status_worked, 0) AS total_status_worked,
-    ifNull(pw.total_status_other, 0) AS total_status_other,
-    ifNull(pw.active_status_ready, 0) AS active_status_ready,
-    ifNull(pw.active_status_booked, 0) AS active_status_booked,
-    ifNull(pw.active_status_worked, 0) AS active_status_worked,
-    ifNull(pw.active_status_other, 0) AS active_status_other
-  FROM attention_points AS ap
-  LEFT JOIN point_workers AS pw ON ap.workplace_id = pw.workplace_id
-  LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
-  ORDER BY free_7d DESC, max_daily_free DESC, workplace_id ASC
+    pw.workplace_id AS workplace_id,
+    pw.total_workers_15km AS total_workers_15km,
+    pw.active_workers_30d_15km AS active_workers_30d_15km,
+    pw.total_status_ready AS total_status_ready,
+    pw.total_status_booked AS total_status_booked,
+    pw.total_status_worked AS total_status_worked,
+    pw.total_status_other AS total_status_other,
+    pw.active_status_ready AS active_status_ready,
+    pw.active_status_booked AS active_status_booked,
+    pw.active_status_worked AS active_status_worked,
+    pw.active_status_other AS active_status_other
+  FROM point_workers AS pw
+  ORDER BY workplace_id ASC
   FORMAT JSONEachRow`;
 }
 
@@ -2283,6 +2306,97 @@ async function loadWorkplaceAnalysisPointsDashboard(client, filters, options = {
   };
 }
 
+function validAttentionCoordinate(value, min, max) {
+  const number = Number(value);
+
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
+}
+
+function attentionWorkerMetricBatches(rows, batchSize = ATTENTION_WORKER_BATCH_SIZE) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const workplaceId = String(row.workplace_id || '');
+    const lon = validAttentionCoordinate(row.lon, -180, 180);
+    const lat = validAttentionCoordinate(row.lat, -90, 90);
+
+    if (workplaceId === '' || lon === null || lat === null) {
+      continue;
+    }
+
+    const key = `${Math.floor(lon)}:${Math.floor(lat)}`;
+    const group = groups.get(key) || [];
+
+    group.push({ workplaceId, lon, lat });
+    groups.set(key, group);
+  }
+
+  const batches = [];
+
+  for (const group of groups.values()) {
+    for (let index = 0; index < group.length; index += batchSize) {
+      batches.push(group.slice(index, index + batchSize));
+    }
+  }
+
+  return batches;
+}
+
+function mergeAttentionWorkerMetrics(rows, workerRows) {
+  const workerMetricsByWorkplace = new Map(
+    workerRows.map((row) => [String(row.workplace_id || ''), row])
+  );
+
+  return rows.map((row) => {
+    const metrics = workerMetricsByWorkplace.get(String(row.workplace_id || '')) || {};
+
+    return {
+      ...row,
+      total_workers_15km: metrics.total_workers_15km || 0,
+      active_workers_30d_15km: metrics.active_workers_30d_15km || 0,
+      total_status_ready: metrics.total_status_ready || 0,
+      total_status_booked: metrics.total_status_booked || 0,
+      total_status_worked: metrics.total_status_worked || 0,
+      total_status_other: metrics.total_status_other || 0,
+      active_status_ready: metrics.active_status_ready || 0,
+      active_status_booked: metrics.active_status_booked || 0,
+      active_status_worked: metrics.active_status_worked || 0,
+      active_status_other: metrics.active_status_other || 0
+    };
+  });
+}
+
+async function loadAttentionWorkerMetrics(client, filters, rows) {
+  const batches = attentionWorkerMetricBatches(rows);
+  const workerRows = [];
+
+  if (batches.length === 0) {
+    return workerRows;
+  }
+
+  const activeToDate = parseDateOnly(filters.attentionFrom);
+  const activeFromDate = addDaysUTC(activeToDate, -30);
+  const activeToExclusive = addDaysUTC(activeToDate, 1);
+
+  for (const batch of batches) {
+    const rowsForBatch = await client.queryJSONEachRow(
+      attentionWorkerMetricsQuery(),
+      {
+        param_workplace_ids: serializeStringArray(batch.map((point) => point.workplaceId)),
+        param_point_lons: serializeNumberArray(batch.map((point) => point.lon)),
+        param_point_lats: serializeNumberArray(batch.map((point) => point.lat)),
+        param_active_from: toDateTimeParam(formatDateUTC(activeFromDate)),
+        param_active_to: toDateTimeParam(formatDateUTC(activeToExclusive))
+      },
+      'workplace analysis attention worker metrics'
+    );
+
+    workerRows.push(...rowsForBatch);
+  }
+
+  return workerRows;
+}
+
 async function loadWorkplaceAttentionDashboard(client, filters) {
   const { params, whereSql } = attentionParamsForFilters(filters);
   const rows = await client.queryJSONEachRow(
@@ -2290,8 +2404,9 @@ async function loadWorkplaceAttentionDashboard(client, filters) {
     params,
     'workplace analysis attention points'
   );
+  const workerRows = await loadAttentionWorkerMetrics(client, filters, rows);
 
-  return mergeWorkplaceAttentionRows(filters, rows);
+  return mergeWorkplaceAttentionRows(filters, mergeAttentionWorkerMetrics(rows, workerRows));
 }
 
 async function loadWorkplaceAnalysisDashboardSection(

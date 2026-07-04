@@ -1843,12 +1843,22 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
             client_title: 'Brand',
             city: 'Moscow',
             street: 'Street 1',
+            lon: 37.6,
+            lat: 55.7,
             ordered_7d: 12,
             covered_7d: 5,
             free_7d: 7,
             max_daily_free: 4,
             days_with_free: 2,
-            nearest_free_date: '2026-06-04',
+            nearest_free_date: '2026-06-04'
+          }
+        ];
+      }
+
+      if (operation === 'workplace analysis attention worker metrics') {
+        return [
+          {
+            workplace_id: 'wp-attention',
             total_workers_15km: 18,
             active_workers_30d_15km: 6,
             active_status_ready: 4,
@@ -1879,9 +1889,12 @@ test('GET /dashboards/workplace-analysis/section renders attention fragment', as
   });
 
   const attentionCall = client.calls.find((call) => call[1] === 'workplace analysis attention points');
+  const metricCall = client.calls.find((call) => call[1] === 'workplace analysis attention worker metrics');
 
   assert.ok(attentionCall);
+  assert.ok(metricCall);
   assert.equal(attentionCall[2].param_clients, "['Brand']");
+  assert.equal(metricCall[2].param_workplace_ids, "['wp-attention']");
   assert.equal(attentionCall[3].includes("ifNull(j.status, '') IN ('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')"), true);
   assert.equal(attentionCall[3].includes("ifNull(j.status, '') = 'confirmed'"), true);
   assert.equal(attentionCall[3].includes("dateDiff('minute', j.start_fact, j.finish_fact) > 0"), true);

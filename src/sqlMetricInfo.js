@@ -840,6 +840,32 @@ point_professions AS (
     ORDER BY pfr.workplace_id ASC, pfr.free DESC, pfr.profession ASC
   )
   GROUP BY workplace_id
+)
+SELECT
+  ap.workplace_id,
+  ap.lon,
+  ap.lat,
+  ap.ordered_7d,
+  ap.covered_7d,
+  ap.free_7d,
+  pp.free_professions_7d,
+  pp.free_profession_counts_7d,
+  ap.max_daily_free,
+  toString(ap.nearest_free_date) AS nearest_free_date
+FROM attention_points AS ap
+LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
+ORDER BY free_7d DESC, max_daily_free DESC
+FORMAT JSONEachRow;
+
+-- Batched worker metrics query. The application passes up to 25 workplace ids and coordinates from the base query.
+WITH selected_points AS (
+  SELECT
+    tupleElement(point, 1) AS workplace_id,
+    tupleElement(point, 2) AS lon,
+    tupleElement(point, 3) AS lat
+  FROM (
+    SELECT arrayJoin(arrayZip({workplace_ids:Array(String)}, {point_lons:Array(Float64)}, {point_lats:Array(Float64)})) AS point
+  )
 ),
 point_bounds AS (
   SELECT
@@ -850,7 +876,7 @@ point_bounds AS (
     max(lat) AS max_lat,
     15000 / 111000 AS lat_margin,
     15000 / (111320 * greatest(abs(cos(((min(lat) + max(lat)) / 2) * pi() / 180)), 0.2)) AS lon_margin
-  FROM attention_points
+  FROM selected_points
 ),
 point_search_cells AS (
   SELECT
@@ -859,7 +885,7 @@ point_search_cells AS (
     ap.lat AS lat,
     toInt32(floor(ap.lon / 0.1)) + toInt32(lon_offsets.number) - 8 AS lon_cell,
     toInt32(floor(ap.lat / 0.1)) + toInt32(lat_offsets.number) - 8 AS lat_cell
-  FROM attention_points AS ap
+  FROM selected_points AS ap
   CROSS JOIN numbers(17) AS lon_offsets
   CROSS JOIN numbers(17) AS lat_offsets
 ),
@@ -927,19 +953,11 @@ point_workers AS (
   GROUP BY pwu.workplace_id
 )
 SELECT
-  ap.workplace_id,
-  ap.ordered_7d,
-  ap.covered_7d,
-  ap.free_7d,
-  pp.free_professions_7d,
-  pp.free_profession_counts_7d,
-  ap.max_daily_free,
-  ifNull(pw.total_workers_15km, 0) AS total_workers_15km,
-  ifNull(pw.active_workers_30d_15km, 0) AS active_workers_30d_15km
-FROM attention_points AS ap
-LEFT JOIN point_workers AS pw ON ap.workplace_id = pw.workplace_id
-LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
-ORDER BY free_7d DESC, max_daily_free DESC
+  pw.workplace_id,
+  pw.total_workers_15km,
+  pw.active_workers_30d_15km
+FROM point_workers AS pw
+ORDER BY workplace_id ASC
 FORMAT JSONEachRow`;
 
 const WORKER_CANCELLATIONS_SQL = `WITH shift_facts AS (

@@ -863,31 +863,25 @@ point_search_cells AS (
   CROSS JOIN numbers(17) AS lon_offsets
   CROSS JOIN numbers(17) AS lat_offsets
 ),
-latest_workers AS (
+worker_candidates AS (
   SELECT
-    worker.user AS user_id,
-    argMax(ifNull(worker.status, ''), ifNull(worker.updatedAt, worker.createdAt)) AS status,
-    argMax(worker.location__coordinates, ifNull(worker.updatedAt, worker.createdAt)) AS worker_coordinates
+    ifNull(worker.user, '') AS user_id,
+    ifNull(worker.status, '') AS status,
+    worker.location__coordinates AS worker_coordinates,
+    toInt32(floor(worker.location__coordinates[1] / 0.1)) AS lon_cell,
+    toInt32(floor(worker.location__coordinates[2] / 0.1)) AS lat_cell
   FROM mg_workers AS worker
+  CROSS JOIN point_bounds AS bounds
   LEFT JOIN mg_users AS u ON worker.user = u._id
-  WHERE ifNull(worker.user, '') != ''
+  WHERE bounds.points > 0
+    AND ifNull(worker.user, '') != ''
     AND ifNull(worker.deleted, 0) = 0
     AND ifNull(u.deleted, 0) = 0
     AND length(worker.location__coordinates) >= 2
-  GROUP BY worker.user
-),
-worker_candidates AS (
-  SELECT
-    lw.user_id AS user_id,
-    lw.status AS status,
-    lw.worker_coordinates AS worker_coordinates,
-    toInt32(floor(lw.worker_coordinates[1] / 0.1)) AS lon_cell,
-    toInt32(floor(lw.worker_coordinates[2] / 0.1)) AS lat_cell
-  FROM latest_workers AS lw
-  CROSS JOIN point_bounds AS bounds
-  WHERE bounds.points > 0
-    AND lw.worker_coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
-    AND lw.worker_coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
+    AND worker.location__coordinates[1] BETWEEN -180 AND 180
+    AND worker.location__coordinates[2] BETWEEN -90 AND 90
+    AND worker.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
+    AND worker.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
 ),
 point_worker_pairs AS (
   SELECT

@@ -1210,6 +1210,8 @@ test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before
 
   assert.equal(attentionCall.operation, 'workplace analysis attention points');
   assert.equal(attentionCall.query.includes('CROSS JOIN latest_workers'), false);
+  assert.equal(attentionCall.query.includes('latest_workers AS'), false);
+  assert.equal(attentionCall.query.includes('argMax('), false);
   assert.equal(attentionCall.query.includes('user_id IN (SELECT user_id FROM active_session_users)'), false);
   assert.equal(attentionCall.query.includes('point_search_cells AS'), true);
   assert.equal(attentionCall.query.includes('worker_candidates AS'), true);
@@ -1218,6 +1220,7 @@ test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before
   assert.equal(attentionCall.query.includes('GROUP BY workplace_id, user_id'), true);
   assert.equal(attentionCall.query.includes('uniqExact(pwp.user_id)'), false);
   assert.equal(attentionCall.query.includes('uniqExactIf(pwp.user_id'), false);
+  assert.match(attentionCall.query, /worker_candidates AS \([\s\S]*FROM mg_workers AS worker\s+CROSS JOIN point_bounds AS bounds[\s\S]*WHERE bounds\.points > 0/s);
   assert.match(attentionCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = psc\.lon_cell\s+AND wc\.lat_cell = psc\.lat_cell/);
   assert.match(attentionCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
 });

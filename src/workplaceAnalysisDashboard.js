@@ -1532,41 +1532,25 @@ function attentionPointsQuery(whereSql) {
     CROSS JOIN numbers(17) AS lon_offsets
     CROSS JOIN numbers(17) AS lat_offsets
   ),
-  worker_rows AS (
-    SELECT
-      worker.user AS user_id,
-      ifNull(worker.status, '') AS status,
-      worker.location__coordinates AS worker_coordinates,
-      ifNull(worker.updatedAt, ifNull(worker.createdAt, toDateTime64('1970-01-01 00:00:00', 3, 'UTC'))) AS updated_at
-    FROM mg_workers AS worker
-    LEFT JOIN mg_users AS u ON worker.user = u._id
-    WHERE ifNull(worker.user, '') != ''
-      AND ifNull(worker.deleted, 0) = 0
-      AND ifNull(u.deleted, 0) = 0
-  ),
-  latest_workers AS (
-    SELECT
-      user_id,
-      argMax(status, updated_at) AS status,
-      argMax(worker_coordinates, updated_at) AS worker_coordinates
-    FROM worker_rows
-    GROUP BY user_id
-  ),
   worker_candidates AS (
     SELECT
-      lw.user_id AS user_id,
-      lw.status AS status,
-      lw.worker_coordinates AS worker_coordinates,
-      toInt32(floor(lw.worker_coordinates[1] / 0.1)) AS lon_cell,
-      toInt32(floor(lw.worker_coordinates[2] / 0.1)) AS lat_cell
-    FROM latest_workers AS lw
+      ifNull(worker.user, '') AS user_id,
+      ifNull(worker.status, '') AS status,
+      worker.location__coordinates AS worker_coordinates,
+      toInt32(floor(worker.location__coordinates[1] / 0.1)) AS lon_cell,
+      toInt32(floor(worker.location__coordinates[2] / 0.1)) AS lat_cell
+    FROM mg_workers AS worker
     CROSS JOIN point_bounds AS bounds
+    LEFT JOIN mg_users AS u ON worker.user = u._id
     WHERE bounds.points > 0
-      AND length(lw.worker_coordinates) >= 2
-      AND lw.worker_coordinates[1] BETWEEN -180 AND 180
-      AND lw.worker_coordinates[2] BETWEEN -90 AND 90
-      AND lw.worker_coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
-      AND lw.worker_coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
+      AND ifNull(worker.user, '') != ''
+      AND ifNull(worker.deleted, 0) = 0
+      AND ifNull(u.deleted, 0) = 0
+      AND length(worker.location__coordinates) >= 2
+      AND worker.location__coordinates[1] BETWEEN -180 AND 180
+      AND worker.location__coordinates[2] BETWEEN -90 AND 90
+      AND worker.location__coordinates[1] BETWEEN bounds.min_lon - bounds.lon_margin AND bounds.max_lon + bounds.lon_margin
+      AND worker.location__coordinates[2] BETWEEN bounds.min_lat - bounds.lat_margin AND bounds.max_lat + bounds.lat_margin
   ),
   point_worker_pairs AS (
     SELECT

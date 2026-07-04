@@ -327,6 +327,9 @@ test('workplace attention metrics show 15km base and closing statuses SQL', () =
   assert.match(attention.sql, /appmetrica_sessions/);
   assert.match(attention.sql, /point_worker_users AS/);
   assert.match(attention.sql, /count\(\) AS total_workers_15km/);
+  assert.doesNotMatch(attention.sql, /latest_workers AS/);
+  assert.doesNotMatch(attention.sql, /argMax\(/);
+  assert.match(attention.sql, /FROM mg_workers AS worker\s+CROSS JOIN point_bounds AS bounds/);
   assert.doesNotMatch(attention.sql, /uniqExact\(pwp\.user_id/);
   assert.doesNotMatch(attention.sql, /influence_weight/);
 });

@@ -1214,6 +1214,10 @@ test('loadWorkplaceAnalysisDashboardSection bounds attention worker pairs before
   assert.equal(attentionCall.query.includes('point_search_cells AS'), true);
   assert.equal(attentionCall.query.includes('worker_candidates AS'), true);
   assert.equal(attentionCall.query.includes('candidate_users AS'), true);
+  assert.equal(attentionCall.query.includes('point_worker_users AS'), true);
+  assert.equal(attentionCall.query.includes('GROUP BY workplace_id, user_id'), true);
+  assert.equal(attentionCall.query.includes('uniqExact(pwp.user_id)'), false);
+  assert.equal(attentionCall.query.includes('uniqExactIf(pwp.user_id'), false);
   assert.match(attentionCall.query, /INNER JOIN worker_candidates AS wc\s+ON wc\.lon_cell = psc\.lon_cell\s+AND wc\.lat_cell = psc\.lat_cell/);
   assert.match(attentionCall.query, /INNER JOIN candidate_users AS cu\s+ON cu\.user_id = ifNull\(s\.profile_id, ''\)/);
 });

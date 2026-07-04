@@ -325,6 +325,9 @@ test('workplace attention metrics show 15km base and closing statuses SQL', () =
   assert.match(attention.sql, /greatCircleDistance/);
   assert.match(attention.sql, /15000/);
   assert.match(attention.sql, /appmetrica_sessions/);
+  assert.match(attention.sql, /point_worker_users AS/);
+  assert.match(attention.sql, /count\(\) AS total_workers_15km/);
+  assert.doesNotMatch(attention.sql, /uniqExact\(pwp\.user_id/);
   assert.doesNotMatch(attention.sql, /influence_weight/);
 });
 

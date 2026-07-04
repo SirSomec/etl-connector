@@ -2750,7 +2750,9 @@ function createApp({
     '/dashboards/worker-cancellations',
     requireAuth('worker-cancellations'),
     asyncRoute(async (req, res) => {
-      const dashboard = await loadWorkerCancellationsDashboardShell(client, req.query, new Date());
+      const dashboard = await loadWorkerCancellationsDashboardShell(client, req.query, new Date(), {
+        cache: dashboardSectionCache
+      });
 
       recordCurrentUserActivity(req, activityEventType(req));
       res

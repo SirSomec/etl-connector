@@ -1581,9 +1581,17 @@ function attentionPointsQuery(whereSql) {
       AND wc.worker_coordinates[2] BETWEEN psc.lat - (15000 / 111000) AND psc.lat + (15000 / 111000)
       AND greatCircleDistance(psc.lon, psc.lat, wc.worker_coordinates[1], wc.worker_coordinates[2]) <= 15000
   ),
+  point_worker_users AS (
+    SELECT
+      workplace_id,
+      user_id,
+      any(status) AS status
+    FROM point_worker_pairs
+    GROUP BY workplace_id, user_id
+  ),
   candidate_users AS (
     SELECT DISTINCT user_id
-    FROM point_worker_pairs
+    FROM point_worker_users
   ),
   active_session_users AS (
     SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
@@ -1596,20 +1604,20 @@ function attentionPointsQuery(whereSql) {
   ),
   point_workers AS (
     SELECT
-      pwp.workplace_id AS workplace_id,
-      uniqExact(pwp.user_id) AS total_workers_15km,
-      uniqExactIf(pwp.user_id, au.user_id != '') AS active_workers_30d_15km,
-      uniqExactIf(pwp.user_id, pwp.status = 'ready') AS total_status_ready,
-      uniqExactIf(pwp.user_id, pwp.status = 'booked') AS total_status_booked,
-      uniqExactIf(pwp.user_id, pwp.status = 'worked') AS total_status_worked,
-      uniqExactIf(pwp.user_id, pwp.status NOT IN ('ready', 'booked', 'worked')) AS total_status_other,
-      uniqExactIf(pwp.user_id, au.user_id != '' AND pwp.status = 'ready') AS active_status_ready,
-      uniqExactIf(pwp.user_id, au.user_id != '' AND pwp.status = 'booked') AS active_status_booked,
-      uniqExactIf(pwp.user_id, au.user_id != '' AND pwp.status = 'worked') AS active_status_worked,
-      uniqExactIf(pwp.user_id, au.user_id != '' AND pwp.status NOT IN ('ready', 'booked', 'worked')) AS active_status_other
-    FROM point_worker_pairs AS pwp
-    LEFT JOIN active_session_users AS au ON au.user_id = pwp.user_id
-    GROUP BY pwp.workplace_id
+      pwu.workplace_id AS workplace_id,
+      count() AS total_workers_15km,
+      countIf(au.user_id != '') AS active_workers_30d_15km,
+      countIf(pwu.status = 'ready') AS total_status_ready,
+      countIf(pwu.status = 'booked') AS total_status_booked,
+      countIf(pwu.status = 'worked') AS total_status_worked,
+      countIf(pwu.status NOT IN ('ready', 'booked', 'worked')) AS total_status_other,
+      countIf(au.user_id != '' AND pwu.status = 'ready') AS active_status_ready,
+      countIf(au.user_id != '' AND pwu.status = 'booked') AS active_status_booked,
+      countIf(au.user_id != '' AND pwu.status = 'worked') AS active_status_worked,
+      countIf(au.user_id != '' AND pwu.status NOT IN ('ready', 'booked', 'worked')) AS active_status_other
+    FROM point_worker_users AS pwu
+    LEFT JOIN active_session_users AS au ON au.user_id = pwu.user_id
+    GROUP BY pwu.workplace_id
   )
   SELECT
     ap.workplace_id AS workplace_id,

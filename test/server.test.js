@@ -318,6 +318,81 @@ function createFakeClient(overrides = {}) {
         return [{ total_workers: 1 }];
       }
 
+      if (operation === 'worker cancellations search candidates') {
+        return [
+          {
+            worker_id: 'worker-1',
+            full_name: 'Ivan Petrov',
+            phone: '+79990000000',
+            city: 'Moscow'
+          }
+        ];
+      }
+
+      if (operation === 'worker cancellations bounded shift facts') {
+        return [
+          {
+            job: 'confirmed-1',
+            worker_id: 'worker-1',
+            start: '2026-05-10 09:00:00',
+            status: 'confirmed',
+            is_successful_confirmed_shift: 1
+          },
+          {
+            job: 'confirmed-2',
+            worker_id: 'worker-1',
+            start: '2026-05-11 09:00:00',
+            status: 'confirmed',
+            is_successful_confirmed_shift: 1
+          },
+          {
+            job: 'confirmed-3',
+            worker_id: 'worker-1',
+            start: '2026-05-12 09:00:00',
+            status: 'confirmed',
+            is_successful_confirmed_shift: 1
+          },
+          {
+            job: 'confirmed-4',
+            worker_id: 'worker-1',
+            start: '2026-05-13 09:00:00',
+            status: 'confirmed',
+            is_successful_confirmed_shift: 1
+          },
+          {
+            job: 'confirmed-5',
+            worker_id: 'worker-1',
+            start: '2026-05-14 09:00:00',
+            status: 'confirmed',
+            is_successful_confirmed_shift: 1
+          },
+          {
+            job: 'cancelled-1',
+            worker_id: 'worker-1',
+            start: '2026-05-15 09:00:00',
+            status: 'cancelled',
+            is_successful_confirmed_shift: 0
+          },
+          {
+            job: 'failed-1',
+            worker_id: 'worker-1',
+            start: '2026-05-16 09:00:00',
+            status: 'failed',
+            is_successful_confirmed_shift: 0
+          }
+        ];
+      }
+
+      if (operation === 'worker cancellations bounded cancellation events') {
+        return [
+          {
+            job: 'cancelled-1',
+            is_worker_event: 1,
+            event_at: '2026-05-15 08:00:00'
+          }
+        ];
+      }
+
       if (operation === 'worker cancellations workers') {
         return [
           {
@@ -2629,14 +2704,17 @@ test('GET /dashboards/worker-cancellations/section passes search and numeric ran
     (call) => call[0] === 'queryJSONEachRow' && String(call[1]).startsWith('worker cancellations')
   );
 
-  assert.equal(workerCalls.length, 2);
-
-  for (const call of workerCalls) {
-    assert.equal(call[2].param_search, 'user-1');
-    assert.equal(call[2].param_confirmed_shifts_from, 5);
-    assert.equal(call[2].param_worker_cancellations_to, 4);
-    assert.equal(call[2].param_failed_shifts_from, 1);
-  }
+  assert.deepEqual(workerCalls.map((call) => call[1]), [
+    'worker cancellations search candidates',
+    'worker cancellations bounded shift facts',
+    'worker cancellations bounded cancellation events'
+  ]);
+  assert.equal(workerCalls[0][2].param_search, 'user-1');
+  assert.equal(workerCalls[1][2].param_search_worker_ids, "['worker-1']");
+  assert.equal(workerCalls[1][2].param_confirmed_shifts_from, 5);
+  assert.equal(workerCalls[1][2].param_worker_cancellations_to, 4);
+  assert.equal(workerCalls[1][2].param_failed_shifts_from, 1);
+  assert.equal(workerCalls[2][2].param_jobs, "['cancelled-1']");
 });
 
 test('GET /dashboards/worker-cancellations/details renders selected metric fragment', async () => {

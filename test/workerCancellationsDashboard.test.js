@@ -579,6 +579,9 @@ test('loadWorkerCancellationsDashboardShell returns empty dashboard with brand a
   assert.equal(calls[0].params.param_from, '2026-05-01 00:00:00');
   assert.equal(calls[0].params.param_to, '2026-06-01 00:00:00');
   assert.equal(calls[0].query.includes('INNER JOIN mg_clients AS c ON c._id = o.client'), true);
+  assert.equal((calls[0].query.match(/FROM mg_jobs AS j/g) || []).length, 1);
+  assert.equal(calls[0].query.includes('ARRAY JOIN'), true);
+  assert.equal(calls[0].query.includes('UNION ALL'), false);
   assert.equal(dashboard.filters.from, '2026-05-01');
   assert.equal(dashboard.filters.to, '2026-05-31');
   assert.deepEqual(dashboard.filters.client, ['Brand A']);
@@ -594,6 +597,54 @@ test('loadWorkerCancellationsDashboardShell returns empty dashboard with brand a
     hasPrevious: true,
     hasNext: false
   });
+});
+
+test('loadWorkerCancellationsDashboardShell caches filter options by normalized period', async () => {
+  let timestamp = Date.parse('2026-06-03T12:00:00.000Z');
+  const { calls, client } = createDashboardClient({
+    'worker cancellations filter options': [
+      { filter: 'client', value: 'Brand A' },
+      { filter: 'city', value: 'Moscow' }
+    ]
+  });
+  const cache = createDashboardSectionCache({ now: () => timestamp });
+  const input = {
+    from: '2026-05-01',
+    to: '2026-05-31'
+  };
+
+  const first = await loadWorkerCancellationsDashboardShell(
+    client,
+    input,
+    new Date('2026-06-03T12:00:00.000Z'),
+    { cache }
+  );
+  const second = await loadWorkerCancellationsDashboardShell(
+    client,
+    input,
+    new Date('2026-06-03T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.deepEqual(first.filterOptions.client, ['Brand A']);
+  assert.deepEqual(second.filterOptions.city, ['Moscow']);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations filter options'
+  ]);
+
+  timestamp = Date.parse('2026-06-04T00:00:00.000Z');
+
+  await loadWorkerCancellationsDashboardShell(
+    client,
+    input,
+    new Date('2026-06-03T12:00:00.000Z'),
+    { cache }
+  );
+
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations filter options',
+    'worker cancellations filter options'
+  ]);
 });
 
 test('loadWorkerCancellationsDashboardSection queries workers with safe params and SQL semantics', async () => {
@@ -797,7 +848,11 @@ test('loadWorkerCancellationsDashboardSection aggregates cancellation metrics by
 });
 
 test('loadWorkerCancellationsDashboardSection filters search and numeric ranges before pagination', async () => {
+  const searchCandidates = Array.from({ length: 51 }, (_, index) => ({
+    worker_id: `worker-${index + 1}`
+  }));
   const { calls, client } = createDashboardClient({
+    'worker cancellations search candidates': searchCandidates,
     'worker cancellations total workers': [{ total_workers: '7' }],
     'worker cancellations workers': [
       {
@@ -837,16 +892,22 @@ test('loadWorkerCancellationsDashboardSection filters search and numeric ranges 
   assert.equal(dashboard.filters.workerCancellationsTo, 4);
   assert.equal(dashboard.filters.failedShiftsFrom, 1);
   assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations search candidates',
     'worker cancellations total workers',
     'worker cancellations workers'
   ]);
 
-  for (const call of calls) {
+  assert.equal(calls[0].params.param_search, 'user-1');
+  assert.equal(calls[0].query.includes('FROM mg_workers AS w'), true);
+
+  for (const call of calls.slice(1)) {
     assert.equal(call.params.param_search, 'user-1');
+    assert.match(call.params.param_search_worker_ids, /^\['worker-1','worker-2'/);
     assert.equal(call.params.param_confirmed_shifts_from, 5);
     assert.equal(call.params.param_worker_cancellations_to, 4);
     assert.equal(call.params.param_failed_shifts_from, 1);
     assert.equal(call.query.includes('positionCaseInsensitive'), true);
+    assert.equal(call.query.includes('PREWHERE worker IN {search_worker_ids:Array(String)}'), true);
     assert.equal(call.query.includes('wm.worker_id'), true);
     assert.equal(call.query.includes('w.user'), true);
     assert.equal(call.query.includes('u.phone'), true);
@@ -857,14 +918,148 @@ test('loadWorkerCancellationsDashboardSection filters search and numeric ranges 
     assert.equal(call.query.includes('DROP TABLE'), false);
   }
 
-  const totalCall = calls[0];
-  const workersCall = calls[1];
+  const totalCall = calls[1];
+  const workersCall = calls[2];
   assert.equal(totalCall.query.includes('SELECT count() AS total_workers'), true);
   assert.equal(totalCall.query.includes('ORDER BY'), false);
   assert.equal(totalCall.query.includes('LIMIT'), false);
   assert.equal(workersCall.query.includes('ORDER BY worker_cancellations DESC, worker_id ASC'), true);
   assert.equal(workersCall.query.indexOf('WHERE') < workersCall.query.indexOf('ORDER BY'), true);
   assert.equal(workersCall.query.includes('LIMIT {limit:UInt64} OFFSET {offset:UInt64}'), true);
+});
+
+test('loadWorkerCancellationsDashboardSection prefilters bounded search candidates before metrics', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations search candidates': [
+      {
+        worker_id: 'worker-1',
+        full_name: 'Ivan Petrov',
+        phone: '+79990000000',
+        city: 'Moscow'
+      }
+    ],
+    'worker cancellations bounded shift facts': [
+      {
+        job: 'job-1',
+        worker_id: 'worker-1',
+        start: '2026-05-10 09:00:00',
+        status: 'confirmed',
+        is_successful_confirmed_shift: 1
+      },
+      {
+        job: 'job-2',
+        worker_id: 'worker-1',
+        start: '2026-05-11 09:00:00',
+        status: 'cancelled',
+        is_successful_confirmed_shift: 0
+      },
+      {
+        job: 'job-3',
+        worker_id: 'worker-1',
+        start: '2026-05-12 09:00:00',
+        status: 'failed',
+        is_successful_confirmed_shift: 0
+      }
+    ],
+    'worker cancellations bounded cancellation events': [
+      {
+        job: 'job-2',
+        is_worker_event: 1,
+        event_at: '2026-05-10 18:00:00'
+      }
+    ]
+  });
+
+  const dashboard = await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      search: '+79990000000'
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.equal(dashboard.workers.length, 1);
+  assert.deepEqual(dashboard.workers[0], {
+    workerId: 'worker-1',
+    fullName: 'Ivan Petrov',
+    phone: '+79990000000',
+    city: 'Moscow',
+    confirmedShifts: 1,
+    workerCancellations: 1,
+    workerCancellations24h: 1,
+    postStartCancellations: 0,
+    failedShifts: 1,
+    riskReasons: [
+      { kind: 'worker-cancellations-24h', label: '1 отмена менее чем за 24ч' },
+      { kind: 'failed-shifts', label: '1 failed-смена' }
+    ],
+    riskSeverity: 'medium'
+  });
+  assert.deepEqual(dashboard.pagination, {
+    page: 1,
+    pageSize: 100,
+    totalWorkers: 1,
+    totalPages: 1,
+    hasPrevious: false,
+    hasNext: false
+  });
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations search candidates',
+    'worker cancellations bounded shift facts',
+    'worker cancellations bounded cancellation events'
+  ]);
+
+  const candidateCall = calls[0];
+
+  assert.equal(candidateCall.params.param_search, '+79990000000');
+  assert.equal(candidateCall.params.param_search_candidate_limit, 1001);
+  assert.equal(candidateCall.query.includes('FROM mg_workers AS w'), true);
+  assert.equal(candidateCall.query.includes('LEFT JOIN mg_users AS u ON w.user = u._id'), true);
+  assert.equal(candidateCall.query.includes('UNION ALL'), true);
+  assert.equal(candidateCall.query.includes('FROM mg_jobs AS j'), true);
+  assert.equal(candidateCall.query.includes('LIMIT {search_candidate_limit:UInt64}'), true);
+
+  const shiftFactsCall = calls[1];
+  const eventsCall = calls[2];
+
+  assert.equal(shiftFactsCall.params.param_search_worker_ids, "['worker-1']");
+  assert.equal(shiftFactsCall.query.includes('PREWHERE worker IN {search_worker_ids:Array(String)}'), true);
+  assert.equal(shiftFactsCall.query.includes('INNER JOIN mg_orders AS o ON o._id = j.source'), true);
+  assert.equal(eventsCall.params.param_jobs, "['job-2']");
+  assert.equal(eventsCall.query.includes('PREWHERE job IN {jobs:Array(String)}'), true);
+});
+
+test('loadWorkerCancellationsDashboardSection skips heavy metrics when search has no candidates', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker cancellations search candidates': []
+  });
+
+  const dashboard = await loadWorkerCancellationsDashboardSection(
+    client,
+    {
+      from: '2026-05-01',
+      to: '2026-05-31',
+      search: '+79990009999'
+    },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z')
+  );
+
+  assert.deepEqual(dashboard.workers, []);
+  assert.deepEqual(dashboard.pagination, {
+    page: 1,
+    pageSize: 100,
+    totalWorkers: 0,
+    totalPages: 1,
+    hasPrevious: false,
+    hasNext: false
+  });
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'worker cancellations search candidates'
+  ]);
 });
 
 test('loadWorkerCancellationsDetails queries selected metric with shift timeline and workplace context', async () => {

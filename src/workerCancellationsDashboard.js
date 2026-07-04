@@ -11,6 +11,9 @@ const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_SORT = 'workerCancellations24h';
 const DEFAULT_DIRECTION = 'desc';
 const DETAIL_LIMIT = 500;
+const SEARCH_CANDIDATE_LIMIT = 1001;
+const SEARCH_PREFILTER_MAX_WORKERS = SEARCH_CANDIDATE_LIMIT - 1;
+const BOUNDED_SEARCH_WORKER_LIMIT = 50;
 const ALLOWED_PAGE_SIZES = new Set([50, 100, 200, 500]);
 const ALLOWED_DIRECTIONS = new Set(['asc', 'desc']);
 const WORKER_CANCELLATIONS_SECTION_NAMES = ['workers'];
@@ -244,6 +247,23 @@ function phoneValue(value) {
   const text = textValue(value);
 
   return text.replace(/^(\+?\d+)\.0$/, '$1');
+}
+
+function clickHouseFlag(value) {
+  return value === true || value === 1 || value === '1';
+}
+
+function parseClickHouseDateTimeMs(value) {
+  const text = textValue(value);
+
+  if (text === '') {
+    return Number.NaN;
+  }
+
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+  const timestamp = Date.parse(`${normalized}Z`);
+
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN;
 }
 
 function pluralizeRu(count, one, few, many) {
@@ -517,6 +537,17 @@ function cacheKeyForWorkerCancellationsSection(section, filters) {
   });
 }
 
+function cacheKeyForWorkerCancellationFilterOptions(filters) {
+  return JSON.stringify({
+    board: 'worker-cancellations',
+    section: 'filter-options',
+    filters: {
+      from: filters.from,
+      to: filters.to
+    }
+  });
+}
+
 function paramsForFilters(filters) {
   const params = {
     param_from: filters.fromDateTime,
@@ -527,6 +558,10 @@ function paramsForFilters(filters) {
 
   if (filters.search) {
     params.param_search = filters.search;
+  }
+
+  if (Array.isArray(filters.searchWorkerIds) && filters.searchWorkerIds.length > 0) {
+    params.param_search_worker_ids = serializeStringArray(filters.searchWorkerIds);
   }
 
   if (filters.client.length > 0) {
@@ -551,6 +586,15 @@ function paramsForFilters(filters) {
   }
 
   return params;
+}
+
+function paramsForSearchCandidates(filters) {
+  return {
+    param_from: filters.fromDateTime,
+    param_to: filters.toExclusiveDateTime,
+    param_search: filters.search,
+    param_search_candidate_limit: SEARCH_CANDIDATE_LIMIT
+  };
 }
 
 function paramsForDetails(detailInput) {
@@ -585,11 +629,15 @@ function hasWorkerCancellationMetricFilters(filters) {
   });
 }
 
-function workerFullNameExpression() {
+function workerFullNameExpression({
+  workerAlias = 'w',
+  userAlias = 'u',
+  fallbackExpression = 'wm.worker_id'
+} = {}) {
   return `coalesce(
-      nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
-      nullIf(trim(ifNull(w.full_name, '')), ''),
-      wm.worker_id
+      nullIf(trim(concat(ifNull(${userAlias}.lastname, ''), ' ', ifNull(${userAlias}.firstname, ''), ' ', ifNull(${userAlias}.middlename, ''))), ''),
+      nullIf(trim(ifNull(${workerAlias}.full_name, '')), ''),
+      ${fallbackExpression}
     )`;
 }
 
@@ -610,6 +658,62 @@ function workerCancellationCityCondition(filters, workplaceAlias = 'ow') {
   return filters.city.length > 0 ? `\n      AND ${workplaceAlias}.address__city IN {cities:Array(String)}` : '';
 }
 
+function hasWorkerCancellationSearchWorkerIds(filters) {
+  return Array.isArray(filters.searchWorkerIds) && filters.searchWorkerIds.length > 0;
+}
+
+function workerCancellationJobsSourceSql(filters = {}) {
+  if (!hasWorkerCancellationSearchWorkerIds(filters)) {
+    return 'mg_jobs AS j';
+  }
+
+  return `(
+      SELECT
+        _id,
+        worker,
+        start,
+        status,
+        source,
+        hours,
+        payment,
+        salary_per_job,
+        salary_per_hour,
+        start_fact,
+        finish_fact
+      FROM mg_jobs
+      PREWHERE worker IN {search_worker_ids:Array(String)}
+      WHERE start >= {from:DateTime}
+        AND start < {to:DateTime}
+        AND ifNull(worker, '') != ''
+        AND ifNull(deleted, 0) = 0
+    ) AS j`;
+}
+
+function workerCancellationShiftFactConditions(filters = {}) {
+  const conditions = [];
+
+  if (!hasWorkerCancellationSearchWorkerIds(filters)) {
+    conditions.push(
+      'j.start >= {from:DateTime}',
+      'j.start < {to:DateTime}',
+      "ifNull(j.worker, '') != ''",
+      'ifNull(j.deleted, 0) = 0'
+    );
+  }
+
+  conditions.push(actualOrderDomainCondition('o', 'c', 'ct'));
+
+  if (filters.client.length > 0) {
+    conditions.push('c.title IN {clients:Array(String)}');
+  }
+
+  if (filters.city.length > 0) {
+    conditions.push('ow.address__city IN {cities:Array(String)}');
+  }
+
+  return conditions.join('\n      AND ');
+}
+
 function workerCancellationMetricsCtes(filters = {}) {
   return `WITH shift_facts AS (
     SELECT
@@ -618,13 +722,9 @@ function workerCancellationMetricsCtes(filters = {}) {
       j.start AS start,
       ifNull(j.status, '') AS status,
       ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift
-    FROM mg_jobs AS j
+    FROM ${workerCancellationJobsSourceSql(filters)}
     ${workerShiftActualOrderJoinsSql()}
-    WHERE j.start >= {from:DateTime}
-      AND j.start < {to:DateTime}
-      AND ifNull(j.worker, '') != ''
-      AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}${workerCancellationCityCondition(filters, 'ow')}
+    WHERE ${workerCancellationShiftFactConditions(filters)}
   ),
   cancelled_shift_facts AS (
     SELECT
@@ -742,13 +842,9 @@ function totalWorkersQuery(filters = {}) {
   return `WITH shift_facts AS (
     SELECT
       j.worker AS worker_id
-    FROM mg_jobs AS j
+    FROM ${workerCancellationJobsSourceSql(filters)}
     ${workerShiftActualOrderJoinsSql()}
-    WHERE j.start >= {from:DateTime}
-      AND j.start < {to:DateTime}
-      AND ifNull(j.worker, '') != ''
-      AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}${workerCancellationClientCondition(filters, 'c')}${workerCancellationCityCondition(filters, 'ow')}
+    WHERE ${workerCancellationShiftFactConditions(filters)}
     GROUP BY worker_id
   )
   SELECT
@@ -875,52 +971,363 @@ function workerCancellationDetailsQuery(metric, filters = {}) {
   FORMAT JSONEachRow`;
 }
 
+function workerCancellationSearchCandidatesQuery() {
+  return `WITH raw_candidates AS (
+    SELECT
+      ifNull(w._id, '') AS worker_id,
+      ${workerFullNameExpression({ fallbackExpression: "ifNull(w._id, '')" })} AS full_name,
+      ifNull(u.phone, '') AS phone,
+      ifNull(w.full_address__city, '') AS city
+    FROM mg_workers AS w
+    LEFT JOIN mg_users AS u ON w.user = u._id
+    WHERE ifNull(w._id, '') != ''
+      AND (
+        positionCaseInsensitive(ifNull(w._id, ''), {search:String}) > 0
+        OR positionCaseInsensitive(ifNull(w.user, ''), {search:String}) > 0
+        OR positionCaseInsensitive(ifNull(u.phone, ''), {search:String}) > 0
+        OR positionCaseInsensitive(${workerFullNameExpression({ fallbackExpression: "ifNull(w._id, '')" })}, {search:String}) > 0
+        OR positionCaseInsensitive(ifNull(w.full_address__city, ''), {search:String}) > 0
+      )
+    UNION ALL
+    SELECT
+      j.worker AS worker_id,
+      '' AS full_name,
+      '' AS phone,
+      '' AS city
+    FROM mg_jobs AS j
+    WHERE j.start >= {from:DateTime}
+      AND j.start < {to:DateTime}
+      AND ifNull(j.worker, '') != ''
+      AND ifNull(j.deleted, 0) = 0
+      AND positionCaseInsensitive(j.worker, {search:String}) > 0
+    GROUP BY worker_id
+  )
+  SELECT
+    worker_id,
+    anyIf(full_name, full_name != '') AS full_name,
+    anyIf(phone, phone != '') AS phone,
+    anyIf(city, city != '') AS city
+  FROM raw_candidates
+  WHERE worker_id != ''
+  GROUP BY worker_id
+  ORDER BY worker_id
+  LIMIT {search_candidate_limit:UInt64}
+  FORMAT JSONEachRow`;
+}
+
+function boundedWorkerCancellationShiftFactsQuery(filters = {}) {
+  return `SELECT
+    j._id AS job,
+    j.worker AS worker_id,
+    j.start AS start,
+    ifNull(j.status, '') AS status,
+    ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift
+  FROM ${workerCancellationJobsSourceSql(filters)}
+  ${workerShiftActualOrderJoinsSql()}
+  WHERE ${workerCancellationShiftFactConditions(filters)}
+  FORMAT JSONEachRow`;
+}
+
+function boundedWorkerCancellationEventsQuery() {
+  return `SELECT
+    h.job AS job,
+    h.initiator = 'worker' AS is_worker_event,
+    coalesce(h.createdAt, h.updatedAt) AS event_at
+  FROM mg_job_history AS h
+  PREWHERE job IN {jobs:Array(String)}
+  WHERE h.status = 'cancelled'
+  FORMAT JSONEachRow`;
+}
+
 function workerCancellationFilterOptionsQuery() {
   return `SELECT
-    'client' AS filter,
-    ifNull(c.title, '') AS value
-  FROM mg_jobs AS j
-  ${workerShiftActualOrderJoinsSql()}
-  WHERE j.start >= {from:DateTime}
-    AND j.start < {to:DateTime}
-    AND ifNull(j.worker, '') != ''
-    AND ifNull(j.deleted, 0) = 0
-    AND ${actualOrderDomainCondition('o', 'c', 'ct')}
-  GROUP BY value
-  HAVING value != ''
-  UNION ALL
-  SELECT
-    'city' AS filter,
-    ifNull(ow.address__city, '') AS value
-  FROM mg_jobs AS j
-  ${workerShiftActualOrderJoinsSql()}
-  WHERE j.start >= {from:DateTime}
-    AND j.start < {to:DateTime}
-    AND ifNull(j.worker, '') != ''
-    AND ifNull(j.deleted, 0) = 0
-    AND ${actualOrderDomainCondition('o', 'c', 'ct')}
-  GROUP BY value
-  HAVING value != ''
+    filter,
+    value
+  FROM (
+    SELECT
+      ifNull(c.title, '') AS client,
+      ifNull(ow.address__city, '') AS city
+    FROM mg_jobs AS j
+    ${workerShiftActualOrderJoinsSql()}
+    WHERE j.start >= {from:DateTime}
+      AND j.start < {to:DateTime}
+      AND ifNull(j.worker, '') != ''
+      AND ifNull(j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('o', 'c', 'ct')}
+  )
+  ARRAY JOIN ['client', 'city'] AS filter, [client, city] AS value
+  WHERE value != ''
+  GROUP BY filter, value
   ORDER BY filter, value
   FORMAT JSONEachRow`;
 }
 
+function mergeWorkerCancellationSearchCandidateRows(rows = []) {
+  const candidates = [];
+  const seen = new Set();
+
+  for (const row of rows) {
+    const workerId = textValue(row.worker_id);
+
+    if (workerId === '' || seen.has(workerId)) {
+      continue;
+    }
+
+    seen.add(workerId);
+    candidates.push({
+      workerId,
+      fullName: textValue(row.full_name),
+      phone: phoneValue(row.phone),
+      city: textValue(row.city)
+    });
+  }
+
+  return candidates;
+}
+
+async function resolveWorkerCancellationSearchCandidates(client, filters) {
+  if (!filters.search) {
+    return null;
+  }
+
+  const rows = await client.queryJSONEachRow(
+    workerCancellationSearchCandidatesQuery(),
+    paramsForSearchCandidates(filters),
+    'worker cancellations search candidates'
+  );
+  const candidates = mergeWorkerCancellationSearchCandidateRows(rows);
+
+  if (candidates.length > SEARCH_PREFILTER_MAX_WORKERS) {
+    return null;
+  }
+
+  return candidates;
+}
+
+function createBoundedMetricAccumulator(workerId) {
+  return {
+    workerId,
+    confirmedShifts: new Set(),
+    workerCancellations: new Set(),
+    workerCancellations24h: new Set(),
+    postStartCancellations: new Set(),
+    failedShifts: new Set()
+  };
+}
+
+function metricAccumulatorRows(accumulators, candidatesByWorkerId) {
+  return Array.from(accumulators.values()).map((metrics) => {
+    const candidate = candidatesByWorkerId.get(metrics.workerId) || {};
+
+    return {
+      worker_id: metrics.workerId,
+      full_name: candidate.fullName || metrics.workerId,
+      phone: candidate.phone || '',
+      city: candidate.city || '',
+      confirmed_shifts: metrics.confirmedShifts.size,
+      worker_cancellations: metrics.workerCancellations.size,
+      worker_cancellations_24h: metrics.workerCancellations24h.size,
+      post_start_cancellations: metrics.postStartCancellations.size,
+      failed_shifts: metrics.failedShifts.size
+    };
+  });
+}
+
+function boundedRowPassesMetricFilters(row, filters) {
+  for (const metric of WORKER_CANCELLATION_NUMERIC_FILTERS) {
+    const value = numberValue(row[metric.column]);
+    const from = filters[`${metric.key}From`];
+    const to = filters[`${metric.key}To`];
+
+    if (typeof from !== 'undefined' && value < from) {
+      return false;
+    }
+
+    if (typeof to !== 'undefined' && value > to) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function compareBoundedWorkerRows(filters) {
+  const column = SORT_COLUMNS[filters.sort] || SORT_COLUMNS[DEFAULT_SORT];
+  const directionFactor = filters.direction === 'asc' ? 1 : -1;
+
+  return (left, right) => {
+    const leftValue = left[column];
+    const rightValue = right[column];
+    const leftNumber = numberValue(leftValue);
+    const rightNumber = numberValue(rightValue);
+    const numeric = Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+      && !['full_name', 'phone', 'city'].includes(column);
+    let comparison;
+
+    if (numeric) {
+      comparison = leftNumber === rightNumber ? 0 : (leftNumber < rightNumber ? -1 : 1);
+    } else {
+      comparison = textValue(leftValue).localeCompare(textValue(rightValue), 'ru');
+    }
+
+    if (comparison !== 0) {
+      return comparison * directionFactor;
+    }
+
+    return textValue(left.worker_id).localeCompare(textValue(right.worker_id), 'ru');
+  };
+}
+
+function mergeBoundedWorkerCancellationRows(filters, candidates, shiftRows = [], eventRows = []) {
+  const candidatesByWorkerId = new Map(candidates.map((candidate) => [candidate.workerId, candidate]));
+  const accumulators = new Map();
+  const shiftsByJob = new Map();
+
+  for (const row of shiftRows) {
+    const job = textValue(row.job);
+    const workerId = textValue(row.worker_id);
+
+    if (job === '' || workerId === '') {
+      continue;
+    }
+
+    if (!accumulators.has(workerId)) {
+      accumulators.set(workerId, createBoundedMetricAccumulator(workerId));
+    }
+
+    const metrics = accumulators.get(workerId);
+    const status = textValue(row.status);
+    const startMs = parseClickHouseDateTimeMs(row.start);
+
+    shiftsByJob.set(job, {
+      workerId,
+      startMs
+    });
+
+    if (clickHouseFlag(row.is_successful_confirmed_shift)) {
+      metrics.confirmedShifts.add(job);
+    }
+
+    if (status === 'failed') {
+      metrics.failedShifts.add(job);
+    }
+  }
+
+  for (const row of eventRows) {
+    const job = textValue(row.job);
+    const shift = shiftsByJob.get(job);
+
+    if (!shift) {
+      continue;
+    }
+
+    const metrics = accumulators.get(shift.workerId);
+    const eventAtMs = parseClickHouseDateTimeMs(row.event_at);
+
+    if (!metrics || !Number.isFinite(eventAtMs) || !Number.isFinite(shift.startMs)) {
+      continue;
+    }
+
+    if (clickHouseFlag(row.is_worker_event)) {
+      metrics.workerCancellations.add(job);
+
+      if (eventAtMs >= shift.startMs - 24 * 60 * 60 * 1000 && eventAtMs < shift.startMs) {
+        metrics.workerCancellations24h.add(job);
+      }
+    }
+
+    if (eventAtMs >= shift.startMs) {
+      metrics.postStartCancellations.add(job);
+    }
+  }
+
+  const filteredRows = metricAccumulatorRows(accumulators, candidatesByWorkerId)
+    .filter((row) => boundedRowPassesMetricFilters(row, filters))
+    .sort(compareBoundedWorkerRows(filters));
+
+  return {
+    totalRows: [{ total_workers: filteredRows.length }],
+    workerRows: filteredRows.slice(filters.offset, filters.offset + filters.pageSize)
+  };
+}
+
+async function loadBoundedWorkerCancellationRows(client, filters, candidates) {
+  const searchWorkerIds = candidates.map((candidate) => candidate.workerId);
+  const queryFilters = {
+    ...filters,
+    searchWorkerIds
+  };
+  const shiftRows = await client.queryJSONEachRow(
+    boundedWorkerCancellationShiftFactsQuery(queryFilters),
+    paramsForFilters(queryFilters),
+    'worker cancellations bounded shift facts'
+  );
+  const cancelledJobIds = Array.from(new Set(
+    shiftRows
+      .filter((row) => textValue(row.status) === 'cancelled')
+      .map((row) => textValue(row.job))
+      .filter((job) => job !== '')
+  ));
+  const eventRows = cancelledJobIds.length === 0
+    ? []
+    : await client.queryJSONEachRow(
+        boundedWorkerCancellationEventsQuery(),
+        { param_jobs: serializeStringArray(cancelledJobIds) },
+        'worker cancellations bounded cancellation events'
+      );
+
+  return mergeBoundedWorkerCancellationRows(filters, candidates, shiftRows, eventRows);
+}
+
 async function loadWorkerCancellationRows(client, filters) {
-  const params = paramsForFilters(filters);
+  const searchCandidates = await resolveWorkerCancellationSearchCandidates(client, filters);
+
+  if (Array.isArray(searchCandidates) && searchCandidates.length === 0) {
+    return {
+      totalRows: [{ total_workers: 0 }],
+      workerRows: []
+    };
+  }
+
+  if (Array.isArray(searchCandidates) && searchCandidates.length <= BOUNDED_SEARCH_WORKER_LIMIT) {
+    return loadBoundedWorkerCancellationRows(client, filters, searchCandidates);
+  }
+
+  const searchWorkerIds = Array.isArray(searchCandidates)
+    ? searchCandidates.map((candidate) => candidate.workerId)
+    : null;
+  const queryFilters = Array.isArray(searchWorkerIds)
+    ? {
+        ...filters,
+        searchWorkerIds
+      }
+    : filters;
+  const params = paramsForFilters(queryFilters);
   const [totalRows, workerRows] = await Promise.all([
     client.queryJSONEachRow(
-      totalWorkersQuery(filters),
+      totalWorkersQuery(queryFilters),
       params,
       'worker cancellations total workers'
     ),
     client.queryJSONEachRow(
-      workersQuery(filters),
+      workersQuery(queryFilters),
       params,
       'worker cancellations workers'
     )
   ]);
 
   return { totalRows, workerRows };
+}
+
+async function loadWorkerCancellationFilterOptionRows(client, filters) {
+  return client.queryJSONEachRow(
+    workerCancellationFilterOptionsQuery(),
+    {
+      param_from: filters.fromDateTime,
+      param_to: filters.toExclusiveDateTime
+    },
+    'worker cancellations filter options'
+  );
 }
 
 async function loadWorkerCancellationsDetails(client, input = {}, now = new Date()) {
@@ -934,15 +1341,12 @@ async function loadWorkerCancellationsDetails(client, input = {}, now = new Date
   return mergeWorkerCancellationDetails(detailInput, detailRows);
 }
 
-async function loadWorkerCancellationsDashboardShell(client, input = {}, now = new Date()) {
+async function loadWorkerCancellationsDashboardShell(client, input = {}, now = new Date(), options = {}) {
   const filters = normalizeWorkerCancellationFilters(input, now);
-  const filterOptionRows = await client.queryJSONEachRow(
-    workerCancellationFilterOptionsQuery(),
-    {
-      param_from: filters.fromDateTime,
-      param_to: filters.toExclusiveDateTime
-    },
-    'worker cancellations filter options'
+  const filterOptionRows = await readThroughCache(
+    options.cache,
+    cacheKeyForWorkerCancellationFilterOptions(filters),
+    () => loadWorkerCancellationFilterOptionRows(client, filters)
   );
 
   return {

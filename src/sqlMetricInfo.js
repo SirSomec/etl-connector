@@ -902,9 +902,17 @@ point_worker_pairs AS (
     AND wc.worker_coordinates[2] BETWEEN psc.lat - (15000 / 111000) AND psc.lat + (15000 / 111000)
     AND greatCircleDistance(psc.lon, psc.lat, wc.worker_coordinates[1], wc.worker_coordinates[2]) <= 15000
 ),
+point_worker_users AS (
+  SELECT
+    workplace_id,
+    user_id,
+    any(status) AS status
+  FROM point_worker_pairs
+  GROUP BY workplace_id, user_id
+),
 candidate_users AS (
   SELECT DISTINCT user_id
-  FROM point_worker_pairs
+  FROM point_worker_users
 ),
 active_session_users AS (
   SELECT DISTINCT ifNull(s.profile_id, '') AS user_id
@@ -914,6 +922,15 @@ active_session_users AS (
   WHERE ifNull(s.profile_id, '') != ''
     AND parseDateTimeBestEffortOrNull(s.session_start_datetime) >= {active_from:DateTime}
     AND parseDateTimeBestEffortOrNull(s.session_start_datetime) < {active_to:DateTime}
+),
+point_workers AS (
+  SELECT
+    pwu.workplace_id AS workplace_id,
+    count() AS total_workers_15km,
+    countIf(au.user_id != '') AS active_workers_30d_15km
+  FROM point_worker_users AS pwu
+  LEFT JOIN active_session_users AS au ON au.user_id = pwu.user_id
+  GROUP BY pwu.workplace_id
 )
 SELECT
   ap.workplace_id,
@@ -923,13 +940,11 @@ SELECT
   pp.free_professions_7d,
   pp.free_profession_counts_7d,
   ap.max_daily_free,
-  uniqExact(pwp.user_id) AS total_workers_15km,
-  uniqExactIf(pwp.user_id, au.user_id != '') AS active_workers_30d_15km
+  ifNull(pw.total_workers_15km, 0) AS total_workers_15km,
+  ifNull(pw.active_workers_30d_15km, 0) AS active_workers_30d_15km
 FROM attention_points AS ap
-LEFT JOIN point_worker_pairs AS pwp ON ap.workplace_id = pwp.workplace_id
-LEFT JOIN active_session_users AS au ON au.user_id = pwp.user_id
+LEFT JOIN point_workers AS pw ON ap.workplace_id = pw.workplace_id
 LEFT JOIN point_professions AS pp ON ap.workplace_id = pp.workplace_id
-GROUP BY ap.workplace_id, ap.ordered_7d, ap.covered_7d, ap.free_7d, pp.free_professions_7d, pp.free_profession_counts_7d, ap.max_daily_free
 ORDER BY free_7d DESC, max_daily_free DESC
 FORMAT JSONEachRow`;
 

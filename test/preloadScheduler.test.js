@@ -168,6 +168,178 @@ test('preload scheduler records failed loader run with sanitized error', async (
   assert.equal(result.rowsWritten, 0);
 });
 
+test('preload scheduler retries transient loader failures inside the same run', async () => {
+  const finishCalls = [];
+  const loadInputs = [];
+  const retryDelays = [];
+  const store = {
+    startRun(input) {
+      return { id: 24, ...input };
+    },
+    finishRun(runId, input) {
+      finishCalls.push({ runId, input });
+      return { id: runId, ...input };
+    },
+    getJob() {
+      return null;
+    }
+  };
+  const scheduler = createPreloadScheduler({
+    store,
+    loaders: {
+      [WORKPLACE_ANALYSIS_PRELOAD_JOB_ID]: async (input) => {
+        loadInputs.push(input);
+
+        if (loadInputs.length === 1) {
+          throw new Error('workplace analysis active gigers 5km failed: socket hang up');
+        }
+
+        return { rowsWritten: 7 };
+      }
+    },
+    sanitizeError: (error) => String(error && error.message),
+    retryDelayFn(delayMs) {
+      retryDelays.push(delayMs);
+      return Promise.resolve();
+    }
+  });
+
+  const result = await scheduler.runNow({
+    jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+    trigger: 'manual',
+    fromDate: '2026-06-01',
+    toDate: '2026-08-01'
+  });
+
+  assert.equal(loadInputs.length, 2);
+  assert.deepEqual(loadInputs[0], {
+    fromDate: '2026-06-01',
+    toDate: '2026-08-01'
+  });
+  assert.deepEqual(loadInputs[1], loadInputs[0]);
+  assert.deepEqual(retryDelays, [180000]);
+  assert.deepEqual(finishCalls, [
+    {
+      runId: 24,
+      input: {
+        status: 'success',
+        rowsWritten: 7
+      }
+    }
+  ]);
+  assert.equal(result.status, 'success');
+  assert.equal(result.rowsWritten, 7);
+});
+
+test('preload scheduler stops transient retries after five total attempts', async () => {
+  const finishCalls = [];
+  const retryDelays = [];
+  let loads = 0;
+  const store = {
+    startRun(input) {
+      return { id: 26, ...input };
+    },
+    finishRun(runId, input) {
+      finishCalls.push({ runId, input });
+      return { id: runId, ...input };
+    },
+    getJob() {
+      return null;
+    }
+  };
+  const scheduler = createPreloadScheduler({
+    store,
+    loaders: {
+      [WORKPLACE_ANALYSIS_PRELOAD_JOB_ID]: async () => {
+        loads += 1;
+        throw new Error('workplace analysis attention worker metrics failed: socket hang up');
+      }
+    },
+    sanitizeError: (error) => `safe: ${error.message}`,
+    retryDelayFn(delayMs) {
+      retryDelays.push(delayMs);
+      return Promise.resolve();
+    }
+  });
+
+  const result = await scheduler.runNow({
+    jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+    trigger: 'manual',
+    fromDate: '2026-06-01',
+    toDate: '2026-08-01'
+  });
+
+  assert.equal(loads, 5);
+  assert.deepEqual(retryDelays, [180000, 180000, 180000, 180000]);
+  assert.deepEqual(finishCalls, [
+    {
+      runId: 26,
+      input: {
+        status: 'failed',
+        errorMessage: 'safe: workplace analysis attention worker metrics failed: socket hang up',
+        rowsWritten: 0
+      }
+    }
+  ]);
+  assert.equal(result.status, 'failed');
+  assert.equal(
+    result.errorMessage,
+    'safe: workplace analysis attention worker metrics failed: socket hang up'
+  );
+});
+
+test('preload scheduler does not retry deterministic ClickHouse failures', async () => {
+  const finishCalls = [];
+  let loads = 0;
+  const errorMessage = [
+    'workplace analysis attention points failed with HTTP 500:',
+    '{"exception":"Code: 241. DB::Exception: MEMORY_LIMIT_EXCEEDED"}'
+  ].join(' ');
+  const store = {
+    startRun(input) {
+      return { id: 25, ...input };
+    },
+    finishRun(runId, input) {
+      finishCalls.push({ runId, input });
+      return { id: runId, ...input };
+    },
+    getJob() {
+      return null;
+    }
+  };
+  const scheduler = createPreloadScheduler({
+    store,
+    loaders: {
+      [WORKPLACE_ANALYSIS_PRELOAD_JOB_ID]: async () => {
+        loads += 1;
+        throw new Error(errorMessage);
+      }
+    },
+    sanitizeError: (error) => `safe: ${error.message}`
+  });
+
+  const result = await scheduler.runNow({
+    jobId: WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
+    trigger: 'manual',
+    fromDate: '2026-06-01',
+    toDate: '2026-08-01'
+  });
+
+  assert.equal(loads, 1);
+  assert.deepEqual(finishCalls, [
+    {
+      runId: 25,
+      input: {
+        status: 'failed',
+        errorMessage: `safe: ${errorMessage}`,
+        rowsWritten: 0
+      }
+    }
+  ]);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.errorMessage, `safe: ${errorMessage}`);
+});
+
 test('preload scheduler clears running marker after missing loader failure', async () => {
   const startRuns = [];
   const finishCalls = [];

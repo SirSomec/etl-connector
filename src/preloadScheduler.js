@@ -6,6 +6,22 @@ const {
 const MOSCOW_UTC_OFFSET_HOURS = 3;
 const MIN_SCHEDULE_REFRESH_DAYS = 45;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_TRANSIENT_MAX_ATTEMPTS = 5;
+const DEFAULT_TRANSIENT_RETRY_DELAY_MS = 3 * 60 * 1000;
+const TRANSIENT_PRELOAD_ERROR_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET'
+]);
+const TRANSIENT_PRELOAD_ERROR_PATTERNS = [
+  /\bsocket hang up\b/i,
+  /\bresponse aborted\b/i,
+  /\bsocket closed\b/i
+];
 
 function formatDateUTC(date) {
   return [
@@ -88,16 +104,124 @@ function errorMessageFrom(error, sanitizeError) {
   }
 }
 
+function errorValuesFrom(error, depth = 0) {
+  if (!error || depth > 3) {
+    return [];
+  }
+
+  if (typeof error === 'string') {
+    return [error];
+  }
+
+  const values = [];
+
+  for (const key of ['code', 'name', 'message']) {
+    if (error[key]) {
+      values.push(String(error[key]));
+    }
+  }
+
+  if (error.cause) {
+    values.push(...errorValuesFrom(error.cause, depth + 1));
+  }
+
+  if (Array.isArray(error.errors)) {
+    for (const nested of error.errors) {
+      values.push(...errorValuesFrom(nested, depth + 1));
+    }
+  }
+
+  return values;
+}
+
+function isTransientPreloadError(error) {
+  return errorValuesFrom(error).some((value) => {
+    const normalized = value.toUpperCase();
+
+    return (
+      TRANSIENT_PRELOAD_ERROR_CODES.has(normalized) ||
+      TRANSIENT_PRELOAD_ERROR_PATTERNS.some((pattern) => pattern.test(value))
+    );
+  });
+}
+
+function normalizeTransientMaxAttempts(value) {
+  if (value === undefined) {
+    return DEFAULT_TRANSIENT_MAX_ATTEMPTS;
+  }
+
+  const attempts = Number(value);
+
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    return DEFAULT_TRANSIENT_MAX_ATTEMPTS;
+  }
+
+  return attempts;
+}
+
+function normalizeTransientRetryDelayMs(value) {
+  if (value === undefined) {
+    return DEFAULT_TRANSIENT_RETRY_DELAY_MS;
+  }
+
+  const delayMs = Number(value);
+
+  if (!Number.isFinite(delayMs) || delayMs < 0) {
+    return DEFAULT_TRANSIENT_RETRY_DELAY_MS;
+  }
+
+  return delayMs;
+}
+
+async function runLoaderWithTransientRetries(
+  loader,
+  input,
+  transientMaxAttempts,
+  transientRetryDelayMs,
+  retryDelayFn
+) {
+  let attempt = 1;
+
+  while (true) {
+    try {
+      return await loader(input);
+    } catch (error) {
+      if (attempt >= transientMaxAttempts || !isTransientPreloadError(error)) {
+        throw error;
+      }
+
+      attempt += 1;
+      await retryDelayFn(transientRetryDelayMs);
+    }
+  }
+}
+
 function createPreloadScheduler({
   store,
   loaders,
   sanitizeError = (error) => error.message,
   now = () => new Date(),
   setTimeoutFn = setTimeout,
-  clearTimeoutFn = clearTimeout
+  clearTimeoutFn = clearTimeout,
+  transientRetryAttempts,
+  transientMaxAttempts,
+  transientRetryDelayMs = DEFAULT_TRANSIENT_RETRY_DELAY_MS,
+  retryDelayFn = null
 }) {
   const runningByJob = new Map();
   const timersByJob = new Map();
+  const retryAttemptsAsMaxAttempts = transientRetryAttempts === undefined
+    ? undefined
+    : Number(transientRetryAttempts) + 1;
+  const normalizedTransientMaxAttempts = normalizeTransientMaxAttempts(
+    transientMaxAttempts === undefined ? retryAttemptsAsMaxAttempts : transientMaxAttempts
+  );
+  const normalizedTransientRetryDelayMs = normalizeTransientRetryDelayMs(transientRetryDelayMs);
+  const actualRetryDelayFn = typeof retryDelayFn === 'function'
+    ? retryDelayFn
+    : (delayMs) => new Promise((resolve) => {
+        setTimeoutFn(resolve, delayMs);
+      });
   let stopped = false;
 
   async function runNow({ jobId, trigger, fromDate, toDate }) {
@@ -115,7 +239,13 @@ function createPreloadScheduler({
           throw new Error(`No preload loader registered for ${jobId}`);
         }
 
-        const result = await loader({ fromDate, toDate });
+        const result = await runLoaderWithTransientRetries(
+          loader,
+          { fromDate, toDate },
+          normalizedTransientMaxAttempts,
+          normalizedTransientRetryDelayMs,
+          actualRetryDelayFn
+        );
         const rowsWritten = Number(result && result.rowsWritten) || 0;
         const finished = store.finishRun(run.id, { status: 'success', rowsWritten });
 

@@ -5,10 +5,12 @@ const {
   SALES_PRELOAD_JOB_ID,
   WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
   WORKPLACE_POINT_PRELOAD_JOB_ID,
+  WORKER_CANCELLATIONS_PRELOAD_JOB_ID,
   createPreloadStore
 } = require('./preloadStore');
 const { refreshSalesByProjectPreload } = require('./preloadSalesByProject');
 const { refreshWorkplaceAnalysisPreload } = require('./preloadWorkplaceAnalysis');
+const { refreshWorkerCancellationsPreload } = require('./preloadWorkerCancellations');
 
 function createPreloadService({
   client,
@@ -29,7 +31,9 @@ function createPreloadService({
         fromDate,
         toDate,
         activeGigersCache
-      })
+      }),
+    [WORKER_CANCELLATIONS_PRELOAD_JOB_ID]: ({ fromDate, toDate }) =>
+      refreshWorkerCancellationsPreload({ client, store: actualStore, fromDate, toDate })
   };
   const workplacePointLoaderPath = path.join(__dirname, 'preloadWorkplacePoint.js');
 
@@ -73,6 +77,13 @@ function createPreloadService({
         return actualStore.getSalesByProjectOverview();
       }
 
+      if (
+        jobId === WORKER_CANCELLATIONS_PRELOAD_JOB_ID
+        && typeof actualStore.getWorkerCancellationsOverview === 'function'
+      ) {
+        return actualStore.getWorkerCancellationsOverview();
+      }
+
       return {};
     },
     getDiagnostics() {
@@ -84,6 +95,10 @@ function createPreloadService({
 
       if (typeof actualStore.getWorkplacePointDiagnostics === 'function') {
         diagnostics.workplacePoint = actualStore.getWorkplacePointDiagnostics();
+      }
+
+      if (typeof actualStore.getWorkerCancellationsDiagnostics === 'function') {
+        diagnostics.workerCancellations = actualStore.getWorkerCancellationsDiagnostics();
       }
 
       return diagnostics;
@@ -130,12 +145,40 @@ function createPreloadService({
         toDate: input.toDate
       });
     },
+    runWorkerCancellations(input) {
+      return this.runJob({
+        jobId: WORKER_CANCELLATIONS_PRELOAD_JOB_ID,
+        fromDate: input.fromDate,
+        toDate: input.toDate
+      });
+    },
     readSalesByProjectSectionRows(input) {
       if (!actualStore.hasSalesByProjectCoverage(input.fromDate, input.toDate)) {
         return null;
       }
 
       return actualStore.readSalesByProjectSectionRows(input);
+    },
+    readWorkerCancellationSection(input) {
+      if (typeof actualStore.readWorkerCancellationSectionRows !== 'function') {
+        return null;
+      }
+
+      return actualStore.readWorkerCancellationSectionRows(input);
+    },
+    readWorkerCancellationDetails(input) {
+      if (typeof actualStore.readWorkerCancellationDetails !== 'function') {
+        return null;
+      }
+
+      return actualStore.readWorkerCancellationDetails(input);
+    },
+    readWorkerCancellationFilterOptions(input) {
+      if (typeof actualStore.readWorkerCancellationFilterOptions !== 'function') {
+        return null;
+      }
+
+      return actualStore.readWorkerCancellationFilterOptions(input);
     },
     registerWorkplaceAnalysisRequest(input) {
       if (typeof actualStore.registerDashboardPreloadRequest !== 'function') {

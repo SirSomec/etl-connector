@@ -1330,8 +1330,34 @@ async function loadWorkerCancellationFilterOptionRows(client, filters) {
   );
 }
 
-async function loadWorkerCancellationsDetails(client, input = {}, now = new Date()) {
+function readWorkerCancellationPreload(preloadService, method, input) {
+  if (!preloadService || typeof preloadService[method] !== 'function') {
+    return null;
+  }
+
+  try {
+    return preloadService[method](input);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function loadWorkerCancellationsDetails(client, input = {}, now = new Date(), options = {}) {
   const detailInput = normalizeWorkerCancellationDetailInput(input, now);
+  const preloadedRows = readWorkerCancellationPreload(
+    options.preloadService,
+    'readWorkerCancellationDetails',
+    {
+      filters: detailInput.filters,
+      workerId: detailInput.workerId,
+      metric: detailInput.metric
+    }
+  );
+
+  if (preloadedRows) {
+    return mergeWorkerCancellationDetails(detailInput, preloadedRows);
+  }
+
   const detailRows = await client.queryJSONEachRow(
     workerCancellationDetailsQuery(detailInput.metric, detailInput.filters),
     paramsForDetails(detailInput),
@@ -1343,10 +1369,15 @@ async function loadWorkerCancellationsDetails(client, input = {}, now = new Date
 
 async function loadWorkerCancellationsDashboardShell(client, input = {}, now = new Date(), options = {}) {
   const filters = normalizeWorkerCancellationFilters(input, now);
+  const preloadedRows = readWorkerCancellationPreload(
+    options.preloadService,
+    'readWorkerCancellationFilterOptions',
+    { filters }
+  );
   const filterOptionRows = await readThroughCache(
     options.cache,
     cacheKeyForWorkerCancellationFilterOptions(filters),
-    () => loadWorkerCancellationFilterOptionRows(client, filters)
+    () => preloadedRows || loadWorkerCancellationFilterOptionRows(client, filters)
   );
 
   return {
@@ -1365,6 +1396,16 @@ async function loadWorkerCancellationsDashboardSection(
   assertWorkerCancellationsSection(section);
 
   const filters = normalizeWorkerCancellationFilters(input, now);
+  const preloadedRows = readWorkerCancellationPreload(
+    options.preloadService,
+    'readWorkerCancellationSection',
+    { section, filters }
+  );
+
+  if (preloadedRows) {
+    return mergeWorkerCancellationRows(filters, preloadedRows.workerRows || [], preloadedRows.totalRows || []);
+  }
+
   const rows = await readThroughCache(
     options.cache,
     cacheKeyForWorkerCancellationsSection(section, filters),

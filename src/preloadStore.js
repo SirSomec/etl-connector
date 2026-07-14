@@ -5,6 +5,7 @@ const { DatabaseSync } = require('node:sqlite');
 const SALES_PRELOAD_JOB_ID = 'sales-by-project';
 const WORKPLACE_ANALYSIS_PRELOAD_JOB_ID = 'workplace-analysis';
 const WORKPLACE_POINT_PRELOAD_JOB_ID = 'workplace-point';
+const WORKER_CANCELLATIONS_PRELOAD_JOB_ID = 'worker-cancellations';
 const DEFAULT_PRELOAD_REFRESH_DAYS = 45;
 const DEFAULT_PRELOAD_REFRESH_FUTURE_DAYS = 45;
 const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sqlite');
@@ -14,6 +15,7 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SALES_BY_PROJECT_PRELOAD_SECTIONS = new Set(['summary', 'trend', 'brands', 'statuses']);
 const SALES_BY_PROJECT_PRELOAD_PERIODS = new Set(['day', 'week', 'month', 'quarter']);
 const WORKPLACE_POINT_PRELOAD_SECTIONS = new Set(['summary', 'charts', 'year-heatmap', 'radius']);
+const WORKER_CANCELLATION_PRELOAD_SECTIONS = new Set(['workers']);
 
 function toIsoString(now) {
   return now().toISOString();
@@ -549,6 +551,37 @@ CREATE TABLE IF NOT EXISTS workplace_point_radius_coverage (
   PRIMARY KEY (workplace_id, active_window_date)
 );
 
+CREATE TABLE IF NOT EXISTS worker_cancellation_coverage (
+  period_date TEXT PRIMARY KEY,
+  source_from TEXT NOT NULL,
+  source_to TEXT NOT NULL,
+  refreshed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worker_cancellation_shift_facts (
+  period_date TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  worker_id TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  full_name TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  client TEXT NOT NULL DEFAULT '',
+  order_city TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  planned_start TEXT,
+  status TEXT NOT NULL DEFAULT '',
+  is_successful_confirmed_shift INTEGER NOT NULL DEFAULT 0,
+  is_worker_cancelled INTEGER NOT NULL DEFAULT 0,
+  is_worker_cancelled_24h INTEGER NOT NULL DEFAULT 0,
+  is_post_start_cancelled INTEGER NOT NULL DEFAULT 0,
+  booked_at TEXT,
+  cancelled_at TEXT,
+  cancelled_by TEXT NOT NULL DEFAULT '',
+  refreshed_at TEXT NOT NULL,
+  PRIMARY KEY (period_date, job_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sales_daily_period_brand ON sales_by_project_daily (period_date, brand);
 CREATE INDEX IF NOT EXISTS idx_sales_daily_status ON sales_by_project_daily (period_date, status);
 CREATE INDEX IF NOT EXISTS idx_preload_runs_job_id ON preload_runs (job_id, id DESC);
@@ -565,6 +598,8 @@ CREATE INDEX IF NOT EXISTS idx_workplace_point_shifts_status ON workplace_point_
 CREATE INDEX IF NOT EXISTS idx_workplace_point_status_lookup ON workplace_point_order_status_facts (workplace_id, period_date, status);
 CREATE INDEX IF NOT EXISTS idx_workplace_point_booked_lookup ON workplace_point_booked_worker_facts (workplace_id, period_date);
 CREATE INDEX IF NOT EXISTS idx_workplace_point_radius_lookup ON workplace_point_radius_rollups (workplace_id, active_window_date);
+CREATE INDEX IF NOT EXISTS idx_worker_cancellation_facts_period_worker ON worker_cancellation_shift_facts (period_date, worker_id);
+CREATE INDEX IF NOT EXISTS idx_worker_cancellation_facts_filter ON worker_cancellation_shift_facts (period_date, client, order_city);
 `);
 
   ensureColumn(db, 'preload_jobs', 'refresh_past_days', 'INTEGER NOT NULL DEFAULT 45');
@@ -601,11 +636,24 @@ CREATE INDEX IF NOT EXISTS idx_workplace_point_radius_lookup ON workplace_point_
     refreshPastDays: 30,
     refreshFutureDays: 30
   });
+  seedPreloadJob(db, now, {
+    id: WORKER_CANCELLATIONS_PRELOAD_JOB_ID,
+    title: 'Отмены гигерами',
+    scheduleTime: '04:00',
+    refreshPastDays: 60,
+    refreshFutureDays: 0
+  });
 }
 
 function assertWorkplacePointPreloadSection(section) {
   if (!WORKPLACE_POINT_PRELOAD_SECTIONS.has(section)) {
     throw new Error(`Unknown workplace point preload section: ${section}`);
+  }
+}
+
+function assertWorkerCancellationPreloadSection(section) {
+  if (!WORKER_CANCELLATION_PRELOAD_SECTIONS.has(section)) {
+    throw new Error(`Unknown worker cancellations preload section: ${section}`);
   }
 }
 
@@ -1747,6 +1795,319 @@ ORDER BY shifts DESC
     return { statusRows };
   }
 
+  function hasWorkerCancellationCoverage(fromDate, toDate) {
+    assertValidDashboardPreloadRange(fromDate, toDate);
+
+    const dates = enumerateDateRange(fromDate, toDate);
+
+    if (dates.length === 0) {
+      return true;
+    }
+
+    const row = db.prepare(`
+SELECT COUNT(*) AS covered_days
+FROM worker_cancellation_coverage
+WHERE period_date >= ? AND period_date < ?
+`).get(fromDate, toDate);
+
+    return Number(row.covered_days || 0) === dates.length;
+  }
+
+  function replaceWorkerCancellationRange({ fromDate, toDate, shiftFacts = [] }) {
+    assertValidDashboardPreloadRange(fromDate, toDate);
+
+    const refreshedAt = toIsoString(now);
+    const deleteFacts = db.prepare('DELETE FROM worker_cancellation_shift_facts WHERE period_date >= ? AND period_date < ?');
+    const deleteCoverage = db.prepare('DELETE FROM worker_cancellation_coverage WHERE period_date >= ? AND period_date < ?');
+    const insertCoverage = db.prepare(`
+INSERT INTO worker_cancellation_coverage (period_date, source_from, source_to, refreshed_at)
+VALUES (?, ?, ?, ?)
+`);
+    const insertFact = db.prepare(`
+INSERT INTO worker_cancellation_shift_facts (
+  period_date, job_id, worker_id, user_id, full_name, phone, city, client, order_city, address,
+  planned_start, status, is_successful_confirmed_shift, is_worker_cancelled,
+  is_worker_cancelled_24h, is_post_start_cancelled, booked_at, cancelled_at, cancelled_by, refreshed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      deleteFacts.run(fromDate, toDate);
+      deleteCoverage.run(fromDate, toDate);
+
+      assertRowsInsideRange(shiftFacts, fromDate, toDate, 'workerCancellationShiftFacts');
+
+      for (const row of shiftFacts) {
+        if (String(row.job_id || '').trim() === '' || String(row.worker_id || '').trim() === '') {
+          throw new Error('workerCancellationShiftFacts requires non-empty job_id and worker_id');
+        }
+      }
+
+      for (const periodDate of enumerateDateRange(fromDate, toDate)) {
+        insertCoverage.run(periodDate, fromDate, toDate, refreshedAt);
+      }
+
+      for (const row of shiftFacts) {
+        insertFact.run(
+          row.period_date,
+          row.job_id,
+          row.worker_id,
+          row.user_id || '',
+          row.full_name || '',
+          row.phone || '',
+          row.city || '',
+          row.client || '',
+          row.order_city || '',
+          row.address || '',
+          row.planned_start || null,
+          row.status || '',
+          finiteNumber(row.is_successful_confirmed_shift),
+          finiteNumber(row.is_worker_cancelled),
+          finiteNumber(row.is_worker_cancelled_24h),
+          finiteNumber(row.is_post_start_cancelled),
+          row.booked_at || null,
+          row.cancelled_at || null,
+          row.cancelled_by || '',
+          refreshedAt
+        );
+      }
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  function workerCancellationFactsFilterSql(filters = {}) {
+    const clauses = ['period_date >= ?', 'period_date < ?'];
+    const params = [String(filters.from || ''), formatDateUTC(addDaysUTC(parseDateOnly(String(filters.to || '')), 1))];
+    const clients = normalizeFilterValues(filters.client);
+    const cities = normalizeFilterValues(filters.city);
+
+    addInClause(clauses, params, 'client', clients);
+    addInClause(clauses, params, 'order_city', cities);
+
+    return { whereSql: clauses.join('\n      AND '), params };
+  }
+
+  function workerCancellationMetricFilterSql(filters = {}) {
+    const clauses = [];
+    const params = [];
+    const search = String(filters.search || '').trim().toLowerCase();
+
+    if (search !== '') {
+      clauses.push(`(
+        instr(lower(worker_id), ?) > 0
+        OR instr(lower(user_id), ?) > 0
+        OR instr(lower(phone), ?) > 0
+        OR instr(lower(full_name), ?) > 0
+        OR instr(lower(city), ?) > 0
+      )`);
+      params.push(search, search, search, search, search);
+    }
+
+    const metrics = [
+      ['confirmedShifts', 'confirmed_shifts'],
+      ['workerCancellations', 'worker_cancellations'],
+      ['workerCancellations24h', 'worker_cancellations_24h'],
+      ['postStartCancellations', 'post_start_cancellations'],
+      ['failedShifts', 'failed_shifts']
+    ];
+
+    for (const [key, column] of metrics) {
+      if (Number.isFinite(Number(filters[`${key}From`]))) {
+        clauses.push(`${column} >= ?`);
+        params.push(Number(filters[`${key}From`]));
+      }
+
+      if (Number.isFinite(Number(filters[`${key}To`]))) {
+        clauses.push(`${column} <= ?`);
+        params.push(Number(filters[`${key}To`]));
+      }
+    }
+
+    return { whereSql: clauses.length > 0 ? `WHERE ${clauses.join('\n        AND ')}` : '', params };
+  }
+
+  function workerCancellationMetricsCte(filters = {}) {
+    const factFilter = workerCancellationFactsFilterSql(filters);
+    const metricFilter = workerCancellationMetricFilterSql(filters);
+
+    return {
+      sql: `
+WITH worker_metrics AS (
+  SELECT
+    worker_id,
+    MAX(user_id) AS user_id,
+    MAX(full_name) AS full_name,
+    MAX(phone) AS phone,
+    MAX(city) AS city,
+    COUNT(DISTINCT CASE WHEN is_successful_confirmed_shift = 1 THEN job_id END) AS confirmed_shifts,
+    COUNT(DISTINCT CASE WHEN is_worker_cancelled = 1 THEN job_id END) AS worker_cancellations,
+    COUNT(DISTINCT CASE WHEN is_worker_cancelled_24h = 1 THEN job_id END) AS worker_cancellations_24h,
+    COUNT(DISTINCT CASE WHEN is_post_start_cancelled = 1 THEN job_id END) AS post_start_cancellations,
+    COUNT(DISTINCT CASE WHEN status = 'failed' THEN job_id END) AS failed_shifts
+  FROM worker_cancellation_shift_facts
+  WHERE ${factFilter.whereSql}
+  GROUP BY worker_id
+), filtered_workers AS (
+  SELECT *
+  FROM worker_metrics
+  ${metricFilter.whereSql}
+)`,
+      params: [...factFilter.params, ...metricFilter.params]
+    };
+  }
+
+  function getWorkerCancellationsOverview() {
+    const coverage = coverageSegmentFromRows(normalizeRows(db.prepare(`
+SELECT period_date
+FROM worker_cancellation_coverage
+ORDER BY period_date
+`).all()));
+    const job = getJob(WORKER_CANCELLATIONS_PRELOAD_JOB_ID) || {};
+    const lastErrorRun = normalizeRun(db.prepare(`
+SELECT *
+FROM preload_runs
+WHERE job_id = ? AND status = 'failed' AND error_message != ''
+ORDER BY id DESC
+LIMIT 1
+`).get(WORKER_CANCELLATIONS_PRELOAD_JOB_ID));
+
+    return {
+      coveredFrom: coverage.coveredFrom || '',
+      coveredTo: coverage.coveredTo || '',
+      lastSuccessAt: job.lastSuccessAt || '',
+      lastError: lastErrorRun ? lastErrorRun.errorMessage : ''
+    };
+  }
+
+  function getWorkerCancellationsDiagnostics() {
+    const coverage = db.prepare(`
+SELECT MIN(period_date) AS min_date, MAX(period_date) AS max_date, COUNT(*) AS days
+FROM worker_cancellation_coverage
+`).get();
+    const shiftFacts = db.prepare('SELECT COUNT(*) AS rows FROM worker_cancellation_shift_facts').get();
+
+    return {
+      coverage: {
+        minDate: coverage && coverage.min_date ? coverage.min_date : '',
+        maxDate: coverage && coverage.max_date ? coverage.max_date : '',
+        days: Number(coverage && coverage.days ? coverage.days : 0)
+      },
+      tables: {
+        shiftFacts: Number(shiftFacts && shiftFacts.rows ? shiftFacts.rows : 0)
+      },
+      lastRuns: listRuns(WORKER_CANCELLATIONS_PRELOAD_JOB_ID, 5)
+    };
+  }
+
+  function readWorkerCancellationSectionRows({ section, filters = {} }) {
+    assertWorkerCancellationPreloadSection(section);
+
+    const fromDate = String(filters.from || '');
+    const toDate = formatDateUTC(addDaysUTC(parseDateOnly(String(filters.to || '')), 1));
+
+    if (!hasWorkerCancellationCoverage(fromDate, toDate)) {
+      return null;
+    }
+
+    const metrics = workerCancellationMetricsCte(filters);
+    const sortColumns = {
+      fullName: 'full_name',
+      phone: 'phone',
+      city: 'city',
+      confirmedShifts: 'confirmed_shifts',
+      workerCancellations: 'worker_cancellations',
+      workerCancellations24h: 'worker_cancellations_24h',
+      postStartCancellations: 'post_start_cancellations',
+      failedShifts: 'failed_shifts'
+    };
+    const sortColumn = sortColumns[filters.sort] || 'worker_cancellations_24h';
+    const direction = filters.direction === 'asc' ? 'ASC' : 'DESC';
+    const limit = Math.max(1, Number(filters.pageSize) || 100);
+    const offset = Math.max(0, Number(filters.offset) || 0);
+
+    return {
+      totalRows: normalizeRows(db.prepare(`${metrics.sql}
+SELECT COUNT(*) AS total_workers
+FROM filtered_workers`).all(...metrics.params)),
+      workerRows: normalizeRows(db.prepare(`${metrics.sql}
+SELECT *
+FROM filtered_workers
+ORDER BY ${sortColumn} ${direction}, worker_id ASC
+LIMIT ? OFFSET ?`).all(...metrics.params, limit, offset))
+    };
+  }
+
+  function readWorkerCancellationDetails({ filters = {}, workerId, metric }) {
+    const fromDate = String(filters.from || '');
+    const toDate = formatDateUTC(addDaysUTC(parseDateOnly(String(filters.to || '')), 1));
+
+    if (!hasWorkerCancellationCoverage(fromDate, toDate)) {
+      return null;
+    }
+
+    const factFilter = workerCancellationFactsFilterSql(filters);
+    const conditions = [factFilter.whereSql, 'worker_id = ?'];
+    const params = [...factFilter.params, String(workerId || '')];
+    const metricConditions = {
+      confirmedShifts: 'is_successful_confirmed_shift = 1',
+      workerCancellations: 'is_worker_cancelled = 1',
+      workerCancellations24h: 'is_worker_cancelled_24h = 1',
+      postStartCancellations: 'is_post_start_cancelled = 1',
+      failedShifts: "status = 'failed'"
+    };
+
+    if (!metricConditions[metric]) {
+      throw new Error(`Unknown worker cancellation metric: ${metric}`);
+    }
+
+    conditions.push(metricConditions[metric]);
+    return normalizeRows(db.prepare(`
+SELECT
+  job_id AS shift_id,
+  client AS brand,
+  address,
+  planned_start,
+  booked_at,
+  cancelled_at,
+  cancelled_by
+FROM worker_cancellation_shift_facts
+WHERE ${conditions.join('\n  AND ')}
+ORDER BY planned_start DESC, job_id ASC
+LIMIT 500
+`).all(...params));
+  }
+
+  function readWorkerCancellationFilterOptions(filters = {}) {
+    const fromDate = String(filters.from || '');
+    const toDate = formatDateUTC(addDaysUTC(parseDateOnly(String(filters.to || '')), 1));
+
+    if (!hasWorkerCancellationCoverage(fromDate, toDate)) {
+      return null;
+    }
+
+    const factFilter = workerCancellationFactsFilterSql({ from: filters.from, to: filters.to });
+
+    return normalizeRows(db.prepare(`
+SELECT filter, value
+FROM (
+  SELECT 'client' AS filter, client AS value
+  FROM worker_cancellation_shift_facts
+  WHERE ${factFilter.whereSql}
+  UNION
+  SELECT 'city' AS filter, order_city AS value
+  FROM worker_cancellation_shift_facts
+  WHERE ${factFilter.whereSql}
+)
+WHERE value != ''
+ORDER BY filter, value
+`).all(...factFilter.params, ...factFilter.params));
+  }
+
   function close() {
     db.close();
   }
@@ -1766,9 +2127,16 @@ ORDER BY shifts DESC
     getSalesByProjectDiagnostics,
     getWorkplacePointOverview,
     getWorkplacePointDiagnostics,
+    getWorkerCancellationsOverview,
+    getWorkerCancellationsDiagnostics,
     hasSalesByProjectCoverage,
     replaceSalesByProjectRange,
     readSalesByProjectSectionRows,
+    hasWorkerCancellationCoverage,
+    replaceWorkerCancellationRange,
+    readWorkerCancellationSectionRows,
+    readWorkerCancellationDetails,
+    readWorkerCancellationFilterOptions,
     hasWorkplacePointCoverage,
     hasWorkplacePointRadiusCoverage,
     replaceWorkplacePointRange,
@@ -1786,5 +2154,6 @@ module.exports = {
   SALES_PRELOAD_JOB_ID,
   WORKPLACE_ANALYSIS_PRELOAD_JOB_ID,
   WORKPLACE_POINT_PRELOAD_JOB_ID,
+  WORKER_CANCELLATIONS_PRELOAD_JOB_ID,
   createPreloadStore
 };

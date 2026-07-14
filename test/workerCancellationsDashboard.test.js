@@ -1223,3 +1223,59 @@ test('loadWorkerCancellationsDashboardSection caches workers through createDashb
     'worker cancellations workers'
   ]);
 });
+
+test('worker cancellations dashboard uses covered preload for section, filters and details', async () => {
+  const { calls, client } = createDashboardClient();
+  const preloadService = {
+    readWorkerCancellationFilterOptions() {
+      return [{ filter: 'client', value: 'Бренд' }];
+    },
+    readWorkerCancellationSection() {
+      return {
+        totalRows: [{ total_workers: 1 }],
+        workerRows: [{
+          worker_id: 'worker-1',
+          full_name: 'Иван Петров',
+          worker_cancellations_24h: 1
+        }]
+      };
+    },
+    readWorkerCancellationDetails() {
+      return [{
+        shift_id: 'job-1',
+        brand: 'Бренд',
+        planned_start: '2026-06-01 10:00:00'
+      }];
+    }
+  };
+
+  const shell = await loadWorkerCancellationsDashboardShell(
+    client,
+    { from: '2026-06-01', to: '2026-06-03' },
+    new Date('2026-06-03T12:00:00.000Z'),
+    { preloadService }
+  );
+  const section = await loadWorkerCancellationsDashboardSection(
+    client,
+    { from: '2026-06-01', to: '2026-06-03' },
+    'workers',
+    new Date('2026-06-03T12:00:00.000Z'),
+    { preloadService }
+  );
+  const details = await loadWorkerCancellationsDetails(
+    client,
+    {
+      from: '2026-06-01',
+      to: '2026-06-03',
+      workerId: 'worker-1',
+      metric: 'workerCancellations24h'
+    },
+    new Date('2026-06-03T12:00:00.000Z'),
+    { preloadService }
+  );
+
+  assert.deepEqual(shell.filterOptions.client, ['Бренд']);
+  assert.equal(section.workers[0].workerId, 'worker-1');
+  assert.equal(details.shifts[0].shiftId, 'job-1');
+  assert.deepEqual(calls, []);
+});

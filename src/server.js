@@ -25,7 +25,8 @@ const {
 const { buildSalesByProjectPreloadQueries } = require('./preloadSalesByProject');
 const {
   SALES_PRELOAD_JOB_ID,
-  WORKPLACE_POINT_PRELOAD_JOB_ID
+  WORKPLACE_POINT_PRELOAD_JOB_ID,
+  WORKER_CANCELLATIONS_PRELOAD_JOB_ID
 } = require('./preloadStore');
 const {
   actualOrderDomainCondition,
@@ -425,7 +426,12 @@ function parseScheduleTimeFromBody(value) {
 }
 
 function preloadScheduleWindowMinimum(jobId) {
+  if (jobId === WORKER_CANCELLATIONS_PRELOAD_JOB_ID) return 60;
   return jobId === WORKPLACE_POINT_PRELOAD_JOB_ID ? 30 : 45;
+}
+
+function preloadScheduleFutureWindowMinimum(jobId) {
+  return jobId === WORKER_CANCELLATIONS_PRELOAD_JOB_ID ? 0 : preloadScheduleWindowMinimum(jobId);
 }
 
 function parseRefreshDaysFromBody(value, minimumDays = 45) {
@@ -1041,7 +1047,7 @@ function createApp({
         Object.prototype.hasOwnProperty.call(safeBody, 'refreshFutureDays')
           ? safeBody.refreshFutureDays
           : (safeBody.refreshDays || String(refreshMinimumDays)),
-        refreshMinimumDays
+        preloadScheduleFutureWindowMinimum(jobId)
       );
 
       return input;
@@ -2751,7 +2757,8 @@ function createApp({
     requireAuth('worker-cancellations'),
     asyncRoute(async (req, res) => {
       const dashboard = await loadWorkerCancellationsDashboardShell(client, req.query, new Date(), {
-        cache: dashboardSectionCache
+        cache: dashboardSectionCache,
+        preloadService
       });
 
       recordCurrentUserActivity(req, activityEventType(req));
@@ -2787,7 +2794,8 @@ function createApp({
           section,
           new Date(),
           {
-            cache: dashboardSectionCache
+            cache: dashboardSectionCache,
+            preloadService
           }
         );
 
@@ -2811,7 +2819,7 @@ function createApp({
     requireAuth('worker-cancellations'),
     asyncRoute(async (req, res) => {
       try {
-        const details = await loadWorkerCancellationsDetails(client, req.query, new Date());
+        const details = await loadWorkerCancellationsDetails(client, req.query, new Date(), { preloadService });
 
         recordCurrentUserActivity(req, activityEventType(req));
         res

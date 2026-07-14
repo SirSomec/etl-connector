@@ -7009,6 +7009,13 @@ function renderPreloadDiagnostics(diagnostics, jobId) {
         ['Shift facts', 'tables.shiftFacts'],
         ['Radius rollups', 'tables.radiusRollups']
       ]
+    },
+    'worker-cancellations': {
+      source: diagnostics && diagnostics.workerCancellations ? diagnostics.workerCancellations : diagnostics,
+      cards: [
+        ['Coverage days', 'coverage.days'],
+        ['Shift facts', 'tables.shiftFacts']
+      ]
     }
   };
   const config = diagnosticsByJob[jobId];
@@ -7034,7 +7041,12 @@ function renderPreloadDiagnostics(diagnostics, jobId) {
 }
 
 function preloadScheduleWindowMinimum(jobId) {
+  if (jobId === 'worker-cancellations') return 60;
   return jobId === 'workplace-point' ? 30 : 45;
+}
+
+function preloadScheduleFutureWindowMinimum(jobId) {
+  return jobId === 'worker-cancellations' ? 0 : preloadScheduleWindowMinimum(jobId);
 }
 
 function preloadScheduleWindowValue(value, fallback = 45, minimum = 45) {
@@ -7060,6 +7072,7 @@ function renderPreloadJobPanel(panel, csrfToken) {
   const rows = Array.isArray(panel.runs) ? panel.runs : [];
   const rowsHtml = rows.map(renderPreloadRunRow).join('');
   const scheduleWindowMinimum = preloadScheduleWindowMinimum(jobId);
+  const scheduleFutureWindowMinimum = preloadScheduleFutureWindowMinimum(jobId);
   const refreshPastDays = preloadScheduleWindowValue(
     safeJob.refreshPastDays ?? safeJob.refreshDays,
     scheduleWindowMinimum,
@@ -7067,8 +7080,8 @@ function renderPreloadJobPanel(panel, csrfToken) {
   );
   const refreshFutureDays = preloadScheduleWindowValue(
     safeJob.refreshFutureDays,
-    scheduleWindowMinimum,
-    scheduleWindowMinimum
+    scheduleFutureWindowMinimum,
+    scheduleFutureWindowMinimum
   );
   const diagnosticsHtml = renderPreloadDiagnostics(panel.diagnostics, jobId);
 
@@ -7114,7 +7127,8 @@ function renderPreloadJobPanel(panel, csrfToken) {
   }
 
   return panelHtml
-    .replaceAll('type="number" min="45" max="366"', `type="number" min="${escapeHtml(scheduleWindowMinimum)}" max="366"`);
+    .replace('id="' + escapeHtml(htmlId) + '-refresh-past-days" name="refreshPastDays" type="number" min="45"', `id="${escapeHtml(htmlId)}-refresh-past-days" name="refreshPastDays" type="number" min="${escapeHtml(scheduleWindowMinimum)}"`)
+    .replace('id="' + escapeHtml(htmlId) + '-refresh-future-days" name="refreshFutureDays" type="number" min="45"', `id="${escapeHtml(htmlId)}-refresh-future-days" name="refreshFutureDays" type="number" min="${escapeHtml(scheduleFutureWindowMinimum)}"`);
 }
 
 function renderPreloadManagement({

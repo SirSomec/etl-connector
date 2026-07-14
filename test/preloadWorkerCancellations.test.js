@@ -23,21 +23,14 @@ function createTemporaryStore() {
   };
 }
 
-test('worker cancellations preload query builder resolves active workers inside parameterized SQL', () => {
+test('worker cancellations preload query builder uses bounded lookups instead of a large join', () => {
   const queries = buildWorkerCancellationsPreloadQueries();
 
-  assert.match(queries.shiftFacts, /active_workers AS/);
-  assert.match(queries.shiftFacts, /active_j\.start >= \{from:DateTime\}/);
-  assert.match(queries.shiftFacts, /active_j\.start < \{to:DateTime\}/);
-  assert.match(queries.shiftFacts, /INNER JOIN active_workers AS aw ON j\.worker = aw\.worker_id/);
-  assert.equal(queries.shiftFacts.includes('worker_ids:Array(String)'), false);
-  assert.match(queries.shiftFacts, /INNER JOIN mg_orders AS o ON o\._id = j\.source/);
-  assert.match(queries.shiftFacts, /mg_job_history/);
-  assert.match(queries.shiftFacts, /is_worker_cancelled_24h/);
-  assert.match(queries.shiftFacts, /join_algorithm = 'grace_hash'/);
-  assert.match(queries.shiftFacts, /grace_hash_join_initial_buckets = 256/);
-  assert.equal(queries.shiftFacts.includes('ORDER BY sf.period_date, sf.job_id'), false);
-  assert.equal(queries.shiftFacts.includes('DROP TABLE'), false);
+  assert.match(queries.jobs, /PREWHERE j\.start >= \{from:DateTime\}/);
+  assert.match(queries.orders, /o\._id IN \{ids:Array\(String\)\}/);
+  assert.match(queries.history, /PREWHERE h\.job IN \{ids:Array\(String\)\}/);
+  assert.equal(queries.jobs.includes('JOIN mg_orders'), false);
+  assert.equal(queries.jobs.includes('DROP TABLE'), false);
 });
 
 test('worker cancellations preload job is enabled daily with a 60-day past window', () => {
@@ -67,27 +60,35 @@ test('worker cancellations preload refreshes active workers and writes a readabl
     async queryJSONEachRow(query, params, operation) {
       calls.push({ query, params, operation });
 
-      return [{
+      const rowsByOperation = {
+        'worker cancellations preload jobs': [{
         period_date: '2026-06-01',
         job_id: 'job-1',
+        order_id: 'order-1',
         worker_id: 'worker-1',
-        user_id: 'user-1',
-        full_name: 'Иван Петров',
-        phone: '+79990000000',
-        city: 'Москва',
-        client: 'Бренд',
-        order_city: 'Москва',
-        address: 'Москва, Тверская, 1',
         planned_start: '2026-06-01 10:00:00',
         status: 'cancelled',
-        is_successful_confirmed_shift: 0,
-        is_worker_cancelled: 1,
-        is_worker_cancelled_24h: 1,
-        is_post_start_cancelled: 0,
-        booked_at: '2026-05-30 10:00:00',
-        cancelled_at: '2026-06-01 09:00:00',
-        cancelled_by: 'worker'
-      }];
+        hours: 0,
+        payment: 0,
+        salary_per_hour: 0,
+        salary_per_job: 0
+      }],
+        'worker cancellations preload orders': [{
+          order_id: 'order-1', client_id: 'client-1', workplace_id: 'workplace-1', pieceworks: '', contract_type: '', deleted: 0, is_hidden: 0
+        }],
+        'worker cancellations preload clients': [{ client_id: 'client-1', title: 'Бренд' }],
+        'worker cancellations preload workplaces': [{ workplace_id: 'workplace-1', contractor_id: 'contractor-1', address__city: 'Москва', address__street: 'Тверская', address__house: '1' }],
+        'worker cancellations preload contractors': [{ contractor_id: 'contractor-1', contract_type: 'saas' }],
+        'worker cancellations preload workers': [{ worker_id: 'worker-1', user_id: 'user-1', full_name: '', city: 'Москва' }],
+        'worker cancellations preload users': [{ user_id: 'user-1', firstname: 'Иван', lastname: 'Петров', middlename: '', phone: '+79990000000' }],
+        'worker cancellations preload history': [{ job_id: 'job-1', status: 'cancelled', initiator: 'worker', event_at: '2026-06-01 09:00:00' }]
+      };
+
+      if (operation === 'worker cancellations preload jobs' && params.param_from === '2026-06-02 00:00:00') {
+        return [];
+      }
+
+      return rowsByOperation[operation] || [];
     }
   };
 
@@ -100,8 +101,18 @@ test('worker cancellations preload refreshes active workers and writes a readabl
     });
 
     assert.equal(result.rowsWritten, 1);
-    assert.deepEqual(calls.map((call) => call.operation), ['worker cancellations preload shift facts']);
-    assert.equal(Object.hasOwn(calls[0].params, 'param_worker_ids'), false);
+    assert.deepEqual(calls.map((call) => call.operation), [
+      'worker cancellations preload jobs',
+      'worker cancellations preload orders',
+      'worker cancellations preload clients',
+      'worker cancellations preload workplaces',
+      'worker cancellations preload workers',
+      'worker cancellations preload contractors',
+      'worker cancellations preload users',
+      'worker cancellations preload history',
+      'worker cancellations preload jobs'
+    ]);
+    assert.equal(calls.some((call) => Object.hasOwn(call.params, 'param_worker_ids')), false);
 
     const filters = {
       from: '2026-06-01',

@@ -1,184 +1,372 @@
-const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
-const {
-  actualOrderDomainCondition,
-  actualOrderJoinsSql
-} = require('./analyticsDomainSql');
+const { EXCLUDED_CLIENT_TITLES } = require('./analyticsDomainSql');
+
+const LOOKUP_BATCH_SIZE = 2000;
+const EXCLUDED_CLIENT_TITLES_SET = new Set(EXCLUDED_CLIENT_TITLES);
 
 function toDateTimeParam(dateOnly) {
   return `${dateOnly} 00:00:00`;
 }
 
-function workerFullNameExpression() {
-  return `coalesce(
-    nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
-    nullIf(trim(ifNull(w.full_name, '')), ''),
-    j.worker
-  )`;
+function pad2(value) {
+  return String(value).padStart(2, '0');
 }
 
-function workerCancellationOrderJoinsSql() {
-  return `INNER JOIN mg_orders AS o ON o._id = j.source
-  ${actualOrderJoinsSql('o', { clientAlias: 'c', workplaceAlias: 'ow', contractorAlias: 'ct' })}
-  LEFT JOIN mg_workers AS w ON j.worker = w._id
-  LEFT JOIN mg_users AS u ON w.user = u._id`;
+function formatDateUTC(date) {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
 }
 
-function activeWorkersCte() {
-  return `active_workers AS (
-    SELECT DISTINCT
-      active_j.worker AS worker_id
-    FROM mg_jobs AS active_j
-    INNER JOIN mg_orders AS active_o ON active_o._id = active_j.source
-    ${actualOrderJoinsSql('active_o', {
-      clientAlias: 'active_c',
-      workplaceAlias: 'active_ow',
-      contractorAlias: 'active_ct'
-    })}
-    WHERE active_j.start >= {from:DateTime}
-      AND active_j.start < {to:DateTime}
-      AND ifNull(active_j.worker, '') != ''
-      AND ifNull(active_j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('active_o', 'active_c', 'active_ct')}
-  )`;
+function addDaysUTC(date, days) {
+  const next = new Date(date.getTime());
+
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
 }
 
-function workerCancellationFactsQuery() {
-  const activeWorkers = activeWorkersCte();
-  const shiftFacts = `shift_facts AS (
-    SELECT
-      toString(toDate(j.start)) AS period_date,
-      j._id AS job_id,
-      j.worker AS worker_id,
-      ifNull(w.user, '') AS user_id,
-      ${workerFullNameExpression()} AS full_name,
-      ifNull(u.phone, '') AS phone,
-      ifNull(w.full_address__city, '') AS city,
-      ifNull(c.title, '') AS client,
-      ifNull(ow.address__city, '') AS order_city,
-      coalesce(
-        nullIf(arrayStringConcat(arrayFilter(x -> x != '', [
-          ifNull(ow.address__city, ''),
-          ifNull(ow.address__street, ''),
-          ifNull(ow.address__house, '')
-        ]), ', '), ''),
-        nullIf(trim(ifNull(ow.title, '')), ''),
-        ifNull(o.workplace, ''),
-        ''
-      ) AS address,
-      j.start AS planned_start,
-      ifNull(j.status, '') AS status,
-      ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift
-    FROM mg_jobs AS j
-    INNER JOIN active_workers AS aw ON j.worker = aw.worker_id
-    ${workerCancellationOrderJoinsSql()}
-    WHERE j.start >= {from:DateTime}
-      AND j.start < {to:DateTime}
-      AND ifNull(j.deleted, 0) = 0
-      AND ${actualOrderDomainCondition('o', 'c', 'ct')}
-  ),
-  cancelled_shift_facts AS (
-    SELECT job_id, planned_start
-    FROM shift_facts
-    WHERE status = 'cancelled'
-  ),
-  cancellation_events AS (
-    SELECT
-      h.job AS job_id,
-      h.initiator = 'worker' AS is_worker_event,
-      coalesce(h.createdAt, h.updatedAt) AS event_at,
-      csf.planned_start AS planned_start
-    FROM mg_job_history AS h
-    INNER JOIN cancelled_shift_facts AS csf ON h.job = csf.job_id
-    WHERE h.status = 'cancelled'
-  ),
-  cancellation_flags AS (
-    SELECT
-      job_id,
-      max(if(is_worker_event, 1, 0)) AS is_worker_cancelled,
-      max(if(
-        is_worker_event
-          AND event_at >= planned_start - INTERVAL 24 HOUR
-          AND event_at < planned_start,
-        1,
-        0
-      )) AS is_worker_cancelled_24h,
-      max(if(event_at >= planned_start, 1, 0)) AS is_post_start_cancelled
-    FROM cancellation_events
-    GROUP BY job_id
-  ),
-  booking_events AS (
-    SELECT
-      h.job AS job_id,
-      min(coalesce(h.createdAt, h.updatedAt)) AS booked_at
-    FROM mg_job_history AS h
-    INNER JOIN shift_facts AS sf ON h.job = sf.job_id
-    WHERE h.status = 'booked'
-    GROUP BY h.job
-  ),
-  cancel_events AS (
-    SELECT
-      h.job AS job_id,
-      max(coalesce(h.createdAt, h.updatedAt)) AS cancelled_at,
-      argMax(ifNull(h.initiator, ''), coalesce(h.createdAt, h.updatedAt)) AS cancelled_by
-    FROM mg_job_history AS h
-    INNER JOIN shift_facts AS sf ON h.job = sf.job_id
-    WHERE h.status = 'cancelled'
-    GROUP BY h.job
-  )`;
+function parseDateOnly(value) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
 
-  return `WITH ${activeWorkers},
-  ${shiftFacts}
-SELECT
-  sf.period_date,
-  sf.job_id,
-  sf.worker_id,
-  sf.user_id,
-  sf.full_name,
-  sf.phone,
-  sf.city,
-  sf.client,
-  sf.order_city,
-  sf.address,
-  sf.planned_start,
-  sf.status,
-  sf.is_successful_confirmed_shift,
-  ifNull(cf.is_worker_cancelled, 0) AS is_worker_cancelled,
-  ifNull(cf.is_worker_cancelled_24h, 0) AS is_worker_cancelled_24h,
-  ifNull(cf.is_post_start_cancelled, 0) AS is_post_start_cancelled,
-  be.booked_at,
-  ce.cancelled_at,
-  ce.cancelled_by
-FROM shift_facts AS sf
-LEFT JOIN cancellation_flags AS cf ON sf.job_id = cf.job_id
-LEFT JOIN booking_events AS be ON sf.job_id = be.job_id
-LEFT JOIN cancel_events AS ce ON sf.job_id = ce.job_id
-SETTINGS
-  join_algorithm = 'grace_hash',
-  grace_hash_join_initial_buckets = 256
-FORMAT JSONEachRow`;
+function escapeClickHouseString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
+}
+
+function textValue(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function numberValue(value) {
+  const number = Number(value || 0);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function dateTimeMs(value) {
+  const text = textValue(value);
+
+  if (text === '') {
+    return Number.NaN;
+  }
+
+  return Date.parse(`${text.includes('T') ? text : text.replace(' ', 'T')}Z`);
+}
+
+function uniqueIds(rows, field) {
+  return Array.from(new Set(
+    rows.map((row) => textValue(row[field])).filter(Boolean)
+  ));
+}
+
+function indexRows(rows, field) {
+  return new Map(rows.map((row) => [textValue(row[field]), row]));
+}
+
+function chunk(values, size = LOOKUP_BATCH_SIZE) {
+  const chunks = [];
+
+  for (let offset = 0; offset < values.length; offset += size) {
+    chunks.push(values.slice(offset, offset + size));
+  }
+
+  return chunks;
+}
+
+function formatFullName(user, worker, fallback) {
+  const fullName = [user && user.lastname, user && user.firstname, user && user.middlename]
+    .map(textValue)
+    .filter(Boolean)
+    .join(' ');
+
+  return fullName || textValue(worker && worker.full_name) || fallback;
+}
+
+function workplaceAddress(workplace, fallback) {
+  const address = [workplace && workplace.address__city, workplace && workplace.address__street, workplace && workplace.address__house]
+    .map(textValue)
+    .filter(Boolean)
+    .join(', ');
+
+  return address || textValue(workplace && workplace.title) || fallback;
+}
+
+function isActualOrder(order, client, contractor) {
+  if (!order || numberValue(order.deleted) !== 0 || Number(order.is_hidden) === 1) {
+    return false;
+  }
+
+  const clientTitle = textValue(client && client.title);
+
+  if (clientTitle !== '' && EXCLUDED_CLIENT_TITLES_SET.has(clientTitle)) {
+    return false;
+  }
+
+  const contractType = textValue(contractor && contractor.contract_type) || textValue(order.contract_type);
+
+  return contractType !== 'processing';
+}
+
+function isSuccessfulConfirmedShift(job, order) {
+  if (textValue(job.status) !== 'confirmed') {
+    return false;
+  }
+
+  const pieceworks = textValue(order && order.pieceworks);
+  const hasPieceworks = pieceworks !== '' && pieceworks !== '[]' && pieceworks !== '{}';
+  const payment = numberValue(job.payment);
+
+  if (hasPieceworks) {
+    return payment > 0;
+  }
+
+  const startFact = dateTimeMs(job.start_fact);
+  const finishFact = dateTimeMs(job.finish_fact);
+  const hasPositiveFactInterval = Number.isFinite(startFact)
+    && Number.isFinite(finishFact)
+    && finishFact > startFact
+    && finishFact - startFact >= 60 * 1000;
+
+  return numberValue(job.hours) > 0
+    || payment > 0
+    || numberValue(job.salary_per_job) > 0
+    || numberValue(job.salary_per_hour) * numberValue(job.hours) > 0
+    || hasPositiveFactInterval;
+}
+
+function emptyHistory() {
+  return {
+    bookedAt: '',
+    cancelledAt: '',
+    cancelledBy: '',
+    workerCancelled: 0,
+    workerCancelled24h: 0,
+    postStartCancelled: 0
+  };
+}
+
+function historyByJob(historyRows, jobsById) {
+  const result = new Map();
+
+  for (const event of historyRows) {
+    const jobId = textValue(event.job_id);
+    const job = jobsById.get(jobId);
+
+    if (!job) {
+      continue;
+    }
+
+    if (!result.has(jobId)) {
+      result.set(jobId, emptyHistory());
+    }
+
+    const history = result.get(jobId);
+    const eventAt = textValue(event.event_at);
+    const eventMs = dateTimeMs(eventAt);
+
+    if (textValue(event.status) === 'booked' && eventAt !== '' && (history.bookedAt === '' || eventAt < history.bookedAt)) {
+      history.bookedAt = eventAt;
+    }
+
+    if (textValue(event.status) !== 'cancelled') {
+      continue;
+    }
+
+    if (eventAt !== '' && (history.cancelledAt === '' || eventAt > history.cancelledAt)) {
+      history.cancelledAt = eventAt;
+      history.cancelledBy = textValue(event.initiator);
+    }
+
+    if (textValue(job.status) !== 'cancelled' || !Number.isFinite(eventMs)) {
+      continue;
+    }
+
+    const startMs = dateTimeMs(job.planned_start);
+
+    if (textValue(event.initiator) === 'worker') {
+      history.workerCancelled = 1;
+
+      if (Number.isFinite(startMs) && eventMs >= startMs - 24 * 60 * 60 * 1000 && eventMs < startMs) {
+        history.workerCancelled24h = 1;
+      }
+    }
+
+    if (Number.isFinite(startMs) && eventMs >= startMs) {
+      history.postStartCancelled = 1;
+    }
+  }
+
+  return result;
 }
 
 function buildWorkerCancellationsPreloadQueries() {
   return {
-    shiftFacts: workerCancellationFactsQuery()
+    jobs: `SELECT
+  toString(toDate(j.start)) AS period_date,
+  j._id AS job_id,
+  ifNull(j.source, '') AS order_id,
+  j.worker AS worker_id,
+  j.start AS planned_start,
+  ifNull(j.status, '') AS status,
+  j.hours,
+  j.payment,
+  j.salary_per_hour,
+  j.salary_per_job,
+  j.start_fact,
+  j.finish_fact
+FROM mg_jobs AS j
+PREWHERE j.start >= {from:DateTime}
+  AND j.start < {to:DateTime}
+WHERE ifNull(j.worker, '') != ''
+  AND ifNull(j.deleted, 0) = 0
+FORMAT JSONEachRow`,
+    orders: `SELECT
+  o._id AS order_id,
+  ifNull(o.client, '') AS client_id,
+  ifNull(o.workplace, '') AS workplace_id,
+  o.pieceworks,
+  ifNull(o.contract_type, '') AS contract_type,
+  ifNull(o.deleted, 0) AS deleted,
+  ifNull(o.is_hidden, 0) AS is_hidden
+FROM mg_orders AS o
+WHERE o._id IN {ids:Array(String)}
+FORMAT JSONEachRow`,
+    clients: `SELECT _id AS client_id, ifNull(title, '') AS title
+FROM mg_clients
+WHERE _id IN {ids:Array(String)}
+FORMAT JSONEachRow`,
+    workplaces: `SELECT
+  _id AS workplace_id,
+  ifNull(contractor, '') AS contractor_id,
+  ifNull(title, '') AS title,
+  ifNull(address__city, '') AS address__city,
+  ifNull(address__street, '') AS address__street,
+  ifNull(address__house, '') AS address__house
+FROM mg_workplaces
+WHERE _id IN {ids:Array(String)}
+FORMAT JSONEachRow`,
+    contractors: `SELECT _id AS contractor_id, ifNull(contract_type, '') AS contract_type
+FROM mg_contractors
+WHERE _id IN {ids:Array(String)}
+FORMAT JSONEachRow`,
+    workers: `SELECT
+  _id AS worker_id,
+  ifNull(user, '') AS user_id,
+  ifNull(full_name, '') AS full_name,
+  ifNull(full_address__city, '') AS city
+FROM mg_workers
+WHERE _id IN {ids:Array(String)}
+FORMAT JSONEachRow`,
+    users: `SELECT
+  _id AS user_id,
+  ifNull(firstname, '') AS firstname,
+  ifNull(lastname, '') AS lastname,
+  ifNull(middlename, '') AS middlename,
+  ifNull(phone, '') AS phone
+FROM mg_users
+WHERE _id IN {ids:Array(String)}
+FORMAT JSONEachRow`,
+    history: `SELECT
+  h.job AS job_id,
+  ifNull(h.status, '') AS status,
+  ifNull(h.initiator, '') AS initiator,
+  coalesce(h.createdAt, h.updatedAt) AS event_at
+FROM mg_job_history AS h
+PREWHERE h.job IN {ids:Array(String)}
+WHERE h.status IN ('booked', 'cancelled')
+FORMAT JSONEachRow`
   };
 }
 
-async function refreshWorkerCancellationsPreload({ client, store, fromDate, toDate }) {
-  const params = {
-    param_from: toDateTimeParam(fromDate),
-    param_to: toDateTimeParam(toDate)
-  };
-  const queries = buildWorkerCancellationsPreloadQueries();
-  const shiftFacts = await client.queryJSONEachRow(
-    queries.shiftFacts,
-    params,
-    'worker cancellations preload shift facts'
+async function loadByIds(client, query, ids, operation) {
+  const rows = [];
+
+  for (const idsChunk of chunk(ids)) {
+    const batchRows = await client.queryJSONEachRow(
+      query,
+      { param_ids: serializeStringArray(idsChunk) },
+      operation
+    );
+    rows.push(...batchRows);
+  }
+
+  return rows;
+}
+
+async function loadDayFacts(client, queries, fromDate, toDate) {
+  const jobs = await client.queryJSONEachRow(
+    queries.jobs,
+    { param_from: toDateTimeParam(fromDate), param_to: toDateTimeParam(toDate) },
+    'worker cancellations preload jobs'
   );
+  const orders = await loadByIds(client, queries.orders, uniqueIds(jobs, 'order_id'), 'worker cancellations preload orders');
+  const ordersById = indexRows(orders, 'order_id');
+  const clients = await loadByIds(client, queries.clients, uniqueIds(orders, 'client_id'), 'worker cancellations preload clients');
+  const workplaces = await loadByIds(client, queries.workplaces, uniqueIds(orders, 'workplace_id'), 'worker cancellations preload workplaces');
+  const workers = await loadByIds(client, queries.workers, uniqueIds(jobs, 'worker_id'), 'worker cancellations preload workers');
+  const clientsById = indexRows(clients, 'client_id');
+  const workplacesById = indexRows(workplaces, 'workplace_id');
+  const contractors = await loadByIds(client, queries.contractors, uniqueIds(workplaces, 'contractor_id'), 'worker cancellations preload contractors');
+  const workersById = indexRows(workers, 'worker_id');
+  const users = await loadByIds(client, queries.users, uniqueIds(workers, 'user_id'), 'worker cancellations preload users');
+  const usersById = indexRows(users, 'user_id');
+  const contractorsById = indexRows(contractors, 'contractor_id');
+  const actualJobs = jobs.filter((job) => {
+    const order = ordersById.get(textValue(job.order_id));
+    const workplace = order && workplacesById.get(textValue(order.workplace_id));
 
-  store.replaceWorkerCancellationRange({ fromDate, toDate, shiftFacts });
+    return isActualOrder(order, clientsById.get(textValue(order && order.client_id)), contractorsById.get(textValue(workplace && workplace.contractor_id)));
+  });
+  const historyRows = await loadByIds(client, queries.history, uniqueIds(actualJobs, 'job_id'), 'worker cancellations preload history');
+  const actualJobsById = indexRows(actualJobs, 'job_id');
+  const history = historyByJob(historyRows, actualJobsById);
 
-  return { rowsWritten: shiftFacts.length };
+  return actualJobs.map((job) => {
+    const order = ordersById.get(textValue(job.order_id));
+    const worker = workersById.get(textValue(job.worker_id));
+    const user = usersById.get(textValue(worker && worker.user_id));
+    const workplace = workplacesById.get(textValue(order.workplace_id));
+    const jobHistory = history.get(textValue(job.job_id)) || emptyHistory();
+
+    return {
+      period_date: job.period_date,
+      job_id: job.job_id,
+      worker_id: job.worker_id,
+      user_id: textValue(worker && worker.user_id),
+      full_name: formatFullName(user, worker, textValue(job.worker_id)),
+      phone: textValue(user && user.phone),
+      city: textValue(worker && worker.city),
+      client: textValue(clientsById.get(textValue(order.client_id)) && clientsById.get(textValue(order.client_id)).title),
+      order_city: textValue(workplace && workplace.address__city),
+      address: workplaceAddress(workplace, textValue(order.workplace_id)),
+      planned_start: job.planned_start,
+      status: job.status,
+      is_successful_confirmed_shift: isSuccessfulConfirmedShift(job, order) ? 1 : 0,
+      is_worker_cancelled: jobHistory.workerCancelled,
+      is_worker_cancelled_24h: jobHistory.workerCancelled24h,
+      is_post_start_cancelled: jobHistory.postStartCancelled,
+      booked_at: jobHistory.bookedAt,
+      cancelled_at: jobHistory.cancelledAt,
+      cancelled_by: jobHistory.cancelledBy
+    };
+  });
+}
+
+async function refreshWorkerCancellationsPreload({ client, store, fromDate, toDate }) {
+  const queries = buildWorkerCancellationsPreloadQueries();
+  let rowsWritten = 0;
+
+  for (let date = parseDateOnly(fromDate); formatDateUTC(date) < toDate; date = addDaysUTC(date, 1)) {
+    const dayFrom = formatDateUTC(date);
+    const dayTo = formatDateUTC(addDaysUTC(date, 1));
+    const shiftFacts = await loadDayFacts(client, queries, dayFrom, dayTo);
+
+    store.replaceWorkerCancellationRange({ fromDate: dayFrom, toDate: dayTo, shiftFacts });
+    rowsWritten += shiftFacts.length;
+  }
+
+  return { rowsWritten };
 }
 
 module.exports = {

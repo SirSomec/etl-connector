@@ -25,7 +25,8 @@ function workerFullNameExpression() {
 }
 
 function workerCancellationOrderJoinsSql() {
-  return `${actualOrderJoinsSql('o', { clientAlias: 'c', workplaceAlias: 'ow', contractorAlias: 'ct' })}
+  return `INNER JOIN mg_orders AS o ON o._id = j.source
+  ${actualOrderJoinsSql('o', { clientAlias: 'c', workplaceAlias: 'ow', contractorAlias: 'ct' })}
   LEFT JOIN mg_workers AS w ON j.worker = w._id
   LEFT JOIN mg_users AS u ON w.user = u._id`;
 }
@@ -34,6 +35,7 @@ function activeWorkerIdsQuery() {
   return `SELECT DISTINCT
   j.worker AS worker_id
 FROM mg_jobs AS j
+INNER JOIN mg_orders AS o ON o._id = j.source
 ${actualOrderJoinsSql('o', { clientAlias: 'c', workplaceAlias: 'ow', contractorAlias: 'ct' })}
 WHERE j.start >= {from:DateTime}
   AND j.start < {to:DateTime}

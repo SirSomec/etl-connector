@@ -28,7 +28,9 @@ test('worker cancellations preload query builders use active worker ids and para
 
   assert.match(queries.activeWorkerIds, /j\.start >= \{from:DateTime\}/);
   assert.match(queries.activeWorkerIds, /j\.start < \{to:DateTime\}/);
+  assert.match(queries.activeWorkerIds, /INNER JOIN mg_orders AS o ON o\._id = j\.source/);
   assert.match(queries.shiftFacts, /worker_ids:Array\(String\)/);
+  assert.match(queries.shiftFacts, /INNER JOIN mg_orders AS o ON o\._id = j\.source/);
   assert.match(queries.shiftFacts, /mg_job_history/);
   assert.match(queries.shiftFacts, /is_worker_cancelled_24h/);
   assert.equal(queries.shiftFacts.includes('DROP TABLE'), false);

@@ -203,7 +203,6 @@ function historyByJob(historyRows, jobsById) {
 function buildWorkerCancellationsPreloadQueries() {
   return {
     jobs: `SELECT
-  toString(toDate(j.start)) AS period_date,
   j._id AS job_id,
   ifNull(j.source, '') AS order_id,
   j.worker AS worker_id,
@@ -330,7 +329,7 @@ async function loadDayFacts(client, queries, fromDate, toDate) {
     const jobHistory = history.get(textValue(job.job_id)) || emptyHistory();
 
     return {
-      period_date: job.period_date,
+      period_date: fromDate,
       job_id: job.job_id,
       worker_id: job.worker_id,
       user_id: textValue(worker && worker.user_id),

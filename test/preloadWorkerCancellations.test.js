@@ -30,6 +30,7 @@ test('worker cancellations preload query builder uses bounded lookups instead of
   assert.match(queries.orders, /o\._id IN \{ids:Array\(String\)\}/);
   assert.match(queries.history, /PREWHERE h\.job IN \{ids:Array\(String\)\}/);
   assert.equal(queries.jobs.includes('JOIN mg_orders'), false);
+  assert.equal(queries.jobs.includes('toDate(j.start)'), false);
   assert.equal(queries.jobs.includes('DROP TABLE'), false);
 });
 
@@ -62,7 +63,7 @@ test('worker cancellations preload refreshes active workers and writes a readabl
 
       const rowsByOperation = {
         'worker cancellations preload jobs': [{
-        period_date: '2026-06-01',
+        period_date: '2026-05-31',
         job_id: 'job-1',
         order_id: 'order-1',
         worker_id: 'worker-1',

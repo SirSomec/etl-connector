@@ -23,13 +23,14 @@ function createTemporaryStore() {
   };
 }
 
-test('worker cancellations preload query builders use active worker ids and parameterized ranges', () => {
+test('worker cancellations preload query builder resolves active workers inside parameterized SQL', () => {
   const queries = buildWorkerCancellationsPreloadQueries();
 
-  assert.match(queries.activeWorkerIds, /j\.start >= \{from:DateTime\}/);
-  assert.match(queries.activeWorkerIds, /j\.start < \{to:DateTime\}/);
-  assert.match(queries.activeWorkerIds, /INNER JOIN mg_orders AS o ON o\._id = j\.source/);
-  assert.match(queries.shiftFacts, /worker_ids:Array\(String\)/);
+  assert.match(queries.shiftFacts, /active_workers AS/);
+  assert.match(queries.shiftFacts, /active_j\.start >= \{from:DateTime\}/);
+  assert.match(queries.shiftFacts, /active_j\.start < \{to:DateTime\}/);
+  assert.match(queries.shiftFacts, /INNER JOIN active_workers AS aw ON j\.worker = aw\.worker_id/);
+  assert.equal(queries.shiftFacts.includes('worker_ids:Array(String)'), false);
   assert.match(queries.shiftFacts, /INNER JOIN mg_orders AS o ON o\._id = j\.source/);
   assert.match(queries.shiftFacts, /mg_job_history/);
   assert.match(queries.shiftFacts, /is_worker_cancelled_24h/);
@@ -62,10 +63,6 @@ test('worker cancellations preload refreshes active workers and writes a readabl
   const client = {
     async queryJSONEachRow(query, params, operation) {
       calls.push({ query, params, operation });
-
-      if (operation === 'worker cancellations preload active workers') {
-        return [{ worker_id: 'worker-1' }];
-      }
 
       return [{
         period_date: '2026-06-01',
@@ -100,11 +97,8 @@ test('worker cancellations preload refreshes active workers and writes a readabl
     });
 
     assert.equal(result.rowsWritten, 1);
-    assert.deepEqual(calls.map((call) => call.operation), [
-      'worker cancellations preload active workers',
-      'worker cancellations preload shift facts'
-    ]);
-    assert.equal(calls[1].params.param_worker_ids, "['worker-1']");
+    assert.deepEqual(calls.map((call) => call.operation), ['worker cancellations preload shift facts']);
+    assert.equal(Object.hasOwn(calls[0].params, 'param_worker_ids'), false);
 
     const filters = {
       from: '2026-06-01',

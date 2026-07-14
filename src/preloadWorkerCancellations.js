@@ -4,14 +4,6 @@ const {
   actualOrderJoinsSql
 } = require('./analyticsDomainSql');
 
-function escapeClickHouseString(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
-
-function serializeStringArray(values) {
-  return `[${values.map((value) => `'${escapeClickHouseString(value)}'`).join(',')}]`;
-}
-
 function toDateTimeParam(dateOnly) {
   return `${dateOnly} 00:00:00`;
 }
@@ -31,22 +23,27 @@ function workerCancellationOrderJoinsSql() {
   LEFT JOIN mg_users AS u ON w.user = u._id`;
 }
 
-function activeWorkerIdsQuery() {
-  return `SELECT DISTINCT
-  j.worker AS worker_id
-FROM mg_jobs AS j
-INNER JOIN mg_orders AS o ON o._id = j.source
-${actualOrderJoinsSql('o', { clientAlias: 'c', workplaceAlias: 'ow', contractorAlias: 'ct' })}
-WHERE j.start >= {from:DateTime}
-  AND j.start < {to:DateTime}
-  AND ifNull(j.worker, '') != ''
-  AND ifNull(j.deleted, 0) = 0
-  AND ${actualOrderDomainCondition('o', 'c', 'ct')}
-ORDER BY worker_id
-FORMAT JSONEachRow`;
+function activeWorkersCte() {
+  return `active_workers AS (
+    SELECT DISTINCT
+      active_j.worker AS worker_id
+    FROM mg_jobs AS active_j
+    INNER JOIN mg_orders AS active_o ON active_o._id = active_j.source
+    ${actualOrderJoinsSql('active_o', {
+      clientAlias: 'active_c',
+      workplaceAlias: 'active_ow',
+      contractorAlias: 'active_ct'
+    })}
+    WHERE active_j.start >= {from:DateTime}
+      AND active_j.start < {to:DateTime}
+      AND ifNull(active_j.worker, '') != ''
+      AND ifNull(active_j.deleted, 0) = 0
+      AND ${actualOrderDomainCondition('active_o', 'active_c', 'active_ct')}
+  )`;
 }
 
 function workerCancellationFactsQuery() {
+  const activeWorkers = activeWorkersCte();
   const shiftFacts = `shift_facts AS (
     SELECT
       toString(toDate(j.start)) AS period_date,
@@ -72,10 +69,10 @@ function workerCancellationFactsQuery() {
       ifNull(j.status, '') AS status,
       ${successfulConfirmedShiftFlagExpression('j', { pieceworkExpression: 'o.pieceworks' })} AS is_successful_confirmed_shift
     FROM mg_jobs AS j
+    INNER JOIN active_workers AS aw ON j.worker = aw.worker_id
     ${workerCancellationOrderJoinsSql()}
     WHERE j.start >= {from:DateTime}
       AND j.start < {to:DateTime}
-      AND ifNull(j.worker, '') IN {worker_ids:Array(String)}
       AND ifNull(j.deleted, 0) = 0
       AND ${actualOrderDomainCondition('o', 'c', 'ct')}
   ),
@@ -129,7 +126,8 @@ function workerCancellationFactsQuery() {
     GROUP BY h.job
   )`;
 
-  return `WITH ${shiftFacts}
+  return `WITH ${activeWorkers},
+  ${shiftFacts}
 SELECT
   sf.period_date,
   sf.job_id,
@@ -160,7 +158,6 @@ FORMAT JSONEachRow`;
 
 function buildWorkerCancellationsPreloadQueries() {
   return {
-    activeWorkerIds: activeWorkerIdsQuery(),
     shiftFacts: workerCancellationFactsQuery()
   };
 }
@@ -171,21 +168,11 @@ async function refreshWorkerCancellationsPreload({ client, store, fromDate, toDa
     param_to: toDateTimeParam(toDate)
   };
   const queries = buildWorkerCancellationsPreloadQueries();
-  const activeWorkers = await client.queryJSONEachRow(
-    queries.activeWorkerIds,
+  const shiftFacts = await client.queryJSONEachRow(
+    queries.shiftFacts,
     params,
-    'worker cancellations preload active workers'
+    'worker cancellations preload shift facts'
   );
-  const workerIds = Array.from(new Set(
-    activeWorkers.map((row) => String(row.worker_id || '').trim()).filter(Boolean)
-  ));
-  const shiftFacts = workerIds.length === 0
-    ? []
-    : await client.queryJSONEachRow(
-        queries.shiftFacts,
-        { ...params, param_worker_ids: serializeStringArray(workerIds) },
-        'worker cancellations preload shift facts'
-      );
 
   store.replaceWorkerCancellationRange({ fromDate, toDate, shiftFacts });
 

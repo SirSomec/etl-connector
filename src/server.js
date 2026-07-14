@@ -533,6 +533,7 @@ function createApp({
   app.locals.activityStore = activity;
 
   app.disable('x-powered-by');
+  app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use(express.urlencoded({ extended: false }));
   app.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');

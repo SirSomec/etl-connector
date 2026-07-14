@@ -34,6 +34,9 @@ test('worker cancellations preload query builder resolves active workers inside 
   assert.match(queries.shiftFacts, /INNER JOIN mg_orders AS o ON o\._id = j\.source/);
   assert.match(queries.shiftFacts, /mg_job_history/);
   assert.match(queries.shiftFacts, /is_worker_cancelled_24h/);
+  assert.match(queries.shiftFacts, /join_algorithm = 'grace_hash'/);
+  assert.match(queries.shiftFacts, /grace_hash_join_initial_buckets = 256/);
+  assert.equal(queries.shiftFacts.includes('ORDER BY sf.period_date, sf.job_id'), false);
   assert.equal(queries.shiftFacts.includes('DROP TABLE'), false);
 });
 

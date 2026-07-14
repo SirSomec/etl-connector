@@ -152,7 +152,9 @@ FROM shift_facts AS sf
 LEFT JOIN cancellation_flags AS cf ON sf.job_id = cf.job_id
 LEFT JOIN booking_events AS be ON sf.job_id = be.job_id
 LEFT JOIN cancel_events AS ce ON sf.job_id = ce.job_id
-ORDER BY sf.period_date, sf.job_id
+SETTINGS
+  join_algorithm = 'grace_hash',
+  grace_hash_join_initial_buckets = 256
 FORMAT JSONEachRow`;
 }
 

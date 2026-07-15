@@ -23,6 +23,7 @@ const {
   renderScheduledReportsPage,
   renderTable,
   renderUserActivityDashboard,
+  renderWorkerBlacklistDetails,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
@@ -1156,6 +1157,39 @@ test('renderWorkerCancellationsDashboardSection handles out-of-range pages witho
   assert.match(html, /pagination-current" aria-current="page">3<\/span>/);
   assert.doesNotMatch(html, /Нет исполнителей со сменами за выбранный период/);
   assert.doesNotMatch(html, /Страница 4 из 4/);
+  assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerBlacklistDetails renders escaped current lists and audit caveat', () => {
+  const html = renderWorkerBlacklistDetails({
+    details: {
+      workerId: 'worker-1',
+      blacklists: [
+        {
+          scope: 'client',
+          clientName: 'Brand <b>A</b>',
+          workplaceName: '',
+          city: ''
+        },
+        {
+          scope: 'workplace',
+          clientName: 'Brand A',
+          workplaceName: 'Store <script>x</script>',
+          city: 'Moscow'
+        }
+      ],
+      lastEventAtLocal: '2026-07-14 21:04:32',
+      lastEventOperator: 'Ivan <Operator>'
+    }
+  });
+
+  assert.match(html, /worker-blacklist-details/);
+  assert.match(html, /Brand &lt;b&gt;A&lt;\/b&gt;/);
+  assert.match(html, /Store &lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /Ivan &lt;Operator&gt;/);
+  assert.match(html, /14\.07\.2026 21:04/);
+  assert.match(html, /не указывает конкретный список/);
+  assert.doesNotMatch(html, /<script>x<\/script>/);
   assert.doesNotMatch(html, /<html/);
 });
 

@@ -90,6 +90,7 @@ const {
 } = require('./workplacePointDashboard');
 const {
   WORKER_CANCELLATIONS_SECTIONS,
+  loadWorkerBlacklistDetails,
   loadWorkerCancellationsDashboardSection,
   loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell
@@ -119,6 +120,7 @@ const {
   renderScheduledReportsPage,
   renderTable,
   renderUserActivityDashboard,
+  renderWorkerBlacklistDetails,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,
@@ -2827,6 +2829,29 @@ function createApp({
           .status(200)
           .type('html')
           .send(renderWorkerCancellationsDetails({ details }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/worker-cancellations/blacklists',
+    requireAuth('worker-cancellations'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadWorkerBlacklistDetails(client, req.query);
+
+        recordCurrentUserActivity(req, activityEventType(req));
+        res
+          .status(200)
+          .type('html')
+          .send(renderWorkerBlacklistDetails({ details }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 

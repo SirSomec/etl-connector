@@ -5783,6 +5783,7 @@ function renderWorkerCancellationDetailsScript() {
 
   var body = modal.querySelector('[data-worker-cancellation-modal-body]');
   var closeButton = modal.querySelector('[data-worker-cancellation-modal-close]');
+  var title = modal.querySelector('[data-worker-cancellation-modal-title]');
   var lastFocused = null;
 
   function escapeClientHtml(value) {
@@ -5794,9 +5795,13 @@ function renderWorkerCancellationDetailsScript() {
       .replace(/'/g, '&#39;');
   }
 
-  function openModal() {
+  function openModal(modalTitle) {
     lastFocused = document.activeElement;
     modal.hidden = false;
+
+    if (title) {
+      title.textContent = modalTitle || 'Детализация смен';
+    }
 
     if (closeButton) {
       closeButton.focus();
@@ -5826,11 +5831,15 @@ function renderWorkerCancellationDetailsScript() {
       return;
     }
 
-    var trigger = event.target.closest('[data-worker-cancellation-detail-trigger]');
+    var trigger = event.target.closest('[data-worker-cancellation-detail-trigger], [data-worker-blacklists-trigger]');
 
     if (trigger) {
       event.preventDefault();
-      openModal();
+      openModal(
+        trigger.hasAttribute('data-worker-blacklists-trigger')
+          ? 'Чёрные списки'
+          : 'Детализация смен'
+      );
 
       if (body) {
         body.innerHTML = '<p class="loading">Загружается</p>';
@@ -9837,6 +9846,14 @@ function workerCancellationsDetailUrl(filters, row, metric) {
   return `/dashboards/worker-cancellations/details?${params.toString()}`;
 }
 
+function workerCancellationBlacklistsUrl(row) {
+  const params = new URLSearchParams();
+
+  addDashboardQueryParam(params, 'workerId', row.workerId);
+
+  return `/dashboards/worker-cancellations/blacklists?${params.toString()}`;
+}
+
 function workerCancellationsSortDirection(filters, column) {
   const currentSort = String(filters.sort || '');
   const currentDirection = String(filters.direction || 'desc') === 'asc' ? 'asc' : 'desc';
@@ -9940,6 +9957,12 @@ function renderWorkerCancellationsTable(rows, filters, pagination, currentUser) 
 
           if (column.key === 'riskReasons') {
             return `<td><div class="attention-reasons">${renderAttentionReasons(row.riskReasons, row)}</div></td>`;
+          }
+
+          if (column.key === 'fullName') {
+            const blacklistsUrl = workerCancellationBlacklistsUrl(row);
+
+            return `<td><button type="button" class="metric-detail-trigger worker-blacklists-trigger" data-worker-blacklists-trigger data-detail-url="${escapeHtml(blacklistsUrl)}">${escapeHtml(value || '')}</button></td>`;
           }
 
           const classAttribute = column.key === 'phone' ? ' class="phone-cell"' : '';
@@ -10105,6 +10128,49 @@ function renderGigerDetailsWorkbook({ details }) {
 </table>
 </body>
 </html>`;
+}
+
+function renderWorkerBlacklistDetails({ details }) {
+  const safeDetails = details || {};
+  const blacklists = Array.isArray(safeDetails.blacklists) ? safeDetails.blacklists : [];
+  const lastEvent = safeDetails.lastEventAtLocal
+    ? `<section class="worker-blacklists-audit">
+  <h3>Последнее зафиксированное действие с чёрным списком</h3>
+  <p class="context-line">Оператор: ${escapeHtml(detailText(safeDetails.lastEventOperator))} · ${escapeHtml(formatDateTimeValue(safeDetails.lastEventAtLocal))} МСК</p>
+  <p class="muted">Журнал не указывает конкретный список и не различает добавление и удаление. Поэтому эти данные нельзя трактовать как автора и дату включения в строке списка.</p>
+</section>`
+    : `<p class="muted">В журнале действий оператора не найдено событий по чёрным спискам этого исполнителя.</p>`;
+
+  if (blacklists.length === 0) {
+    return `<div class="worker-blacklist-details">
+  <h2>Чёрные списки исполнителя</h2>
+  <p class="empty">Исполнитель не находится в актуальных чёрных списках клиентов и рабочих мест.</p>
+  ${lastEvent}
+</div>`;
+  }
+
+  const rows = blacklists
+    .map((blacklist) => `<tr>
+  <td>${escapeHtml(blacklist.scope === 'workplace' ? 'Рабочее место' : 'Клиент')}</td>
+  <td>${escapeHtml(detailText(blacklist.clientName))}</td>
+  <td>${escapeHtml(detailText(blacklist.workplaceName))}</td>
+  <td>${escapeHtml(detailText(blacklist.city))}</td>
+</tr>`)
+    .join('');
+
+  return `<div class="worker-blacklist-details">
+  <h2>Чёрные списки исполнителя</h2>
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Уровень списка</th>
+      <th>Клиент</th>
+      <th>Рабочее место</th>
+      <th>Город</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>
+  ${lastEvent}
+</div>`;
 }
 
 function renderWorkerCancellationsDetails({ details }) {
@@ -10341,7 +10407,7 @@ function renderWorkerCancellationsModal() {
   <div class="worker-cancellation-modal-backdrop" data-worker-cancellation-modal-close></div>
   <div class="worker-cancellation-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="worker-cancellation-modal-title">
     <div class="worker-cancellation-modal-head">
-      <h2 id="worker-cancellation-modal-title">Детализация смен</h2>
+      <h2 id="worker-cancellation-modal-title" data-worker-cancellation-modal-title>Детализация смен</h2>
       <button type="button" class="worker-cancellation-modal-close" data-worker-cancellation-modal-close aria-label="Закрыть">&times;</button>
     </div>
     <div class="worker-cancellation-modal-body" data-worker-cancellation-modal-body>
@@ -13542,6 +13608,7 @@ module.exports = {
   renderScheduledReportsPage,
   renderTable,
   renderUserActivityDashboard,
+  renderWorkerBlacklistDetails,
   renderWorkerCancellationsDetails,
   renderWorkerCancellationsDashboard,
   renderWorkerCancellationsDashboardSection,

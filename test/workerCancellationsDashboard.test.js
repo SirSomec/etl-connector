@@ -4,11 +4,14 @@ const assert = require('node:assert/strict');
 const {
   WORKER_CANCELLATION_DETAIL_METRICS,
   WORKER_CANCELLATIONS_SECTIONS,
+  loadWorkerBlacklistDetails,
   loadWorkerCancellationsDashboardSection,
   loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell,
+  mergeWorkerBlacklistDetails,
   mergeWorkerCancellationDetails,
   mergeWorkerCancellationRows,
+  normalizeWorkerBlacklistInput,
   normalizeWorkerCancellationDetailInput,
   normalizeWorkerCancellationFilters
 } = require('../src/workerCancellationsDashboard');
@@ -552,6 +555,99 @@ test('mergeWorkerCancellationDetails maps detail rows to popup model', () => {
       cancelledBy: ''
     }
   ]);
+});
+
+test('worker blacklist details validate a worker id and preserve current memberships with audit caveat data', () => {
+  assert.deepEqual(normalizeWorkerBlacklistInput({ workerId: ' worker-1 ' }), {
+    workerId: 'worker-1'
+  });
+  assert.throws(
+    () => normalizeWorkerBlacklistInput({ workerId: '' }),
+    { message: /Worker id is required/, status: 400 }
+  );
+
+  const details = mergeWorkerBlacklistDetails(
+    { workerId: 'worker-1' },
+    [
+      {
+        scope: 'client',
+        client_id: 'client-1',
+        client_name: 'Brand A',
+        workplace_id: '',
+        workplace_name: '',
+        city: ''
+      },
+      {
+        scope: 'workplace',
+        client_id: 'client-1',
+        client_name: 'Brand A',
+        workplace_id: 'workplace-1',
+        workplace_name: 'Store 1',
+        city: 'Moscow'
+      },
+      {
+        scope: 'workplace',
+        client_id: 'client-1',
+        client_name: 'Brand A',
+        workplace_id: 'workplace-1',
+        workplace_name: 'Store 1',
+        city: 'Moscow'
+      }
+    ],
+    [{ last_event_at_local: '2026-07-14 21:04:32', last_event_operator: 'Ivan Operator' }]
+  );
+
+  assert.deepEqual(details, {
+    workerId: 'worker-1',
+    blacklists: [
+      { scope: 'client', clientName: 'Brand A', workplaceName: '', city: '' },
+      { scope: 'workplace', clientName: 'Brand A', workplaceName: 'Store 1', city: 'Moscow' }
+    ],
+    lastEventAtLocal: '2026-07-14 21:04:32',
+    lastEventOperator: 'Ivan Operator'
+  });
+});
+
+test('loadWorkerBlacklistDetails uses parameterized current blacklist and audit queries', async () => {
+  const { calls, client } = createDashboardClient({
+    'worker blacklist memberships': [
+      {
+        scope: 'client',
+        client_id: 'client-1',
+        client_name: 'Brand A',
+        workplace_id: '',
+        workplace_name: '',
+        city: ''
+      }
+    ],
+    'worker blacklist last event': [
+      { last_event_at_local: '2026-07-14 21:04:32', last_event_operator: 'Ivan Operator' }
+    ]
+  });
+
+  const details = await loadWorkerBlacklistDetails(client, { workerId: 'worker-1' });
+
+  assert.equal(details.blacklists.length, 1);
+  assert.deepEqual(calls.map((call) => call.operation).sort(), [
+    'worker blacklist last event',
+    'worker blacklist memberships'
+  ]);
+
+  for (const call of calls) {
+    assert.equal(call.params.param_worker_id, 'worker-1');
+    assert.equal(call.query.includes('{worker_id:String}'), true);
+    assert.equal(call.query.includes('worker-1'), false);
+  }
+
+  const memberships = calls.find((call) => call.operation === 'worker blacklist memberships');
+  const audit = calls.find((call) => call.operation === 'worker blacklist last event');
+
+  assert.equal(memberships.query.includes('mg_clients AS c'), true);
+  assert.equal(memberships.query.includes('mg_workplaces AS wp'), true);
+  assert.equal(memberships.query.includes('ARRAY JOIN'), true);
+  assert.equal(audit.query.includes("h.model = 'ban_list'"), true);
+  assert.equal(audit.query.includes('mg_operators AS o'), true);
+  assert.equal(audit.query.includes("'Europe/Moscow'"), true);
 });
 
 test('loadWorkerCancellationsDashboardShell returns empty dashboard with brand and city filter options', async () => {

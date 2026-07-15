@@ -468,6 +468,16 @@ function normalizeWorkerCancellationDetailInput(input = {}, now = new Date()) {
   };
 }
 
+function normalizeWorkerBlacklistInput(input = {}) {
+  const workerId = cleanText(input.workerId);
+
+  if (workerId === '') {
+    throw createBadRequestError('Worker id is required');
+  }
+
+  return { workerId };
+}
+
 function mergeWorkerCancellationDetails(detailInput, detailRows = []) {
   return {
     filters: detailInput.filters,
@@ -485,6 +495,110 @@ function mergeWorkerCancellationDetails(detailInput, detailRows = []) {
       cancelledBy: textValue(row.cancelled_by)
     }))
   };
+}
+
+function mergeWorkerBlacklistDetails(detailInput, blacklistRows = [], auditRows = []) {
+  const seen = new Set();
+  const blacklists = [];
+
+  for (const row of blacklistRows) {
+    const scope = textValue(row.scope);
+    const clientId = textValue(row.client_id);
+    const workplaceId = textValue(row.workplace_id);
+    const key = `${scope}:${clientId}:${workplaceId}`;
+
+    if (scope === '' || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    blacklists.push({
+      scope,
+      clientName: textValue(row.client_name) || clientId,
+      workplaceName: textValue(row.workplace_name) || workplaceId,
+      city: textValue(row.city)
+    });
+  }
+
+  const audit = auditRows[0] || {};
+
+  return {
+    workerId: detailInput.workerId,
+    blacklists,
+    lastEventAtLocal: textValue(audit.last_event_at_local),
+    lastEventOperator: textValue(audit.last_event_operator)
+  };
+}
+
+function workerBlacklistMembershipsQuery() {
+  return `SELECT
+    scope,
+    client_id,
+    client_name,
+    workplace_id,
+    workplace_name,
+    city
+  FROM (
+    SELECT
+      'client' AS scope,
+      c._id AS client_id,
+      ifNull(c.title, '') AS client_name,
+      '' AS workplace_id,
+      '' AS workplace_name,
+      '' AS city
+    FROM mg_clients AS c
+    ARRAY JOIN c.blacklist AS blacklisted_worker
+    WHERE blacklisted_worker = {worker_id:String}
+
+    UNION ALL
+
+    SELECT
+      'workplace' AS scope,
+      ifNull(wp.client, '') AS client_id,
+      ifNull(c.title, '') AS client_name,
+      wp._id AS workplace_id,
+      ifNull(wp.title, '') AS workplace_name,
+      ifNull(wp.address__city, '') AS city
+    FROM mg_workplaces AS wp
+    ARRAY JOIN wp.blacklist AS blacklisted_worker
+    LEFT JOIN mg_clients AS c ON c._id = wp.client
+    WHERE blacklisted_worker = {worker_id:String}
+  )
+  ORDER BY scope, client_name, workplace_name, city
+  FORMAT JSONEachRow`;
+}
+
+function workerBlacklistLastEventQuery() {
+  return `SELECT
+    formatDateTime(toTimeZone(max(h.createdAt), 'Europe/Moscow'), '%F %T') AS last_event_at_local,
+    argMax(
+      nullIf(trim(concat(ifNull(o.lastname, ''), ' ', ifNull(o.firstname, ''))), ''),
+      h.createdAt
+    ) AS last_event_operator
+  FROM mg_operators_history AS h
+  LEFT JOIN mg_operators AS o ON o._id = h.operator
+  WHERE h.model = 'ban_list'
+    AND h.target = {worker_id:String}
+  FORMAT JSONEachRow`;
+}
+
+async function loadWorkerBlacklistDetails(client, input = {}) {
+  const detailInput = normalizeWorkerBlacklistInput(input);
+  const params = { param_worker_id: detailInput.workerId };
+  const [blacklistRows, auditRows] = await Promise.all([
+    client.queryJSONEachRow(
+      workerBlacklistMembershipsQuery(),
+      params,
+      'worker blacklist memberships'
+    ),
+    client.queryJSONEachRow(
+      workerBlacklistLastEventQuery(),
+      params,
+      'worker blacklist last event'
+    )
+  ]);
+
+  return mergeWorkerBlacklistDetails(detailInput, blacklistRows, auditRows);
 }
 
 async function readThroughCache(cache, key, loader) {
@@ -1418,11 +1532,14 @@ async function loadWorkerCancellationsDashboardSection(
 module.exports = {
   WORKER_CANCELLATION_DETAIL_METRICS,
   WORKER_CANCELLATIONS_SECTIONS,
+  loadWorkerBlacklistDetails,
   loadWorkerCancellationsDashboardSection,
   loadWorkerCancellationsDetails,
   loadWorkerCancellationsDashboardShell,
+  mergeWorkerBlacklistDetails,
   mergeWorkerCancellationDetails,
   mergeWorkerCancellationRows,
+  normalizeWorkerBlacklistInput,
   normalizeWorkerCancellationDetailInput,
   normalizeWorkerCancellationFilters
 };

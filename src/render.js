@@ -10133,6 +10133,18 @@ function renderGigerDetailsWorkbook({ details }) {
 function renderWorkerBlacklistDetails({ details }) {
   const safeDetails = details || {};
   const blacklists = Array.isArray(safeDetails.blacklists) ? safeDetails.blacklists : [];
+  const eventContext = safeDetails.lastEventContext || null;
+  const eventContextName = eventContext
+    ? detailText(eventContext.contractorName || eventContext.clientName)
+    : '';
+  const eventContextBlock = eventContext
+    ? `<section class="worker-blacklists-event-context">
+  <h3>Список по контексту события</h3>
+  <p class="context-line"><strong>${escapeHtml(eventContextName)}</strong></p>
+  <p>${escapeHtml(detailText(eventContext.workplaceName))}${eventContext.city ? ` · ${escapeHtml(eventContext.city)}` : ''}</p>
+  <p class="muted">Название восстановлено по отмене смены, зафиксированной через ${escapeHtml(eventContext.eventDistanceSeconds)} сек. после события <code>ban_list</code>. Это контекст события, а не подтверждение текущего состояния списка.</p>
+</section>`
+    : '';
   const lastEvent = safeDetails.lastEventAtLocal
     ? `<section class="worker-blacklists-audit">
   <h3>Последнее зафиксированное действие с чёрным списком</h3>
@@ -10144,7 +10156,8 @@ function renderWorkerBlacklistDetails({ details }) {
   if (blacklists.length === 0) {
     return `<div class="worker-blacklist-details">
   <h2>Чёрные списки исполнителя</h2>
-  <p class="empty">Исполнитель не находится в актуальных чёрных списках клиентов и рабочих мест.</p>
+  <p class="empty">В актуальных массивах чёрных списков клиентов и рабочих мест исполнитель не найден.</p>
+  ${eventContextBlock}
   ${lastEvent}
 </div>`;
   }
@@ -10169,6 +10182,7 @@ function renderWorkerBlacklistDetails({ details }) {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>
+  ${eventContextBlock}
   ${lastEvent}
 </div>`;
 }

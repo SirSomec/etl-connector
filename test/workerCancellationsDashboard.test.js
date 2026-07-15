@@ -594,7 +594,16 @@ test('worker blacklist details validate a worker id and preserve current members
         city: 'Moscow'
       }
     ],
-    [{ last_event_at_local: '2026-07-14 21:04:32', last_event_operator: 'Ivan Operator' }]
+    [{ last_event_at_local: '2026-07-14 21:04:32', last_event_operator: 'Ivan Operator' }],
+    [
+      {
+        client_name: 'Brand A',
+        contractor_name: 'Brand A (Legal)',
+        workplace_name: 'Store 1',
+        city: 'Moscow',
+        event_distance_seconds: '35'
+      }
+    ]
   );
 
   assert.deepEqual(details, {
@@ -604,11 +613,18 @@ test('worker blacklist details validate a worker id and preserve current members
       { scope: 'workplace', clientName: 'Brand A', workplaceName: 'Store 1', city: 'Moscow' }
     ],
     lastEventAtLocal: '2026-07-14 21:04:32',
-    lastEventOperator: 'Ivan Operator'
+    lastEventOperator: 'Ivan Operator',
+    lastEventContext: {
+      clientName: 'Brand A',
+      contractorName: 'Brand A (Legal)',
+      workplaceName: 'Store 1',
+      city: 'Moscow',
+      eventDistanceSeconds: 35
+    }
   });
 });
 
-test('loadWorkerBlacklistDetails uses parameterized current blacklist and audit queries', async () => {
+test('loadWorkerBlacklistDetails uses parameterized current blacklist, audit, and event context queries', async () => {
   const { calls, client } = createDashboardClient({
     'worker blacklist memberships': [
       {
@@ -621,14 +637,29 @@ test('loadWorkerBlacklistDetails uses parameterized current blacklist and audit 
       }
     ],
     'worker blacklist last event': [
-      { last_event_at_local: '2026-07-14 21:04:32', last_event_operator: 'Ivan Operator' }
+      {
+        last_event_at_local: '2026-07-14 21:04:32',
+        last_event_at_utc: '2026-07-14 18:04:32.000',
+        last_event_operator: 'Ivan Operator'
+      }
+    ],
+    'worker blacklist event context': [
+      {
+        client_name: 'Brand A',
+        contractor_name: 'Brand A (Legal)',
+        workplace_name: 'Store 1',
+        city: 'Moscow',
+        event_distance_seconds: 35
+      }
     ]
   });
 
   const details = await loadWorkerBlacklistDetails(client, { workerId: 'worker-1' });
 
   assert.equal(details.blacklists.length, 1);
+  assert.equal(details.lastEventContext.contractorName, 'Brand A (Legal)');
   assert.deepEqual(calls.map((call) => call.operation).sort(), [
+    'worker blacklist event context',
     'worker blacklist last event',
     'worker blacklist memberships'
   ]);
@@ -641,6 +672,7 @@ test('loadWorkerBlacklistDetails uses parameterized current blacklist and audit 
 
   const memberships = calls.find((call) => call.operation === 'worker blacklist memberships');
   const audit = calls.find((call) => call.operation === 'worker blacklist last event');
+  const context = calls.find((call) => call.operation === 'worker blacklist event context');
 
   assert.equal(memberships.query.includes('mg_clients AS c'), true);
   assert.equal(memberships.query.includes('mg_workplaces AS wp'), true);
@@ -648,6 +680,11 @@ test('loadWorkerBlacklistDetails uses parameterized current blacklist and audit 
   assert.equal(audit.query.includes("h.model = 'ban_list'"), true);
   assert.equal(audit.query.includes('mg_operators AS o'), true);
   assert.equal(audit.query.includes("'Europe/Moscow'"), true);
+  assert.equal(context.params.param_event_at, '2026-07-14 18:04:32.000');
+  assert.equal(context.query.includes("status = 'cancelled'"), true);
+  assert.equal(context.query.includes('mg_contractors AS ct'), true);
+  assert.equal(context.query.includes("DateTime64(3, 'UTC')"), true);
+  assert.equal(context.query.includes('INTERVAL 5 MINUTE'), true);
 });
 
 test('loadWorkerCancellationsDashboardShell returns empty dashboard with brand and city filter options', async () => {

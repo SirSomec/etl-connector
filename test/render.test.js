@@ -1179,7 +1179,14 @@ test('renderWorkerBlacklistDetails renders escaped current lists and audit cavea
         }
       ],
       lastEventAtLocal: '2026-07-14 21:04:32',
-      lastEventOperator: 'Ivan <Operator>'
+      lastEventOperator: 'Ivan <Operator>',
+      lastEventContext: {
+        clientName: 'Brand A',
+        contractorName: 'Brand <Legal>',
+        workplaceName: 'Store <Context>',
+        city: 'Moscow',
+        eventDistanceSeconds: 35
+      }
     }
   });
 
@@ -1187,10 +1194,37 @@ test('renderWorkerBlacklistDetails renders escaped current lists and audit cavea
   assert.match(html, /Brand &lt;b&gt;A&lt;\/b&gt;/);
   assert.match(html, /Store &lt;script&gt;x&lt;\/script&gt;/);
   assert.match(html, /Ivan &lt;Operator&gt;/);
+  assert.match(html, /Brand &lt;Legal&gt;/);
+  assert.match(html, /Store &lt;Context&gt;/);
+  assert.match(html, /через 35 сек/);
+  assert.match(html, /не подтверждение текущего состояния списка/);
   assert.match(html, /14\.07\.2026 21:04/);
   assert.match(html, /не указывает конкретный список/);
   assert.doesNotMatch(html, /<script>x<\/script>/);
   assert.doesNotMatch(html, /<html/);
+});
+
+test('renderWorkerBlacklistDetails shows journal context when current arrays are empty', () => {
+  const html = renderWorkerBlacklistDetails({
+    details: {
+      workerId: 'worker-1',
+      blacklists: [],
+      lastEventAtLocal: '2026-03-18 08:45:48',
+      lastEventOperator: 'Operator',
+      lastEventContext: {
+        clientName: 'Магнит',
+        contractorName: 'Магнит (АО "Тандер")',
+        workplaceName: 'Магнит Москва 1',
+        city: 'Москва',
+        eventDistanceSeconds: 35
+      }
+    }
+  });
+
+  assert.match(html, /В актуальных массивах/);
+  assert.match(html, /Магнит \(АО &quot;Тандер&quot;\)/);
+  assert.match(html, /Магнит Москва 1/);
+  assert.match(html, /контекст события/);
 });
 
 test('renderWorkerCancellationsDetails renders escaped shift details fragment', () => {

@@ -497,7 +497,12 @@ function mergeWorkerCancellationDetails(detailInput, detailRows = []) {
   };
 }
 
-function mergeWorkerBlacklistDetails(detailInput, blacklistRows = [], auditRows = []) {
+function mergeWorkerBlacklistDetails(
+  detailInput,
+  blacklistRows = [],
+  auditRows = [],
+  eventContextRows = []
+) {
   const seen = new Set();
   const blacklists = [];
 
@@ -521,12 +526,27 @@ function mergeWorkerBlacklistDetails(detailInput, blacklistRows = [], auditRows 
   }
 
   const audit = auditRows[0] || {};
+  const eventContext = eventContextRows[0] || {};
+  const hasEventContext = [
+    eventContext.client_name,
+    eventContext.contractor_name,
+    eventContext.workplace_name
+  ].some((value) => textValue(value) !== '');
 
   return {
     workerId: detailInput.workerId,
     blacklists,
     lastEventAtLocal: textValue(audit.last_event_at_local),
-    lastEventOperator: textValue(audit.last_event_operator)
+    lastEventOperator: textValue(audit.last_event_operator),
+    lastEventContext: hasEventContext
+      ? {
+          clientName: textValue(eventContext.client_name),
+          contractorName: textValue(eventContext.contractor_name),
+          workplaceName: textValue(eventContext.workplace_name),
+          city: textValue(eventContext.city),
+          eventDistanceSeconds: Number.parseInt(eventContext.event_distance_seconds, 10) || 0
+        }
+      : null
   };
 }
 
@@ -571,6 +591,7 @@ function workerBlacklistMembershipsQuery() {
 function workerBlacklistLastEventQuery() {
   return `SELECT
     formatDateTime(toTimeZone(max(h.createdAt), 'Europe/Moscow'), '%F %T') AS last_event_at_local,
+    toString(max(h.createdAt)) AS last_event_at_utc,
     argMax(
       nullIf(trim(concat(ifNull(o.lastname, ''), ' ', ifNull(o.firstname, ''))), ''),
       h.createdAt
@@ -579,6 +600,42 @@ function workerBlacklistLastEventQuery() {
   LEFT JOIN mg_operators AS o ON o._id = h.operator
   WHERE h.model = 'ban_list'
     AND h.target = {worker_id:String}
+  FORMAT JSONEachRow`;
+}
+
+function workerBlacklistEventContextQuery() {
+  return `SELECT
+    ifNull(c.title, '') AS client_name,
+    ifNull(ct.legal_name, '') AS contractor_name,
+    ifNull(w.title, '') AS workplace_name,
+    ifNull(w.address__city, '') AS city,
+    abs(dateDiff(
+      'second',
+      {event_at:DateTime64(3, 'UTC')},
+      jh.cancelled_at
+    )) AS event_distance_seconds
+  FROM (
+    SELECT
+      job,
+      coalesce(createdAt, updatedAt) AS cancelled_at
+    FROM mg_job_history
+    PREWHERE createdAt >= {event_at:DateTime64(3, 'UTC')} - INTERVAL 5 MINUTE
+      AND createdAt <= {event_at:DateTime64(3, 'UTC')} + INTERVAL 5 MINUTE
+    WHERE status = 'cancelled'
+  ) AS jh
+  INNER JOIN (
+    SELECT _id, source
+    FROM mg_jobs
+    PREWHERE start >= {event_at:DateTime64(3, 'UTC')} - INTERVAL 1 DAY
+      AND start < {event_at:DateTime64(3, 'UTC')} + INTERVAL 1 DAY
+    WHERE worker = {worker_id:String}
+  ) AS j ON j._id = jh.job
+  LEFT JOIN mg_orders AS ord ON ord._id = j.source
+  LEFT JOIN mg_clients AS c ON c._id = ord.client
+  LEFT JOIN mg_workplaces AS w ON w._id = ord.workplace
+  LEFT JOIN mg_contractors AS ct ON ct._id = w.contractor
+  ORDER BY event_distance_seconds ASC, jh.cancelled_at DESC
+  LIMIT 1
   FORMAT JSONEachRow`;
 }
 
@@ -597,8 +654,24 @@ async function loadWorkerBlacklistDetails(client, input = {}) {
       'worker blacklist last event'
     )
   ]);
+  const lastEventAtUtc = textValue(auditRows[0] && auditRows[0].last_event_at_utc);
+  const eventContextRows = lastEventAtUtc === ''
+    ? []
+    : await client.queryJSONEachRow(
+        workerBlacklistEventContextQuery(),
+        {
+          ...params,
+          param_event_at: lastEventAtUtc
+        },
+        'worker blacklist event context'
+      );
 
-  return mergeWorkerBlacklistDetails(detailInput, blacklistRows, auditRows);
+  return mergeWorkerBlacklistDetails(
+    detailInput,
+    blacklistRows,
+    auditRows,
+    eventContextRows
+  );
 }
 
 async function readThroughCache(cache, key, loader) {

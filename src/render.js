@@ -5587,6 +5587,15 @@ function renderDashboardProgressiveScript() {
             return;
           }
 
+          if (response.status === 202) {
+            root.innerHTML = html;
+            window.setTimeout(function () {
+              root.removeAttribute('data-dashboard-fragment-loaded');
+              enqueueDashboardFragment(root);
+            }, 3000);
+            return;
+          }
+
           replaceWithHtml(root, html);
         });
       })

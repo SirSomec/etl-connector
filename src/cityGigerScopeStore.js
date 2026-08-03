@@ -138,7 +138,29 @@ ORDER BY refreshed_at DESC
 `).all().map((row) => ({ key: row.scope_key, input: JSON.parse(row.input_json) }));
   }
 
-  return { markLoading, saveReady, saveFailure, readPage, metadata, listReadyInputs, close: () => db.close() };
+  function summarize(scopeKey) {
+    const metadataRow = metadata(scopeKey);
+    if (!metadataRow || metadataRow.state !== 'ready') return null;
+    const row = db.prepare(`
+SELECT
+  COUNT(*) AS total,
+  SUM(status IN ('ready', 'booked', 'worked')) AS ready_base,
+  SUM(status = 'ready') AS ready,
+  SUM(status = 'booked') AS booked,
+  SUM(status = 'worked') AS worked
+FROM city_giger_scope_rows
+WHERE scope_key = ?
+`).get(scopeKey);
+    return {
+      total: Number(row.total || 0),
+      readyBase: Number(row.ready_base || 0),
+      ready: Number(row.ready || 0),
+      booked: Number(row.booked || 0),
+      worked: Number(row.worked || 0)
+    };
+  }
+
+  return { markLoading, saveReady, saveFailure, readPage, metadata, listReadyInputs, summarize, close: () => db.close() };
 }
 
 module.exports = { DEFAULT_CITY_GIGER_SCOPE_STORE_PATH, createCityGigerScopeStore };

@@ -61,6 +61,8 @@ const {
   loadCityAnalysisGigerScopeRows,
   loadCityAnalysisDashboardSection,
   loadCityAnalysisDashboardShell,
+  mergeCityAnalysisRows,
+  normalizeCityAnalysisFilters,
   normalizeCityGigerDetailsInput
 } = require('./cityAnalysisDashboard');
 const {
@@ -489,6 +491,82 @@ function normalizeManualPreloadRange(body) {
     fromDate: from.text,
     toDate: formatDateUTC(exclusiveTo)
   };
+}
+
+function citySummaryFromGigerScopes(service, section, input, now) {
+  if (!service || (section !== 'summary-base' && section !== 'summary-app')) {
+    return null;
+  }
+
+  if (normalizeCityAnalysisFilters(input, now).city === '') {
+    return null;
+  }
+
+  const metrics = section === 'summary-base'
+    ? ['total-located-users']
+    : ['app-active-users', 'app-30d-active-users'];
+  const scopes = metrics.map((metric) => {
+    const detailInput = normalizeCityGigerDetailsInput({ ...input, metric }, now);
+    const key = cityGigerScopeKey(detailInput);
+
+    return { metric, key, state: service.request(key, detailInput).state };
+  });
+
+  if (scopes.some((scope) => scope.state !== 'ready')) {
+    return { state: 'loading' };
+  }
+
+  const summaries = Object.fromEntries(scopes.map((scope) => [scope.metric, service.summarize(scope.key)]));
+
+  if (Object.values(summaries).some((summary) => summary === null)) {
+    return { state: 'loading' };
+  }
+
+  if (section === 'summary-base') {
+    const summary = summaries['total-located-users'];
+
+    return {
+      state: 'ready',
+      summaryRows: [{
+        total_located_users: summary.total,
+        ready_located_users: summary.readyBase,
+        ready_status_located_users: summary.ready,
+        booked_status_located_users: summary.booked,
+        worked_status_located_users: summary.worked
+      }]
+    };
+  }
+
+  const active = summaries['app-active-users'];
+  const active30d = summaries['app-30d-active-users'];
+
+  return {
+    state: 'ready',
+    summaryRows: [{
+      app_active_users: active.total,
+      app_30d_active_users: active30d.total,
+      app_30d_ready_status_users: active30d.ready,
+      app_30d_booked_status_users: active30d.booked,
+      app_30d_worked_status_users: active30d.worked
+    }]
+  };
+}
+
+function citySummaryDashboardFromScope(input, now, summaryRows) {
+  const filters = normalizeCityAnalysisFilters(input, now);
+
+  return mergeCityAnalysisRows(filters, {
+    cityOptionRows: [],
+    filterOptionRows: [],
+    // Координаты уже были успешно использованы при построении области гигеров.
+    cityCoordinateRows: [{ city: filters.city }],
+    summaryRows,
+    brandRows: [],
+    professionRows: [],
+    rateRows: [],
+    dynamicRows: [],
+    cityRankingRows: []
+  });
 }
 
 function createApp({
@@ -2449,9 +2527,21 @@ function createApp({
       }
 
       try {
-        const dashboard = await loadCityAnalysisDashboardSection(client, req.query, section, new Date(), {
+        const requestNow = new Date();
+        const scopeSummary = citySummaryFromGigerScopes(cityGigerScopes, section, req.query, requestNow);
+
+        if (scopeSummary && scopeSummary.state !== 'ready') {
+          res.status(202).type('html').send(
+            '<p class="loading">Готовим данные для этого показателя. Блок обновится автоматически.</p>'
+          );
+          return;
+        }
+
+        const dashboard = scopeSummary
+          ? citySummaryDashboardFromScope(req.query, requestNow, scopeSummary.summaryRows)
+          : await loadCityAnalysisDashboardSection(client, req.query, section, requestNow, {
           cache: cityAnalysisCache
-        });
+          });
 
         res
           .status(200)

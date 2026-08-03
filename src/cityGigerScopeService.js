@@ -8,7 +8,14 @@ function scopeIsFresh(metadata, now = new Date()) {
   return Number.isFinite(refreshedAt) && now.getTime() - refreshedAt < CITY_GIGER_SCOPE_MAX_AGE_MS;
 }
 
-function createCityGigerScopeService({ client, loadRows, storePath, now = () => new Date(), logger = console } = {}) {
+function createCityGigerScopeService({
+  client,
+  loadRows,
+  storePath,
+  now = () => new Date(),
+  logger = console,
+  maxConcurrentRefreshes = 1
+} = {}) {
   if (!client || typeof client.queryJSONEachRow !== 'function') {
     throw new Error('City giger scope service requires a ClickHouse client');
   }
@@ -18,23 +25,40 @@ function createCityGigerScopeService({ client, loadRows, storePath, now = () => 
 
   const store = createCityGigerScopeStore({ filePath: storePath, now });
   const running = new Map();
+  const queue = [];
+  let activeRefreshes = 0;
+  const refreshLimit = Math.max(1, Number(maxConcurrentRefreshes) || 1);
+
+  function startQueuedRefreshes() {
+    while (activeRefreshes < refreshLimit && queue.length > 0) {
+      const task = queue.shift();
+
+      activeRefreshes += 1;
+      Promise.resolve().then(async () => {
+        try {
+          const rows = await loadRows(client, task.input);
+          task.resolve(store.saveReady(task.scopeKey, task.input, rows));
+        } catch (error) {
+          store.saveFailure(task.scopeKey, task.input, error && error.message);
+          if (logger && typeof logger.warn === 'function') logger.warn(`City giger scope refresh failed: ${error && error.message}`);
+          task.resolve(null);
+        } finally {
+          running.delete(task.scopeKey);
+          activeRefreshes -= 1;
+          startQueuedRefreshes();
+        }
+      });
+    }
+  }
 
   async function refresh(scopeKey, input) {
     if (running.has(scopeKey)) return running.get(scopeKey);
     store.markLoading(scopeKey, input);
-    const promise = Promise.resolve().then(async () => {
-      try {
-        const rows = await loadRows(client, input);
-        return store.saveReady(scopeKey, input, rows);
-      } catch (error) {
-        store.saveFailure(scopeKey, input, error && error.message);
-        if (logger && typeof logger.warn === 'function') logger.warn(`City giger scope refresh failed: ${error && error.message}`);
-        return null;
-      } finally {
-        running.delete(scopeKey);
-      }
+    const promise = new Promise((resolve) => {
+      queue.push({ scopeKey, input, resolve });
     });
     running.set(scopeKey, promise);
+    startQueuedRefreshes();
     return promise;
   }
 
@@ -51,6 +75,10 @@ function createCityGigerScopeService({ client, loadRows, storePath, now = () => 
     return store.readPage(scopeKey, offset, limit);
   }
 
+  function summarize(scopeKey) {
+    return store.summarize(scopeKey);
+  }
+
   function refreshKnownScopes() {
     return Promise.allSettled(store.listReadyInputs().map(({ key, input }) => refresh(key, input)));
   }
@@ -58,6 +86,7 @@ function createCityGigerScopeService({ client, loadRows, storePath, now = () => 
   return {
     request,
     readPage,
+    summarize,
     refreshKnownScopes,
     close: () => store.close()
   };

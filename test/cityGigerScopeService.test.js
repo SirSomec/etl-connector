@@ -39,6 +39,13 @@ test('city giger scope service shares a background refresh and serves paged SQLi
   assert.equal(service.request('scope-1', { city: 'Москва' }).state, 'ready');
   const page = service.readPage('scope-1', 1, 1);
   assert.equal(page.metadata.rowCount, 2);
+  assert.deepEqual(service.summarize('scope-1'), {
+    total: 2,
+    readyBase: 2,
+    ready: 1,
+    booked: 1,
+    worked: 0
+  });
   assert.deepEqual(page.rows, [{
     user_id: 'u-2', worker_id: 'w-2', full_name: 'Б', phone: '+7002', status: 'booked'
   }]);

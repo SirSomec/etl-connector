@@ -13,6 +13,7 @@ const { loadConfig } = require('./config');
 const { createWorkplaceDirectoryCache } = require('./workplaceDirectoryCache');
 const { createPreloadService } = require('./preloadService');
 const { createCityGigerScopeService } = require('./cityGigerScopeService');
+const { createCityAnalysisAsyncSectionService } = require('./cityAnalysisAsyncSectionService');
 const { createScheduledReportStore } = require('./scheduledReportStore');
 const { createScheduledReportMailer, sanitizeMailError } = require('./scheduledReportMailer');
 const { createScheduledReportRunner } = require('./scheduledReportRunner');
@@ -569,12 +570,33 @@ function citySummaryDashboardFromScope(input, now, summaryRows) {
   });
 }
 
+function cityAsyncSectionKey(section, input, now) {
+  const filters = normalizeCityAnalysisFilters(input, now);
+
+  return JSON.stringify({
+    section,
+    city: filters.city,
+    from: filters.from,
+    to: filters.to,
+    client: filters.client,
+    profession: filters.profession,
+    orderType: filters.orderType,
+    jobStatus: filters.jobStatus,
+    contractor: filters.contractor,
+    salaryFrom: filters.salaryFrom,
+    salaryTo: filters.salaryTo,
+    includeDeletedOrders: filters.includeDeletedOrders,
+    includeHiddenOrders: filters.includeHiddenOrders
+  });
+}
+
 function createApp({
   config,
   client,
   activeGigersCache = null,
   cityAnalysisCache = null,
   cityGigerScopeService = null,
+  cityAnalysisAsyncSectionService = null,
   dashboardSectionCache = null,
   workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null, disabled: true }),
   preloadService = null,
@@ -595,6 +617,7 @@ function createApp({
   const database = config.clickhouse.database;
   const preloads = preloadService;
   const cityGigerScopes = cityGigerScopeService;
+  const cityAsyncSections = cityAnalysisAsyncSectionService;
   const scheduledReports = scheduledReportService;
   const authConfig = config.auth || { enabled: false };
   const authEnabled = authConfig.enabled === true;
@@ -2528,6 +2551,29 @@ function createApp({
 
       try {
         const requestNow = new Date();
+        const usesAsyncSection =
+          (section === 'summary-ratio' || section === 'dynamics') &&
+          cityAsyncSections &&
+          cityAsyncSections.client &&
+          normalizeCityAnalysisFilters(req.query, requestNow).city !== '';
+        const asyncSection = usesAsyncSection && cityAsyncSections && cityAsyncSections.request(
+          cityAsyncSectionKey(section, req.query, requestNow),
+          () => loadCityAnalysisDashboardSection(cityAsyncSections.client, req.query, section, requestNow, {
+            cache: cityAnalysisCache
+          })
+        );
+
+        if (asyncSection && asyncSection.state !== 'ready') {
+          res.status(202).type('html').send(
+            '<p class="loading">Готовим данные для этого блока. Блок обновится автоматически.</p>'
+          );
+          return;
+        }
+
+        if (asyncSection && asyncSection.state === 'failed') {
+          throw asyncSection.error;
+        }
+
         const scopeSummary = citySummaryFromGigerScopes(cityGigerScopes, section, req.query, requestNow);
 
         if (scopeSummary && scopeSummary.state !== 'ready') {
@@ -2537,7 +2583,9 @@ function createApp({
           return;
         }
 
-        const dashboard = scopeSummary
+        const dashboard = asyncSection
+          ? asyncSection.value
+          : scopeSummary
           ? citySummaryDashboardFromScope(req.query, requestNow, scopeSummary.summaryRows)
           : await loadCityAnalysisDashboardSection(client, req.query, section, requestNow, {
           cache: cityAnalysisCache
@@ -3306,6 +3354,7 @@ function start(options = {}) {
   const workplaceDirectoryCache = createWorkplaceDirectoryCacheFn({ env });
   let preloadService = null;
   let cityGigerScopeService = null;
+  let cityAnalysisAsyncSectionService = null;
   let scheduledReportService = null;
   let scheduledReportStore = null;
   let scheduledReportScheduler = null;
@@ -3420,6 +3469,8 @@ function start(options = {}) {
     }
   }
 
+  cityAnalysisAsyncSectionService = createCityAnalysisAsyncSectionService({ client: preloadClient, logger });
+
   try {
     if (config.scheduledReports) {
       scheduledReportStore = createScheduledReportStoreFn({
@@ -3494,6 +3545,7 @@ function start(options = {}) {
       activeGigersCache,
       cityAnalysisCache,
       cityGigerScopeService,
+      cityAnalysisAsyncSectionService,
       dashboardSectionCache,
       workplaceDirectoryCache,
       preloadService,

@@ -1719,6 +1719,36 @@ function cityGigerDetailsParams(input) {
   return detailParams;
 }
 
+function cityGigerScopeKey(input) {
+  return JSON.stringify({
+    version: 1,
+    metric: input.metric,
+    city: input.city,
+    status: input.status,
+    date: input.date,
+    filters: input.filters
+  });
+}
+
+async function loadCityAnalysisGigerScopeRows(client, detailInput) {
+  const { whereSql } = paramsAndWhere(detailInput.filters);
+  const params = cityGigerDetailsParams({ ...detailInput, export: true });
+
+  return client.queryJSONEachRow(
+    cityGigerDetailsQuery({ ...detailInput, export: true }, whereSql),
+    params,
+    'city analysis giger scope refresh'
+  );
+}
+
+function cityGigerDetailsFromScope(input, scopeRows) {
+  return mergeGigerDetails(
+    input,
+    [{ total_gigers: scopeRows.metadata.rowCount }],
+    scopeRows.rows
+  );
+}
+
 async function loadCityAnalysisGigerDetails(client, input = {}, now = new Date()) {
   const detailInput = normalizeCityGigerDetailsInput(input, now);
   const { whereSql } = paramsAndWhere(detailInput.filters);
@@ -1987,6 +2017,9 @@ module.exports = {
   CITY_ANALYSIS_SECTIONS,
   cityAnalysisCachePathFromEnv,
   createCityAnalysisCache,
+  cityGigerDetailsFromScope,
+  cityGigerScopeKey,
+  loadCityAnalysisGigerScopeRows,
   loadCityAnalysisGigerDetails,
   loadCityAnalysisDashboardSection,
   loadCityAnalysisDashboardShell,

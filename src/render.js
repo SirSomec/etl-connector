@@ -5952,6 +5952,9 @@ function renderGigerDetailsScript() {
 
           if (body) {
             body.innerHTML = html;
+            if (body.querySelector('[data-giger-scope-pending]') && !modal.hidden) {
+              window.setTimeout(function () { loadDetails(url); }, 3000);
+            }
           }
         });
       })

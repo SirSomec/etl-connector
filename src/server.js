@@ -12,6 +12,7 @@ const { ClickHouseClient } = require('./clickhouseClient');
 const { loadConfig } = require('./config');
 const { createWorkplaceDirectoryCache } = require('./workplaceDirectoryCache');
 const { createPreloadService } = require('./preloadService');
+const { createCityGigerScopeService } = require('./cityGigerScopeService');
 const { createScheduledReportStore } = require('./scheduledReportStore');
 const { createScheduledReportMailer, sanitizeMailError } = require('./scheduledReportMailer');
 const { createScheduledReportRunner } = require('./scheduledReportRunner');
@@ -54,9 +55,13 @@ const {
 } = require('./userActivityStore');
 const {
   CITY_ANALYSIS_SECTIONS,
+  cityGigerDetailsFromScope,
+  cityGigerScopeKey,
   loadCityAnalysisGigerDetails,
+  loadCityAnalysisGigerScopeRows,
   loadCityAnalysisDashboardSection,
-  loadCityAnalysisDashboardShell
+  loadCityAnalysisDashboardShell,
+  normalizeCityGigerDetailsInput
 } = require('./cityAnalysisDashboard');
 const {
   HEATMAP_SECTIONS,
@@ -491,6 +496,7 @@ function createApp({
   client,
   activeGigersCache = null,
   cityAnalysisCache = null,
+  cityGigerScopeService = null,
   dashboardSectionCache = null,
   workplaceDirectoryCache = createWorkplaceDirectoryCache({ filePath: null, disabled: true }),
   preloadService = null,
@@ -510,6 +516,7 @@ function createApp({
   const app = express();
   const database = config.clickhouse.database;
   const preloads = preloadService;
+  const cityGigerScopes = cityGigerScopeService;
   const scheduledReports = scheduledReportService;
   const authConfig = config.auth || { enabled: false };
   const authEnabled = authConfig.enabled === true;
@@ -2363,7 +2370,22 @@ function createApp({
     requireAuth('city-analysis'),
     asyncRoute(async (req, res) => {
       try {
-        const details = await loadCityAnalysisGigerDetails(client, req.query, new Date());
+        const detailInput = normalizeCityGigerDetailsInput(req.query, new Date());
+        const scopeKey = cityGigerScopeKey(detailInput);
+        const scope = cityGigerScopes && cityGigerScopes.request(scopeKey, detailInput);
+
+        if (scope && scope.state !== 'ready') {
+          res.status(202).type('html').send(
+            '<div class="giger-details" data-giger-scope-pending>' +
+              '<p class="loading">Готовим список гигеров для выбранного среза. Окно обновится автоматически.</p>' +
+            '</div>'
+          );
+          return;
+        }
+
+        const details = scope
+          ? cityGigerDetailsFromScope(detailInput, cityGigerScopes.readPage(scopeKey, detailInput.offset, detailInput.pageSize))
+          : await loadCityAnalysisGigerDetails(client, req.query, new Date());
 
         recordCurrentUserActivity(req, activityEventType(req));
         res
@@ -2389,7 +2411,19 @@ function createApp({
     '/dashboards/city-analysis/gigers/export',
     requireAuth('city-analysis'),
     asyncRoute(async (req, res) => {
-      const details = await loadCityAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
+      const detailInput = normalizeCityGigerDetailsInput(req.query, new Date());
+      const scopeKey = cityGigerScopeKey(detailInput);
+      const scope = cityGigerScopes && cityGigerScopes.request(scopeKey, detailInput);
+
+      if (scope && scope.state !== 'ready') {
+        const error = new Error('Выгрузка станет доступна после подготовки списка гигеров.');
+        error.status = 409;
+        throw error;
+      }
+
+      const details = scope
+        ? cityGigerDetailsFromScope(detailInput, cityGigerScopes.readPage(scopeKey, 0, Number.MAX_SAFE_INTEGER))
+        : await loadCityAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
 
       recordCurrentUserActivity(req, activityEventType(req));
       sendGigerDetailsWorkbook(res, details, 'city-analysis-gigers.xls');
@@ -3181,6 +3215,7 @@ function start(options = {}) {
   const dashboardSectionCache = null;
   const workplaceDirectoryCache = createWorkplaceDirectoryCacheFn({ env });
   let preloadService = null;
+  let cityGigerScopeService = null;
   let scheduledReportService = null;
   let scheduledReportStore = null;
   let scheduledReportScheduler = null;
@@ -3282,6 +3317,19 @@ function start(options = {}) {
     warn(`Preload service disabled: ${sanitizeForResponse(error && error.message, config)}`);
   }
 
+  if (config.cityGigerScopes) {
+    try {
+      cityGigerScopeService = createCityGigerScopeService({
+        client: preloadClient,
+        loadRows: loadCityAnalysisGigerScopeRows,
+        storePath: config.cityGigerScopes.storePath,
+        logger
+      });
+    } catch (error) {
+      warn(`City giger scope service disabled: ${sanitizeForResponse(error && error.message, config)}`);
+    }
+  }
+
   try {
     if (config.scheduledReports) {
       scheduledReportStore = createScheduledReportStoreFn({
@@ -3355,6 +3403,7 @@ function start(options = {}) {
       client,
       activeGigersCache,
       cityAnalysisCache,
+      cityGigerScopeService,
       dashboardSectionCache,
       workplaceDirectoryCache,
       preloadService,
@@ -3382,13 +3431,21 @@ function start(options = {}) {
     caches: [cityAnalysisCache, dashboardSectionCache],
     logger
   });
+  const cityGigerScopeRefresh = cityGigerScopeService && typeof cityGigerScopeService.refreshKnownScopes === 'function'
+    ? scheduleDailyCacheCleanup({
+        caches: [{ pruneExpired: () => cityGigerScopeService.refreshKnownScopes() }],
+        logger
+      })
+    : { stop() {} };
 
   server.on('close', () => {
     workplaceDirectoryRefresh.stop();
     cacheCleanup.stop();
+    cityGigerScopeRefresh.stop();
 
     closeResource(activityStore, 'User activity store');
     closeScheduledReportResources();
+    closeResource(cityGigerScopeService, 'City giger scope service');
     closeResource(preloadService, 'Preload service');
   });
 

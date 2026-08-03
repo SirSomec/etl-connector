@@ -57,6 +57,12 @@ const NAV_LINKS = [
     permission: 'city-analysis'
   },
   {
+    href: '/dashboards/region-analysis',
+    label: 'Анализ регионов',
+    id: 'region-analysis',
+    permission: 'city-analysis'
+  },
+  {
     href: '/dashboards/heatmap',
     label: 'Тепловая карта',
     id: 'heatmap',
@@ -13585,6 +13591,52 @@ ${progressive ? renderHeatmapProgressiveSection(filters) : renderHeatmapDashboar
   });
 }
 
+function regionAnalysisSectionUrl(filters, section) {
+  const params = new URLSearchParams({ section, region: filters.region || '', from: filters.from || '', to: filters.to || '', period: filters.period || 'week' });
+  for (const key of ['client', 'profession', 'orderType']) {
+    for (const value of filters[key] || []) params.append(key, value);
+  }
+  return `/dashboards/region-analysis/section?${params.toString()}`;
+}
+
+function renderRegionMetric(label, value, metricId, currentUser) {
+  return renderMetricInfoScope({ className: 'kpi-card', metricId, currentUser, content: `<div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div>` });
+}
+
+function renderRegionRows(rows, dimension, filters, currentUser) {
+  if (!rows.length) return '<p class="empty">Нет данных для выбранного региона и периода.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th></tr></thead><tbody>${rows.map((row) => {
+    const title = row[dimension] || '';
+    const titleHtml = dimension === 'city'
+      ? `<a href="/dashboards/city-analysis?city=${encodeURIComponent(title)}&from=${encodeURIComponent(filters.from)}&to=${encodeURIComponent(filters.to)}">${escapeHtml(title)}</a>`
+      : escapeHtml(title);
+    const base = `region-analysis.${dimension === 'city' ? 'cities' : 'professions'}`;
+    return `<tr><td>${titleHtml}</td>${numberCell(row.orderedShifts, 0, `${base}.ordered-shifts`, currentUser)}${numberCell(row.openDemand, 0, `${base}.open-demand`, currentUser)}${percentCell(row.slaPercent, `${base}.sla`, currentUser)}${percentCell(row.coveragePercent, `${base}.coverage`, currentUser)}${numberCell(row.workedShifts, 0, `${base}.worked-shifts`, currentUser)}${numberCell(row.workplaces, 0, `${base}.workplaces`, currentUser)}</tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+function renderRegionAnalysisDashboardSection({ dashboard, section, currentUser }) {
+  if (section === 'summary') {
+    const s = dashboard.summary || {};
+    return `<section class="section">${renderMetricPanelHead('Основные показатели', 'region-analysis.summary', currentUser)}<div class="kpi-grid">${renderRegionMetric('Заказано смен', formatNumber(s.orderedShifts), 'region-analysis.summary.ordered-shifts', currentUser)}${renderRegionMetric('Свободный заказ', formatNumber(s.openDemand), 'region-analysis.summary.open-demand', currentUser)}${renderRegionMetric('SLA', formatPercent(s.slaPercent), 'region-analysis.summary.sla', currentUser)}${renderRegionMetric('Покрытие', formatPercent(s.coveragePercent), 'region-analysis.summary.coverage', currentUser)}${renderRegionMetric('Отработано смен', formatNumber(s.workedShifts), 'region-analysis.summary.worked-shifts', currentUser)}${renderRegionMetric('Отмены', formatNumber(s.cancelledShifts), 'region-analysis.summary.cancelled-shifts', currentUser)}</div></section>`;
+  }
+  if (section === 'cities') return `<section class="section">${renderMetricPanelHead('Города региона', 'region-analysis.cities', currentUser)}${renderRegionRows(dashboard.cityRows || [], 'city', dashboard.filters || {}, currentUser)}</section>`;
+  if (section === 'professions') return `<section class="section">${renderMetricPanelHead('Специальности', 'region-analysis.professions', currentUser)}${renderRegionRows(dashboard.professionRows || [], 'profession', dashboard.filters || {}, currentUser)}</section>`;
+  if (section === 'attention') return `<section class="section">${renderMetricPanelHead('Требуют внимания', 'region-analysis.attention', currentUser)}<p class="context-line">Города с незакрытым спросом, отсортированные по его объёму.</p>${renderRegionRows(dashboard.attentionRows || [], 'city', dashboard.filters || {}, currentUser)}</section>`;
+  const rows = dashboard.trendRows || [];
+  return `<section class="section">${renderMetricPanelHead('Динамика', 'region-analysis.trend', currentUser)}<div class="table-wrap"><table><thead><tr><th>Период</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${escapeHtml(row.period || '')}</td>${numberCell(row.orderedShifts, 0, 'region-analysis.trend.ordered-shifts', currentUser)}${numberCell(row.openDemand, 0, 'region-analysis.trend.open-demand', currentUser)}${percentCell(row.slaPercent, 'region-analysis.trend.sla', currentUser)}${percentCell(row.coveragePercent, 'region-analysis.trend.coverage', currentUser)}${numberCell(row.workedShifts, 0, 'region-analysis.trend.worked-shifts', currentUser)}</tr>`).join('')}</tbody></table></div></section>`;
+}
+
+function renderRegionAnalysisDashboard({ database, dashboard, progressive = false, currentUser, csrfToken }) {
+  const filters = dashboard.filters || {};
+  const options = (dashboard.regionOptions || []).map((region) => `<option value="${escapeHtml(region)}"${region === filters.region ? ' selected' : ''}>${escapeHtml(region)}</option>`).join('');
+  const sections = ['summary', 'trend', 'cities', 'professions', 'attention'];
+  const body = filters.region === ''
+    ? '<section class="section"><p class="empty">Выберите регион, чтобы увидеть спрос, выполнение и проблемные города.</p></section>'
+    : sections.map((section) => progressive ? `<div data-dashboard-fragment-url="${escapeHtml(regionAnalysisSectionUrl(filters, section))}"><section class="section"><h2>${escapeHtml({ summary: 'Основные показатели', trend: 'Динамика', cities: 'Города региона', professions: 'Специальности', attention: 'Требуют внимания' }[section])}</h2><p class="loading">Загружается</p></section></div>` : renderRegionAnalysisDashboardSection({ dashboard, section, currentUser })).join('');
+  return layout({ title: 'Анализ регионов', database, activeNav: 'region-analysis', currentUser, csrfToken, content: `<section class="section"><h1>Анализ регионов</h1><p class="technical-note">Регион определяется по адресу рабочей точки. Данные включают только актуальные заказы.</p><form class="filter-bar" action="/dashboards/region-analysis" method="get"><div class="field"><label for="region">Регион</label><select id="region" name="region"><option value="">Выберите регион</option>${options}</select></div><div class="field"><label for="from">С</label><input id="from" name="from" type="date" value="${escapeHtml(filters.from || '')}"></div><div class="field"><label for="to">По</label><input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}"></div><div class="field"><label for="period">Группировка</label><select id="period" name="period">${['day', 'week', 'month'].map((value) => `<option value="${value}"${filters.period === value ? ' selected' : ''}>${({ day: 'День', week: 'Неделя', month: 'Месяц' })[value]}</option>`).join('')}</select></div><button type="submit">Применить</button></form></section>${body}` });
+}
+
 function renderError({ database, title, message, activeNav = 'tables', currentUser, csrfToken }) {
   const content = `<section class="section">
   <h1>${escapeHtml(title)}</h1>
@@ -13620,6 +13672,8 @@ module.exports = {
   renderCityAnalysisDashboard: renderCityAnalysisDashboardPage,
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,
+  renderRegionAnalysisDashboard,
+  renderRegionAnalysisDashboardSection,
   renderHeatmapDashboard,
   renderHeatmapDashboardSection,
   renderHome,

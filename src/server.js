@@ -67,6 +67,11 @@ const {
   normalizeCityGigerDetailsInput
 } = require('./cityAnalysisDashboard');
 const {
+  REGION_ANALYSIS_SECTIONS,
+  loadRegionAnalysisDashboardSection,
+  loadRegionAnalysisDashboardShell
+} = require('./regionAnalysisDashboard');
+const {
   HEATMAP_SECTIONS,
   loadHeatmapDashboardSection,
   loadHeatmapDashboardShell
@@ -115,6 +120,8 @@ const {
   renderCityAnalysisDashboardSection,
   renderCityAnalysisSectionError,
   renderCityAnalysisDashboard,
+  renderRegionAnalysisDashboard,
+  renderRegionAnalysisDashboardSection,
   renderHeatmapDashboard,
   renderHeatmapDashboardSection,
   renderHome,
@@ -253,6 +260,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/dashboards/city-analysis/')) {
     return 'city-analysis';
+  }
+
+  if (normalized.startsWith('/dashboards/region-analysis/')) {
+    return 'region-analysis';
   }
 
   if (normalized.startsWith('/dashboards/heatmap/')) {
@@ -2446,6 +2457,41 @@ function createApp({
           .status(statusCode)
           .type('html')
           .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadRegionAnalysisDashboardShell(client, req.query, new Date());
+
+      recordCurrentUserActivity(req, activityEventType(req));
+      res.status(200).type('html').send(
+        renderRegionAnalysisDashboard({ database, dashboard, progressive: true, ...viewContext(req) })
+      );
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis/section',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      const section = String(req.query.section || '');
+
+      if (!REGION_ANALYSIS_SECTIONS.has(section)) {
+        sendError(res, 400, 'Bad Request', `Unknown region analysis section: ${section}`, 'region-analysis', viewContext(req));
+        return;
+      }
+
+      try {
+        const dashboard = await loadRegionAnalysisDashboardSection(client, req.query, section, new Date());
+        res.status(200).type('html').send(renderRegionAnalysisDashboardSection({ dashboard, section, ...viewContext(req) }));
+      } catch (error) {
+        res.status(statusCodeFromError(error)).type('html').send(
+          renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) })
+        );
       }
     })
   );

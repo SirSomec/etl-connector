@@ -2300,6 +2300,37 @@ function highlightSql(sql) {
   return html;
 }
 
+const REGION_ANALYSIS_SQL = `WITH actual_orders AS (
+  SELECT o._id AS order_id, o.start, o.amount, ow.address__city, o.spec
+  FROM mg_orders AS o
+  INNER JOIN mg_clients AS c ON c._id = o.client
+  LEFT JOIN mg_workplaces AS ow ON ow._id = o.workplace
+  LEFT JOIN mg_contractors AS ct ON ct._id = ow.contractor
+  WHERE <actual_order_domain_condition>
+    AND ifNull(ow.address__region, '') = {region:String}
+    AND o.start >= {from:DateTime} AND o.start < {to:DateTime}
+), jobs_by_order AS (
+  SELECT j.source, <covered_and_successful_shift_metrics>
+  FROM mg_jobs AS j INNER JOIN actual_orders AS ao ON ao.order_id = j.source
+  WHERE ifNull(j.deleted, 0) = 0 GROUP BY j.source
+)
+SELECT <requested_region_dimension_and_metrics> FROM actual_orders AS ao
+LEFT JOIN jobs_by_order AS jbo ON jbo.source = ao.order_id`;
+
+for (const [section, title, suffixes] of [
+  ['summary', 'Основные показатели региона', ['ordered-shifts', 'open-demand', 'sla', 'coverage', 'worked-shifts', 'cancelled-shifts']],
+  ['trend', 'Динамика региона', ['ordered-shifts', 'open-demand', 'sla', 'coverage', 'worked-shifts']],
+  ['cities', 'Города региона', ['ordered-shifts', 'open-demand', 'sla', 'coverage', 'worked-shifts', 'workplaces']],
+  ['professions', 'Специальности региона', ['ordered-shifts', 'open-demand', 'sla', 'coverage', 'worked-shifts', 'workplaces']],
+  ['attention', 'Города, требующие внимания', ['ordered-shifts', 'open-demand', 'sla', 'coverage', 'worked-shifts', 'workplaces']]
+]) {
+  defineMetricSet({
+    baseId: `region-analysis.${section}`,
+    sql: REGION_ANALYSIS_SQL,
+    metrics: suffixes.map((suffix) => ({ suffix, title, description: 'Метрика рассчитывается по актуальным заказам выбранного региона и связанным с ними сменам.' }))
+  });
+}
+
 module.exports = {
   SQL_METRIC_INFO,
   getSqlMetricInfo,

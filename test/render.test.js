@@ -1214,6 +1214,7 @@ test('renderRegionAnalysisDashboard adds the giger modal for the regional export
   });
   assert.match(html, /data-giger-detail-trigger/);
   assert.match(html, /data-giger-list-modal/);
+  assert.match(html, /event\.target\.closest\('\[data-dashboard-fragment-link\]'\)/);
   assert.match(html, /Бренды/);
   assert.match(html, /Бренд A/);
 });
@@ -1228,6 +1229,9 @@ test('renderRegionAnalysisDashboardSection makes regional city metrics sortable'
   });
 
   assert.match(html, /class="sortable-header"/);
+  assert.match(html, /data-dashboard-fragment-link/);
+  assert.match(html, /data-region-city-sort/);
+  assert.match(html, /\/dashboards\/region-analysis\/section\?section=cities/);
   assert.match(html, /sort=workedShifts&amp;direction=desc/);
   assert.match(html, /sort=openDemand&amp;direction=asc/);
   assert.match(html, /aria-sort="descending"/);

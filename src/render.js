@@ -13654,25 +13654,6 @@ function regionAnalysisSectionUrl(filters, section) {
   return `/dashboards/region-analysis/section?${params.toString()}`;
 }
 
-function regionAnalysisPageUrl(filters, overrides = {}) {
-  const nextFilters = { ...filters, ...overrides };
-  const params = new URLSearchParams({
-    region: nextFilters.region || '',
-    from: nextFilters.from || '',
-    to: nextFilters.to || '',
-    period: nextFilters.period || 'week',
-    sort: nextFilters.sort || 'openDemand',
-    direction: nextFilters.direction || 'desc',
-    activityMode: nextFilters.activityMode || 'all'
-  });
-  if (nextFilters.activityFrom) params.set('activityFrom', nextFilters.activityFrom);
-  if (nextFilters.activityTo) params.set('activityTo', nextFilters.activityTo);
-  for (const key of ['client', 'profession', 'orderType', 'cohort']) {
-    for (const value of nextFilters[key] || []) params.append(key, value);
-  }
-  return `/dashboards/region-analysis?${params.toString()}`;
-}
-
 const REGION_GIGER_COHORT_OPTIONS = [
   { value: 'registered', label: 'Только зарегистрировались' },
   { value: 'documents', label: 'Загрузили документы' },
@@ -13723,8 +13704,8 @@ function renderRegionCityHeaderCell(filters, column) {
   const active = filters.sort === column.key;
   const direction = regionCitySortDirection(filters, column);
   const indicator = active ? `<span class="sort-indicator" aria-hidden="true">${escapeHtml(filters.direction === 'asc' ? '↑' : '↓')}</span>` : '';
-  const href = regionAnalysisPageUrl(filters, { sort: column.key, direction });
-  return `<th aria-sort="${active ? (filters.direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><a class="sortable-header" href="${escapeHtml(href)}"><span>${escapeHtml(column.label)}</span>${indicator}</a></th>`;
+  const href = regionAnalysisSectionUrl({ ...filters, sort: column.key, direction }, 'cities');
+  return `<th aria-sort="${active ? (filters.direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><a class="sortable-header" data-dashboard-fragment-link data-region-city-sort href="${escapeHtml(href)}"><span>${escapeHtml(column.label)}</span>${indicator}</a></th>`;
 }
 
 function renderRegionRows(rows, dimension, filters, currentUser, sortable = false) {

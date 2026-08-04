@@ -63,6 +63,60 @@ function addDaysUTC(date, days) {
   return next;
 }
 
+function startOfPeriodUTC(date, period) {
+  const start = new Date(date.getTime());
+
+  if (period === 'week') {
+    const daysSinceMonday = (start.getUTCDay() + 6) % 7;
+    start.setUTCDate(start.getUTCDate() - daysSinceMonday);
+  } else if (period === 'month') {
+    start.setUTCDate(1);
+  } else if (period === 'quarter') {
+    start.setUTCMonth(Math.floor(start.getUTCMonth() / 3) * 3, 1);
+  }
+
+  return start;
+}
+
+function addPeriodUTC(date, period) {
+  const next = new Date(date.getTime());
+
+  if (period === 'day') {
+    next.setUTCDate(next.getUTCDate() + 1);
+  } else if (period === 'week') {
+    next.setUTCDate(next.getUTCDate() + 7);
+  } else if (period === 'month') {
+    next.setUTCMonth(next.getUTCMonth() + 1, 1);
+  } else if (period === 'quarter') {
+    next.setUTCMonth(next.getUTCMonth() + 3, 1);
+  }
+
+  return next;
+}
+
+function buildPeriodBuckets(filters) {
+  if (!filters) {
+    return [];
+  }
+
+  const from = parseDateOnly(filters.from);
+  const to = parseDateOnly(filters.to);
+
+  if (!from || !to) {
+    return [];
+  }
+
+  const first = startOfPeriodUTC(from, filters.period);
+  const last = startOfPeriodUTC(to, filters.period);
+  const buckets = [];
+
+  for (let current = first; current.getTime() <= last.getTime(); current = addPeriodUTC(current, filters.period)) {
+    buckets.push(formatDateUTC(current));
+  }
+
+  return buckets;
+}
+
 function toDateTimeParam(dateOnly) {
   return `${dateOnly} 00:00:00`;
 }
@@ -316,7 +370,7 @@ function emptyRegionRow(region) {
   };
 }
 
-function mergeRegionRows(orderRows, shiftRows, trendRows = []) {
+function mergeRegionRows(orderRows, shiftRows, trendRows = [], filters = null) {
   const byRegion = new Map();
 
   for (const row of orderRows) {
@@ -352,10 +406,22 @@ function mergeRegionRows(orderRows, shiftRows, trendRows = []) {
     byRegion.set(region, current);
   }
 
-  return Array.from(byRegion.values()).map((row) => ({
-    ...row,
-    orderTrend: row.orderTrend.sort((left, right) => left.period.localeCompare(right.period))
-  })).sort((left, right) => {
+  const periodBuckets = buildPeriodBuckets(filters);
+
+  return Array.from(byRegion.values()).map((row) => {
+    const orderedByPeriod = new Map(row.orderTrend.map((point) => [point.period, point.orderedShifts]));
+    const orderTrend = periodBuckets.length > 0
+      ? periodBuckets.map((period) => ({
+        period,
+        orderedShifts: orderedByPeriod.get(period) || 0
+      }))
+      : row.orderTrend.sort((left, right) => left.period.localeCompare(right.period));
+
+    return {
+      ...row,
+      orderTrend
+    };
+  }).sort((left, right) => {
     if (right.openDemand !== left.openDemand) {
       return right.openDemand - left.openDemand;
     }
@@ -1177,7 +1243,7 @@ function mergeBrandAnalysisSection(filters, section, rows) {
   if (section === 'regions') {
     return {
       ...dashboard,
-      regionRows: mergeRegionRows(rows.regionOrderRows || [], rows.regionShiftRows || [], rows.regionOrderTrendRows || [])
+      regionRows: mergeRegionRows(rows.regionOrderRows || [], rows.regionShiftRows || [], rows.regionOrderTrendRows || [], filters)
     };
   }
 
@@ -1264,7 +1330,7 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
       shell.filters
     ),
     trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows, trendRows.responseTrendRows),
-    regionRows: mergeRegionRows(regionRows.regionOrderRows, regionRows.regionShiftRows, regionRows.regionOrderTrendRows),
+    regionRows: mergeRegionRows(regionRows.regionOrderRows, regionRows.regionShiftRows, regionRows.regionOrderTrendRows, shell.filters),
     workplaceRows: mergeWorkplaceRows(workplaceRows.workplaceOrderRows, workplaceRows.workplaceShiftRows),
     professionRows: mergeProfessionRows(professionRows.professionOrderRows, professionRows.professionShiftRows),
     statusRows: mapStatusRows(statusRows.statusRows)

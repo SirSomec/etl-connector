@@ -8941,25 +8941,32 @@ function renderBrandRegionDemandTrend(row, currentUser) {
   }
 
   const values = trend.map((point) => Number(point.orderedShifts) || 0);
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values);
+  const positiveValues = values.filter((value) => value > 0);
+  const max = positiveValues.length > 0 ? Math.max(...positiveValues) : 0;
+  const min = positiveValues.length > 0 ? Math.min(...positiveValues) : 0;
   const range = max - min;
   const colorFor = (value) => {
+    if (value <= 0) {
+      return '#2563eb';
+    }
+
     const intensity = range === 0
-      ? 0.5
+      ? 1
       : Math.max(0, Math.min(1, (value - min) / range));
     const hue = Math.round(intensity * 120);
 
     return `hsl(${hue} 76% 45%)`;
   };
-  const gradient = trend.map((point, index) => {
-    const position = Math.round(index / Math.max(trend.length - 1, 1) * 100);
+  const gradient = trend.flatMap((point, index) => {
+    const start = index / trend.length * 100;
+    const end = (index + 1) / trend.length * 100;
+    const color = colorFor(Number(point.orderedShifts) || 0);
 
-    return `${colorFor(Number(point.orderedShifts) || 0)} ${position}%`;
+    return [`${color} ${start.toFixed(2)}%`, `${color} ${end.toFixed(2)}%`];
   }).join(', ');
   const first = values[0];
   const last = values[values.length - 1];
-  const label = `Динамика заказа: ${formatNumber(first)} → ${formatNumber(last)}; минимум ${formatNumber(min)}, максимум ${formatNumber(max)}; красный — минимум, зелёный — максимум`;
+  const label = `Динамика заказа: ${formatNumber(first)} → ${formatNumber(last)}; минимум ${formatNumber(min)}, максимум ${formatNumber(max)}; синий — заказа не было, красный — минимальный заказ, зелёный — максимальный`;
 
   return renderMetricInfoScope({
     className: 'brand-region-demand-trend-info',

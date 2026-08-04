@@ -2221,6 +2221,7 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
         workplaces: 4,
         orderTrend: [
           { period: '2026-04-01', orderedShifts: 8 },
+          { period: '2026-04-02', orderedShifts: 0 },
           { period: '2026-04-08', orderedShifts: 20 }
         ]
       }]
@@ -2287,8 +2288,9 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(regionsHtml, /data-brand-region-open-demand="3"/);
   assert.match(regionsHtml, /class="brand-region-demand-trend/);
   assert.match(regionsHtml, /linear-gradient\(90deg/);
-  assert.match(regionsHtml, /hsl\(0 76% 45%\) 0%/);
-  assert.match(regionsHtml, /hsl\(120 76% 45%\) 100%/);
+  assert.match(regionsHtml, /hsl\(0 76% 45%\) 0\.00%/);
+  assert.match(regionsHtml, /#2563eb 33\.33%, #2563eb 66\.67%/);
+  assert.match(regionsHtml, /hsl\(120 76% 45%\) 100\.00%/);
   assert.match(regionsHtml, /class="brand-region-name-layout"/);
   assert.match(regionsHtml, /Динамика заказа: 8 → 20/);
   assert.match(regionsHtml, /data-sql-inspector-open="brand-analysis\.regions\.coverage"/);

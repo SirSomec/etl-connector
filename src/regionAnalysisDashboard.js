@@ -3,7 +3,6 @@ const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirme
 const {
   GIGER_DETAILS_PAGE_SIZE,
   cleanBooleanFlag,
-  firstCleanText,
   mergeGigerDetails,
   normalizeGigerDetailsPage
 } = require('./gigerDetails');
@@ -201,8 +200,6 @@ async function loadRegionAnalysisDashboardSection(client, input = {}, section, n
 
 function normalizeRegionGigerDetailsInput(input = {}, now = new Date()) {
   const filters = normalizeRegionAnalysisFilters(input, now);
-  const city = firstCleanText(input.city);
-  const profession = firstCleanText(input.profession);
 
   if (!filters.region) {
     const error = new Error('region is required');
@@ -214,8 +211,6 @@ function normalizeRegionGigerDetailsInput(input = {}, now = new Date()) {
     source: 'region-analysis',
     metric: 'worked-workers',
     metricLabel: 'Выполнявшие исполнители',
-    city,
-    profession,
     page: normalizeGigerDetailsPage(input.page),
     pageSize: GIGER_DETAILS_PAGE_SIZE,
     offset: (normalizeGigerDetailsPage(input.page) - 1) * GIGER_DETAILS_PAGE_SIZE,
@@ -225,17 +220,11 @@ function normalizeRegionGigerDetailsInput(input = {}, now = new Date()) {
 }
 
 function regionGigerDetailsCtes(input) {
-  const scopeConditions = [];
-  if (input.city) scopeConditions.push('city = {city:String}');
-  if (input.profession) scopeConditions.push('profession = {profession:String}');
-  const scopeWhere = scopeConditions.length ? ` WHERE ${scopeConditions.join(' AND ')}` : '';
-
   return `${actualOrdersCte(input.filters)},
-selected_orders AS (SELECT * FROM actual_orders${scopeWhere}),
 eligible_giger_ids AS (
   SELECT DISTINCT j.worker AS worker_id
   FROM mg_jobs AS j
-  INNER JOIN selected_orders AS ao ON ao.order_id = j.source
+  INNER JOIN actual_orders AS ao ON ao.order_id = j.source
   WHERE ifNull(j.deleted, 0) = 0
     AND ifNull(j.worker, '') != ''
     AND ${successfulConfirmedShiftFlagExpression('j')} = 1
@@ -261,8 +250,6 @@ eligible_gigers AS (
 function regionGigerDetailsParams(input) {
   return {
     ...paramsFor(input.filters),
-    param_city: input.city,
-    param_profession: input.profession,
     param_limit: input.pageSize,
     param_offset: input.offset
   };

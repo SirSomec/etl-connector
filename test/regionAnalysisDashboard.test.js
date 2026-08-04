@@ -24,7 +24,7 @@ test('normalizes the selected region and calendar range', () => {
   );
 });
 
-test('loads completed workers for a city and preserves the export input', async () => {
+test('loads completed workers for the selected region and preserves the export input', async () => {
   const calls = [];
   const client = {
     async queryJSONEachRow(query, params, operation) {
@@ -36,13 +36,13 @@ test('loads completed workers for a city and preserves the export input', async 
   };
 
   const details = await loadRegionAnalysisGigerDetails(client, {
-    region: 'Татарстан', city: 'Казань', from: '2026-06-01', to: '2026-06-30', export: '1'
+    region: 'Татарстан', from: '2026-06-01', to: '2026-06-30', export: '1'
   }, new Date('2026-07-20T12:00:00.000Z'));
 
   assert.equal(calls[0].operation, 'region analysis giger details total');
   assert.equal(calls[1].operation, 'region analysis giger details');
-  assert.equal(calls[0].params.param_city, 'Казань');
-  assert.match(calls[1].query, /city = \{city:String\}/);
+  assert.equal(calls[0].params.param_region, 'Татарстан');
+  assert.doesNotMatch(calls[1].query, /selected_orders|city = \{city:String\}|profession = \{profession:String\}/);
   assert.equal(details.metricLabel, 'Выполнявшие исполнители');
   assert.equal(details.gigers[0].fullName, 'Иванов Иван');
 });

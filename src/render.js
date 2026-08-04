@@ -13599,16 +13599,13 @@ function regionAnalysisSectionUrl(filters, section) {
   return `/dashboards/region-analysis/section?${params.toString()}`;
 }
 
-function regionAnalysisGigerUrl(filters, overrides = {}) {
+function regionAnalysisGigerUrl(filters) {
   const params = new URLSearchParams({ region: filters.region || '', from: filters.from || '', to: filters.to || '', period: filters.period || 'week' });
   for (const key of ['client', 'profession', 'orderType']) {
     for (const value of filters[key] || []) params.append(key, value);
   }
-  if (overrides.city) params.set('city', overrides.city);
-  if (overrides.profession) params.set('profession', overrides.profession);
   return `/dashboards/region-analysis/gigers?${params.toString()}`;
 }
-
 
 function renderRegionMetric(label, value, metricId, currentUser) {
   return renderMetricInfoScope({ className: 'kpi-card', metricId, currentUser, content: `<div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div>` });
@@ -13616,14 +13613,13 @@ function renderRegionMetric(label, value, metricId, currentUser) {
 
 function renderRegionRows(rows, dimension, filters, currentUser) {
   if (!rows.length) return '<p class="empty">Нет данных для выбранного региона и периода.</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th><th>Исполнители</th></tr></thead><tbody>${rows.map((row) => {
+  return `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th></tr></thead><tbody>${rows.map((row) => {
     const title = row[dimension] || '';
     const titleHtml = dimension === 'city'
       ? `<a href="/dashboards/city-analysis?city=${encodeURIComponent(title)}&from=${encodeURIComponent(filters.from)}&to=${encodeURIComponent(filters.to)}">${escapeHtml(title)}</a>`
       : escapeHtml(title);
     const base = `region-analysis.${dimension === 'city' ? 'cities' : 'professions'}`;
-    const gigerUrl = regionAnalysisGigerUrl(filters, dimension === 'city' ? { city: title } : { profession: title });
-    return `<tr><td>${titleHtml}</td>${numberCell(row.orderedShifts, 0, `${base}.ordered-shifts`, currentUser)}${numberCell(row.openDemand, 0, `${base}.open-demand`, currentUser)}${percentCell(row.slaPercent, `${base}.sla`, currentUser)}${percentCell(row.coveragePercent, `${base}.coverage`, currentUser)}${numberCell(row.workedShifts, 0, `${base}.worked-shifts`, currentUser)}${numberCell(row.workplaces, 0, `${base}.workplaces`, currentUser)}<td>${renderGigerDetailTrigger('Выгрузка', gigerUrl)}</td></tr>`;
+    return `<tr><td>${titleHtml}</td>${numberCell(row.orderedShifts, 0, `${base}.ordered-shifts`, currentUser)}${numberCell(row.openDemand, 0, `${base}.open-demand`, currentUser)}${percentCell(row.slaPercent, `${base}.sla`, currentUser)}${percentCell(row.coveragePercent, `${base}.coverage`, currentUser)}${numberCell(row.workedShifts, 0, `${base}.worked-shifts`, currentUser)}${numberCell(row.workplaces, 0, `${base}.workplaces`, currentUser)}</tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -13643,10 +13639,11 @@ function renderRegionAnalysisDashboard({ database, dashboard, progressive = fals
   const filters = dashboard.filters || {};
   const options = (dashboard.regionOptions || []).map((region) => `<option value="${escapeHtml(region)}"${region === filters.region ? ' selected' : ''}>${escapeHtml(region)}</option>`).join('');
   const sections = ['summary', 'trend', 'cities', 'professions', 'attention'];
+  const gigerControl = filters.region ? `<div class="context-line">${renderGigerDetailTrigger('Исполнители региона', regionAnalysisGigerUrl(filters))}</div>` : '';
   const body = filters.region === ''
     ? '<section class="section"><p class="empty">Выберите регион, чтобы увидеть спрос, выполнение и проблемные города.</p></section>'
     : sections.map((section) => progressive ? `<div data-dashboard-fragment-url="${escapeHtml(regionAnalysisSectionUrl(filters, section))}"><section class="section"><h2>${escapeHtml({ summary: 'Основные показатели', trend: 'Динамика', cities: 'Города региона', professions: 'Специальности', attention: 'Требуют внимания' }[section])}</h2><p class="loading">Загружается</p></section></div>` : renderRegionAnalysisDashboardSection({ dashboard, section, currentUser })).join('');
-  return layout({ title: 'Анализ регионов', database, activeNav: 'region-analysis', currentUser, csrfToken, content: `<section class="section"><h1>Анализ регионов</h1><p class="technical-note">Регион определяется по адресу рабочей точки. Данные включают только актуальные заказы.</p><form class="filter-bar" action="/dashboards/region-analysis" method="get"><div class="field"><label for="region">Регион</label><select id="region" name="region"><option value="">Выберите регион</option>${options}</select></div><div class="field"><label for="from">С</label><input id="from" name="from" type="date" value="${escapeHtml(filters.from || '')}"></div><div class="field"><label for="to">По</label><input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}"></div><div class="field"><label for="period">Группировка</label><select id="period" name="period">${['day', 'week', 'month'].map((value) => `<option value="${value}"${filters.period === value ? ' selected' : ''}>${({ day: 'День', week: 'Неделя', month: 'Месяц' })[value]}</option>`).join('')}</select></div><button type="submit">Применить</button></form></section>${body}` });
+  return layout({ title: 'Анализ регионов', database, activeNav: 'region-analysis', currentUser, csrfToken, content: `<section class="section"><h1>Анализ регионов</h1><p class="technical-note">Регион определяется по адресу рабочей точки. Данные включают только актуальные заказы.</p><form class="filter-bar" action="/dashboards/region-analysis" method="get"><div class="field"><label for="region">Регион</label><select id="region" name="region"><option value="">Выберите регион</option>${options}</select></div><div class="field"><label for="from">С</label><input id="from" name="from" type="date" value="${escapeHtml(filters.from || '')}"></div><div class="field"><label for="to">По</label><input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}"></div><div class="field"><label for="period">Группировка</label><select id="period" name="period">${['day', 'week', 'month'].map((value) => `<option value="${value}"${filters.period === value ? ' selected' : ''}>${({ day: 'День', week: 'Неделя', month: 'Месяц' })[value]}</option>`).join('')}</select></div><button type="submit">Применить</button></form>${gigerControl}</section>${body}` });
 }
 
 function renderError({ database, title, message, activeNav = 'tables', currentUser, csrfToken }) {

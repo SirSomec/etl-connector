@@ -436,8 +436,8 @@ test('loadBrandAnalysisDashboardSection maps regions with the same demand and fu
       { region: 'ЦФО', worked_shifts: 15, covered_shifts: 17 }
     ],
     'brand analysis region order trend': [
-      { region: 'ЦФО', period: '2026-03-30', ordered_shifts: 8 },
-      { region: 'ЦФО', period: '2026-04-13', ordered_shifts: 12 }
+      { region: 'ЦФО', period: '2026-04-01', ordered_shifts: 8 },
+      { region: 'ЦФО', period: '2026-04-03', ordered_shifts: 12 }
     ]
   });
 
@@ -445,8 +445,8 @@ test('loadBrandAnalysisDashboardSection maps regions with the same demand and fu
     client,
     {
       from: '2026-04-01',
-      to: '2026-04-30',
-      period: 'week',
+      to: '2026-04-05',
+      period: 'month',
       brandId: 'Brand A'
     },
     'regions',
@@ -463,11 +463,11 @@ test('loadBrandAnalysisDashboardSection maps regions with the same demand and fu
     coveragePercent: 85,
     workplaces: 4,
     orderTrend: [
-      { period: '2026-03-30', orderedShifts: 8 },
-      { period: '2026-04-06', orderedShifts: 0 },
-      { period: '2026-04-13', orderedShifts: 12 },
-      { period: '2026-04-20', orderedShifts: 0 },
-      { period: '2026-04-27', orderedShifts: 0 }
+      { period: '2026-04-01', orderedShifts: 8 },
+      { period: '2026-04-02', orderedShifts: 0 },
+      { period: '2026-04-03', orderedShifts: 12 },
+      { period: '2026-04-04', orderedShifts: 0 },
+      { period: '2026-04-05', orderedShifts: 0 }
     ]
   }]);
   assert.deepEqual(calls.map((call) => call.operation), [
@@ -477,6 +477,7 @@ test('loadBrandAnalysisDashboardSection maps regions with the same demand and fu
   ]);
   assert.ok(calls.every((call) => call.query.includes('GROUP BY region')));
   assert.ok(calls[1].query.includes('sf.region AS region'));
+  assert.match(calls[2].query, /toDate\(o\.start\) AS period/);
   assert.match(calls[2].query, /GROUP BY region, period/);
 });
 

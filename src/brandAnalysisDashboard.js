@@ -94,7 +94,7 @@ function addPeriodUTC(date, period) {
   return next;
 }
 
-function buildPeriodBuckets(filters) {
+function buildPeriodBuckets(filters, periodOverride = '') {
   if (!filters) {
     return [];
   }
@@ -106,11 +106,12 @@ function buildPeriodBuckets(filters) {
     return [];
   }
 
-  const first = startOfPeriodUTC(from, filters.period);
-  const last = startOfPeriodUTC(to, filters.period);
+  const period = periodOverride || filters.period;
+  const first = startOfPeriodUTC(from, period);
+  const last = startOfPeriodUTC(to, period);
   const buckets = [];
 
-  for (let current = first; current.getTime() <= last.getTime(); current = addPeriodUTC(current, filters.period)) {
+  for (let current = first; current.getTime() <= last.getTime(); current = addPeriodUTC(current, period)) {
     buckets.push(formatDateUTC(current));
   }
 
@@ -406,7 +407,7 @@ function mergeRegionRows(orderRows, shiftRows, trendRows = [], filters = null) {
     byRegion.set(region, current);
   }
 
-  const periodBuckets = buildPeriodBuckets(filters);
+  const periodBuckets = buildPeriodBuckets(filters, 'day');
 
   return Array.from(byRegion.values()).map((row) => {
     const orderedByPeriod = new Map(row.orderTrend.map((point) => [point.period, point.orderedShifts]));
@@ -1148,7 +1149,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
         `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
       SELECT
         ifNull(nullIf(o.region, ''), 'Без региона') AS region,
-        ${periodOrders} AS period,
+        toDate(o.start) AS period,
         sum(o.amount) AS ordered_shifts
       FROM actual_orders AS o
       GROUP BY region, period

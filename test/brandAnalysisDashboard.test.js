@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   BRAND_ANALYSIS_SECTIONS,
+  isBrandAnalysisSourceRefreshing,
   loadBrandAnalysisReviews,
   loadBrandAnalysisDashboardSection,
   loadBrandAnalysisDashboardShell,
@@ -71,6 +72,38 @@ test('normalizeBrandAnalysisFilters falls back from unsafe period and invalid da
   assert.deepEqual(filters.city, []);
   assert.deepEqual(filters.region, []);
   assert.equal(filters.rangeDays, 91);
+});
+
+test('isBrandAnalysisSourceRefreshing detects recent writes to dashboard source tables', async () => {
+  const refreshing = createDashboardClient({
+    'detect active ETL refresh': [{ recent_writes: 3 }]
+  });
+  const idle = createDashboardClient({
+    'detect active ETL refresh': [{ recent_writes: 0 }]
+  });
+
+  assert.equal(await isBrandAnalysisSourceRefreshing(refreshing.client), true);
+  assert.equal(await isBrandAnalysisSourceRefreshing(idle.client), false);
+  assert.match(refreshing.calls[0].query, /system\.query_log/);
+  assert.match(refreshing.calls[0].query, /mg_orders/);
+  assert.match(refreshing.calls[0].query, /mg_jobs/);
+});
+
+test('loadBrandAnalysisDashboardSection defers data while ETL source tables are refreshing', async () => {
+  const { calls, client } = createDashboardClient({
+    'detect active ETL refresh': [{ recent_writes: 1 }]
+  });
+
+  const dashboard = await loadBrandAnalysisDashboardSection(
+    client,
+    { brandId: 'Brand A' },
+    'summary',
+    new Date('2026-06-01T12:00:00.000Z'),
+    { detectSourceRefresh: true }
+  );
+
+  assert.equal(dashboard.sourceRefreshing, true);
+  assert.deepEqual(calls.map((call) => call.operation), ['detect active ETL refresh']);
 });
 
 test('loadBrandAnalysisDashboardShell loads brand options without heavy dashboard sections', async () => {

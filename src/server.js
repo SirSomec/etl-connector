@@ -123,6 +123,7 @@ const {
   renderBrandAnalysisReviews,
   renderBrandAnalysisDashboardSection,
   renderDashboardSectionError,
+  renderDashboardSectionRefreshing,
   renderError,
   renderGigerDetails,
   renderGigerDetailsWorkbook,
@@ -2582,8 +2583,17 @@ function createApp({
 
       try {
         const dashboard = await loadBrandAnalysisDashboardSection(client, req.query, section, new Date(), {
-          cache: dashboardSectionCache
+          cache: dashboardSectionCache,
+          detectSourceRefresh: true
         });
+
+        if (dashboard.sourceRefreshing) {
+          res
+            .status(202)
+            .type('html')
+            .send(renderDashboardSectionRefreshing());
+          return;
+        }
 
         res
           .status(200)

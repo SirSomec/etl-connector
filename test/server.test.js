@@ -1575,6 +1575,31 @@ test('GET /dashboards/brand-analysis/section renders selected brand fragment', a
   assert.equal(brandCalls[0][2].param_regions, "['ЦФО']");
 });
 
+test('GET /dashboards/brand-analysis/section retries while ETL source tables are refreshing', async () => {
+  const client = createFakeClient();
+  const originalQuery = client.queryJSONEachRow.bind(client);
+
+  client.queryJSONEachRow = async (query, params, operation) => {
+    if (operation === 'detect active ETL refresh') {
+      client.calls.push(['queryJSONEachRow', operation, params]);
+      return [{ recent_writes: 1 }];
+    }
+
+    return originalQuery(query, params, operation);
+  };
+
+  await withServer(client, async (baseUrl) => {
+    const { response, text } = await fetchText(
+      baseUrl,
+      '/dashboards/brand-analysis/section?section=summary&brandId=Brand%20A'
+    );
+
+    assert.equal(response.status, 202);
+    assert.match(text, /Данные ETL обновляются/);
+    assert.doesNotMatch(text, /brand analysis orders summary/);
+  });
+});
+
 test('GET /dashboards/brand-analysis keeps navigation active and redacts fragment errors', async () => {
   const client = createFakeClient({
     async queryJSONEachRow(query, params, operation) {

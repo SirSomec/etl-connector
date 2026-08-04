@@ -8262,6 +8262,10 @@ function renderDashboardSectionError({ message }) {
   return `<section class="section"><div class="error">${escapeHtml(message)}</div></section>`;
 }
 
+function renderDashboardSectionRefreshing() {
+  return `<section class="section"><p class="loading">Данные ETL обновляются. Блок загрузится автоматически после завершения обновления.</p></section>`;
+}
+
 function renderSalesByProjectDashboard({
   database,
   dashboard,
@@ -14249,6 +14253,7 @@ module.exports = {
   renderBrandAnalysisReviews,
   renderBrandAnalysisDashboardSection,
   renderDashboardSectionError,
+  renderDashboardSectionRefreshing,
   renderError,
   renderGigerDetails,
   renderGigerDetailsWorkbook,

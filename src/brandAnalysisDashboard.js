@@ -17,6 +17,19 @@ const DEFAULT_LOOKBACK_DAYS = 90;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BRAND_ANALYSIS_SECTION_NAMES = ['summary', 'trend', 'regions', 'workplaces', 'professions', 'statuses'];
 const BRAND_ANALYSIS_SECTIONS = new Set(BRAND_ANALYSIS_SECTION_NAMES);
+const BRAND_ANALYSIS_SOURCE_TABLES = [
+  'mg_orders',
+  'mg_jobs',
+  'mg_job_history',
+  'mg_transactions',
+  'mg_clients',
+  'mg_workplaces',
+  'mg_contractors',
+  'mg_professions',
+  'mg_reviews',
+  'mg_workers',
+  'mg_users'
+];
 const FILTER_OPTION_KEYS = ['city', 'region'];
 const BRAND_TITLE_EXPRESSION = "ifNull(nullIf(trimBoth(ifNull(c.title, '')), ''), 'Без бренда')";
 const CLOSING_STATUSES_SQL = "('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')";
@@ -779,6 +792,34 @@ async function readThroughCache(cache, key, loader) {
   return cache.getOrLoad(key, loader);
 }
 
+async function isBrandAnalysisSourceRefreshing(client) {
+  const tableConditions = BRAND_ANALYSIS_SOURCE_TABLES
+    .map((table) => `positionCaseInsensitive(query, '${table}') > 0`)
+    .join('\n      OR ');
+
+  try {
+    const rows = await client.queryJSONEachRow(
+      `SELECT count() AS recent_writes
+      FROM system.query_log
+      WHERE event_time >= now() - INTERVAL 60 SECOND
+        AND type = 'QueryFinish'
+        AND query_kind = 'Insert'
+        AND written_rows >= 1000
+        AND (
+          ${tableConditions}
+        )
+      FORMAT JSONEachRow`,
+      {},
+      'detect active ETL refresh'
+    );
+
+    return numberValue(rows[0] && rows[0].recent_writes) > 0;
+  } catch (_error) {
+    // The dashboard must remain usable for ClickHouse users without access to system.query_log.
+    return false;
+  }
+}
+
 function cacheKeyForBrandAnalysisSection(section, filters) {
   return JSON.stringify({
     board: 'brand-analysis',
@@ -1185,6 +1226,13 @@ async function loadBrandAnalysisDashboardSection(
     return emptyBrandAnalysisDashboard(filters);
   }
 
+  if (options.detectSourceRefresh && await isBrandAnalysisSourceRefreshing(client)) {
+    return {
+      ...emptyBrandAnalysisDashboard(filters),
+      sourceRefreshing: true
+    };
+  }
+
   const rows = await readThroughCache(
     options.cache,
     cacheKeyForBrandAnalysisSection(section, filters),
@@ -1303,5 +1351,6 @@ module.exports = {
   loadBrandAnalysisDashboard,
   loadBrandAnalysisDashboardSection,
   loadBrandAnalysisDashboardShell,
+  isBrandAnalysisSourceRefreshing,
   normalizeBrandAnalysisFilters
 };

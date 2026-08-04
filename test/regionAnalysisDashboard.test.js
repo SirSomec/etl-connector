@@ -41,12 +41,13 @@ test('loads completed workers for the selected region and preserves the export i
   };
 
   const details = await loadRegionAnalysisGigerDetails(client, {
-    region: 'Татарстан', from: '2026-06-01', to: '2026-06-30', export: '1'
+    region: 'Татарстан', from: '2026-06-01', to: '2026-06-30', cohort: 'registered', export: '1'
   }, new Date('2026-07-20T12:00:00.000Z'));
 
   assert.equal(calls[0].operation, 'region analysis giger details total');
   assert.equal(calls[1].operation, 'region analysis giger details');
   assert.equal(calls[0].params.param_region, 'Татарстан');
+  assert.equal(calls[0].params.param_cohorts, "['registered']");
   assert.doesNotMatch(calls[1].query, /selected_orders|city = \{city:String\}|profession = \{profession:String\}/);
   assert.equal(details.metricLabel, 'Выполнявшие исполнители');
   assert.equal(details.gigers[0].fullName, 'Иванов Иван');

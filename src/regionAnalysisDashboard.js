@@ -48,6 +48,10 @@ function cleanValues(value) {
   return [...new Set(values.map(cleanText).filter(Boolean))];
 }
 
+function serializeStringArray(values) {
+  return `[${values.map((value) => `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',')}]`;
+}
+
 function normalizeOptionalDate(value) {
   return parseDate(cleanText(value));
 }
@@ -283,7 +287,7 @@ function regionGigerDetailsParams(input) {
     ...paramsFor(input.filters),
     param_activity_from: input.activityFrom,
     param_activity_to: input.activityTo,
-    param_cohorts: input.cohorts,
+    param_cohorts: serializeStringArray(input.cohorts),
     param_limit: input.pageSize,
     param_offset: input.offset
   };

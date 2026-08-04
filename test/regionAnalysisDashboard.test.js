@@ -105,9 +105,9 @@ test('loads city detail from actual orders of the requested region only', async 
     param_region: 'Татарстан',
     param_from: '2026-06-01 00:00:00',
     param_to: '2026-07-01 00:00:00',
-    param_clients: [],
-    param_professions: [],
-    param_order_types: []
+      param_clients: '[]',
+      param_professions: '[]',
+      param_order_types: '[]'
   });
   assert.match(calls[0].query, /ifNull\(ow\.address__region, ''\) = \{region:String\}/);
   assert.match(calls[0].query, /o\.deleted = 0/);

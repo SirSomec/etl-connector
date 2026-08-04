@@ -97,9 +97,9 @@ function paramsFor(filters) {
     param_region: filters.region,
     param_from: filters.fromDateTime,
     param_to: filters.toExclusiveDateTime,
-    param_clients: filters.client,
-    param_professions: filters.profession,
-    param_order_types: filters.orderType
+    param_clients: serializeStringArray(filters.client),
+    param_professions: serializeStringArray(filters.profession),
+    param_order_types: serializeStringArray(filters.orderType)
   };
 }
 
@@ -165,6 +165,13 @@ WHERE ${actualOrderDomainCondition('o', 'c', 'ct')}
 GROUP BY region ORDER BY region FORMAT JSONEachRow`;
 }
 
+function brandOptionsQuery() {
+  return `SELECT title
+FROM mg_clients
+WHERE ifNull(deleted, 0) = 0 AND trim(ifNull(title, '')) != ''
+GROUP BY title ORDER BY title FORMAT JSONEachRow`;
+}
+
 function queryForSection(filters, section) {
   const ctes = `WITH ${actualOrdersCte(filters)},\n${jobsByOrderCte()}`;
   if (section === 'summary') return `${ctes}\n${metricsSelect()} FORMAT JSONEachRow`;
@@ -189,14 +196,21 @@ function mapRow(row, dimension) {
   };
 }
 
-function emptyDashboard(filters, regionOptions = []) {
-  return { filters, regionOptions, summary: mapRow({}), trendRows: [], cityRows: [], professionRows: [], attentionRows: [] };
+function emptyDashboard(filters, regionOptions = [], brandOptions = []) {
+  return { filters, regionOptions, brandOptions, summary: mapRow({}), trendRows: [], cityRows: [], professionRows: [], attentionRows: [] };
 }
 
 async function loadRegionAnalysisDashboardShell(client, input = {}, now = new Date()) {
   const filters = normalizeRegionAnalysisFilters(input, now);
-  const regionOptions = await client.queryJSONEachRow(regionOptionsQuery(), {}, 'region analysis region options');
-  return emptyDashboard(filters, regionOptions.map((row) => cleanText(row.region)).filter(Boolean));
+  const [regionOptions, brandOptions] = await Promise.all([
+    client.queryJSONEachRow(regionOptionsQuery(), {}, 'region analysis region options'),
+    client.queryJSONEachRow(brandOptionsQuery(), {}, 'region analysis brand options')
+  ]);
+  return emptyDashboard(
+    filters,
+    regionOptions.map((row) => cleanText(row.region)).filter(Boolean),
+    brandOptions.map((row) => cleanText(row.title)).filter(Boolean)
+  );
 }
 
 async function loadRegionAnalysisDashboardSection(client, input = {}, section, now = new Date()) {

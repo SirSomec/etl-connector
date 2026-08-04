@@ -1208,11 +1208,13 @@ test('renderWorkerBlacklistDetails renders escaped current lists and audit cavea
 test('renderRegionAnalysisDashboard adds the giger modal for the regional export trigger', () => {
   const html = renderRegionAnalysisDashboard({
     database: 'etl',
-    dashboard: { filters: { region: 'Московская', from: '2026-08-01', to: '2026-08-04', period: 'week', cohort: [] }, regionOptions: ['Московская'] },
+    dashboard: { filters: { region: 'Московская', from: '2026-08-01', to: '2026-08-04', period: 'week', cohort: [], client: ['Бренд A'] }, regionOptions: ['Московская'], brandOptions: ['Бренд A', 'Бренд B'] },
     progressive: true
   });
   assert.match(html, /data-giger-detail-trigger/);
   assert.match(html, /data-giger-list-modal/);
+  assert.match(html, /Бренды/);
+  assert.match(html, /Бренд A/);
 });
 
 test('renderWorkerBlacklistDetails shows journal context when current arrays are empty', () => {

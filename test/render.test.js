@@ -2222,7 +2222,7 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
         orderTrend: [
           { period: '2026-04-01', orderedShifts: 8 },
           { period: '2026-04-02', orderedShifts: 0 },
-          { period: '2026-04-08', orderedShifts: 20 }
+          { period: '2026-05-01', orderedShifts: 20 }
         ]
       }]
     }
@@ -2287,6 +2287,10 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(regionsHtml, /data-brand-region-sort="openDemand"/);
   assert.match(regionsHtml, /data-brand-region-open-demand="3"/);
   assert.match(regionsHtml, /class="brand-region-demand-trend/);
+  assert.match(regionsHtml, /class="brand-region-month-axis"/);
+  assert.match(regionsHtml, /brand-region-month-tick-start/);
+  assert.match(regionsHtml, />апр<\/span>/);
+  assert.match(regionsHtml, />май<\/span>/);
   assert.match(regionsHtml, /linear-gradient\(90deg/);
   assert.match(regionsHtml, /hsl\(0 76% 45%\) 0\.00%/);
   assert.match(regionsHtml, /#2563eb 33\.33%, #2563eb 66\.67%/);
@@ -2318,6 +2322,7 @@ test('renderBrandAnalysisDashboard includes client-side sorting for brand region
   assert.match(html, /body\.appendChild\(row\)/);
   assert.match(html, /data-brand-region-sort-direction/);
   assert.match(html, /\.brand-region-demand-trend \{[\s\S]*width: 288px/);
+  assert.match(html, /\.brand-region-month-tick \{[\s\S]*background: #94a3b8/);
   assert.match(html, /grid-template-columns: minmax\(180px, 1fr\) 332px/);
   assert.doesNotMatch(html, /data-brand-region-sort[^>]*data-dashboard-fragment-link/);
 });

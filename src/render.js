@@ -1656,6 +1656,50 @@ function layout({
       overflow-wrap: anywhere;
     }
 
+    .brand-region-demand-chart {
+      display: inline-grid;
+      grid-template-rows: 17px 10px;
+      width: 288px;
+      flex: 0 0 288px;
+    }
+
+    .brand-region-month-axis {
+      position: relative;
+      display: block;
+      height: 17px;
+      color: #64748b;
+    }
+
+    .brand-region-month-tick {
+      position: absolute;
+      bottom: 0;
+      width: 1px;
+      height: 5px;
+      background: #94a3b8;
+    }
+
+    .brand-region-month-label {
+      position: absolute;
+      left: 50%;
+      bottom: 6px;
+      transform: translateX(-50%);
+      color: #64748b;
+      font-size: 9px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .brand-region-month-tick-start .brand-region-month-label {
+      left: 0;
+      transform: none;
+    }
+
+    .brand-region-month-tick-end .brand-region-month-label {
+      right: 0;
+      left: auto;
+      transform: none;
+    }
+
     .brand-region-demand-trend {
       display: inline-block;
       width: 288px;
@@ -8933,6 +8977,33 @@ function renderBrandRegionTableHeader(column) {
   return `<th><button class="sortable-header" type="button" data-brand-region-sort="${escapeHtml(column.key)}" aria-sort="${ariaSort}"><span>${escapeHtml(column.label)}</span><span class="sort-indicator" aria-hidden="true">${indicator}</span></button></th>`;
 }
 
+const BRAND_REGION_MONTH_LABELS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+function renderBrandRegionMonthAxis(trend) {
+  const ticks = trend.flatMap((point, index) => {
+    const period = String(point.period || '');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(period)
+      ? new Date(`${period}T00:00:00.000Z`)
+      : null;
+
+    if (!date || Number.isNaN(date.getTime()) || (index > 0 && date.getUTCDate() !== 1)) {
+      return [];
+    }
+
+    const position = index / trend.length * 100;
+    const alignmentClass = position < 5
+      ? ' brand-region-month-tick-start'
+      : position > 90
+        ? ' brand-region-month-tick-end'
+        : '';
+    const label = BRAND_REGION_MONTH_LABELS[date.getUTCMonth()];
+
+    return [`<span class="brand-region-month-tick${alignmentClass}" style="left: ${position.toFixed(2)}%" title="${escapeHtml(period)}"><span class="brand-region-month-label">${escapeHtml(label)}</span></span>`];
+  }).join('');
+
+  return `<span class="brand-region-month-axis" aria-hidden="true">${ticks}</span>`;
+}
+
 function renderBrandRegionDemandTrend(row, currentUser) {
   const trend = safeRows(row.orderTrend);
 
@@ -8972,7 +9043,7 @@ function renderBrandRegionDemandTrend(row, currentUser) {
     className: 'brand-region-demand-trend-info',
     metricId: 'brand-analysis.regions.order-trend',
     currentUser,
-    content: `<span class="brand-region-demand-trend" style="background: linear-gradient(90deg, ${gradient})" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"></span>`,
+    content: `<span class="brand-region-demand-chart">${renderBrandRegionMonthAxis(trend)}<span class="brand-region-demand-trend" style="background: linear-gradient(90deg, ${gradient})" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"></span></span>`,
     inlineInspector: true,
     inlineClassName: 'brand-region-demand-trend-inline'
   });

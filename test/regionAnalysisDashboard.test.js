@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   loadRegionAnalysisGigerDetails,
+  loadRegionCohortFunnel,
   loadRegionAnalysisDashboardSection,
   normalizeRegionAnalysisFilters
 } = require('../src/regionAnalysisDashboard');
@@ -19,7 +20,11 @@ test('normalizes the selected region and calendar range', () => {
       period: 'week',
       client: [],
       profession: [],
-      orderType: []
+      orderType: [],
+      activityMode: 'all',
+      activityFrom: '',
+      activityTo: '',
+      cohort: []
     }
   );
 });
@@ -45,6 +50,27 @@ test('loads completed workers for the selected region and preserves the export i
   assert.doesNotMatch(calls[1].query, /selected_orders|city = \{city:String\}|profession = \{profession:String\}/);
   assert.equal(details.metricLabel, 'Выполнявшие исполнители');
   assert.equal(details.gigers[0].fullName, 'Иванов Иван');
+});
+
+test('loads exclusive regional cohorts with a last-login range', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+      return [{ cohort: 'registered', users: '3' }, { cohort: 'worked', users: '2' }];
+    }
+  };
+
+  const rows = await loadRegionCohortFunnel(client, {
+    region: 'Татарстан', activityMode: 'range', activityFrom: '2026-06-01', activityTo: '2026-06-30'
+  }, new Date('2026-07-20T12:00:00.000Z'));
+
+  assert.equal(calls[0].operation, 'region analysis cohort funnel');
+  assert.match(calls[0].query, /multiIf\(ifNull\(f\.has_worked, 0\) = 1, 'worked'/);
+  assert.match(calls[0].query, /u\.lastLoginAt >= \{activity_from:DateTime\}/);
+  assert.deepEqual(rows, [
+    { cohort: 'registered', users: 3 }, { cohort: 'documents', users: 0 }, { cohort: 'self-employed', users: 0 }, { cohort: 'applied', users: 0 }, { cohort: 'worked', users: 2 }
+  ]);
 });
 
 test('loads city detail from actual orders of the requested region only', async () => {

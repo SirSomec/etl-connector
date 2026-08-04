@@ -13599,12 +13599,31 @@ function regionAnalysisSectionUrl(filters, section) {
   return `/dashboards/region-analysis/section?${params.toString()}`;
 }
 
-function regionAnalysisGigerUrl(filters) {
+const REGION_GIGER_COHORT_OPTIONS = [
+  { value: 'registered', label: 'Только зарегистрировались' },
+  { value: 'documents', label: 'Загрузили документы' },
+  { value: 'self-employed', label: 'Подтверждена самозанятость' },
+  { value: 'applied', label: 'Откликались на задания' },
+  { value: 'worked', label: 'Выходили на смены' }
+];
+
+function regionAnalysisGigerUrl(filters, path = '/dashboards/region-analysis/gigers') {
   const params = new URLSearchParams({ region: filters.region || '', from: filters.from || '', to: filters.to || '', period: filters.period || 'week' });
   for (const key of ['client', 'profession', 'orderType']) {
     for (const value of filters[key] || []) params.append(key, value);
   }
-  return `/dashboards/region-analysis/gigers?${params.toString()}`;
+  params.set('activityMode', filters.activityMode || 'all');
+  if (filters.activityFrom) params.set('activityFrom', filters.activityFrom);
+  if (filters.activityTo) params.set('activityTo', filters.activityTo);
+  for (const cohort of filters.cohort || []) params.append('cohort', cohort);
+  return `${path}?${params.toString()}`;
+}
+
+function renderRegionCohortFunnel({ rows }) {
+  const labels = Object.fromEntries(REGION_GIGER_COHORT_OPTIONS.map((item) => [item.value, item.label]));
+  const values = Array.isArray(rows) ? rows : [];
+  const total = values.reduce((sum, row) => sum + Number(row.users || 0), 0) || 1;
+  return `<section class="section"><h2>Воронка пользователей региона</h2><p class="context-line">Когорты взаимоисключающие: пользователь учитывается только на самой дальней достигнутой стадии.</p><div class="table-wrap"><table><thead><tr><th>Когорта</th><th>Пользователи</th><th>Доля</th></tr></thead><tbody>${values.map((row) => `<tr><td><div style="display:flex;align-items:center;gap:8px"><span style="display:inline-block;height:10px;min-width:8px;width:${Math.max(2, Math.round(Number(row.users || 0) / total * 100))}%;background:#0f766e;border-radius:3px"></span>${escapeHtml(labels[row.cohort] || row.cohort)}</div></td><td>${escapeHtml(formatNumber(row.users || 0))}</td><td>${escapeHtml(formatPercent(Number(row.users || 0) / total * 100))}</td></tr>`).join('')}</tbody></table></div></section>`;
 }
 
 function renderRegionMetric(label, value, metricId, currentUser) {
@@ -13638,12 +13657,15 @@ function renderRegionAnalysisDashboardSection({ dashboard, section, currentUser 
 function renderRegionAnalysisDashboard({ database, dashboard, progressive = false, currentUser, csrfToken }) {
   const filters = dashboard.filters || {};
   const options = (dashboard.regionOptions || []).map((region) => `<option value="${escapeHtml(region)}"${region === filters.region ? ' selected' : ''}>${escapeHtml(region)}</option>`).join('');
-  const sections = ['summary', 'trend', 'cities', 'professions', 'attention'];
   const gigerControl = filters.region ? `<div class="context-line">${renderGigerDetailTrigger('Исполнители региона', regionAnalysisGigerUrl(filters))}</div>` : '';
+  const cohortField = renderMultiSelectField({ id: 'cohort', label: 'Когорты', options: REGION_GIGER_COHORT_OPTIONS, selected: filters.cohort || [], labelForValue: (value) => (REGION_GIGER_COHORT_OPTIONS.find((item) => item.value === value) || {}).label || value });
+  const cohortForm = filters.region ? `<form class="filter-bar" action="/dashboards/region-analysis" method="get"><input type="hidden" name="region" value="${escapeHtml(filters.region)}"><input type="hidden" name="from" value="${escapeHtml(filters.from || '')}"><input type="hidden" name="to" value="${escapeHtml(filters.to || '')}"><input type="hidden" name="period" value="${escapeHtml(filters.period || 'week')}"><div class="field"><label for="activityMode">Последний вход</label><select id="activityMode" name="activityMode"><option value="all"${filters.activityMode === 'all' ? ' selected' : ''}>За всё время</option><option value="range"${filters.activityMode === 'range' ? ' selected' : ''}>В периоде</option></select></div><div class="field"><label for="activityFrom">Вход с</label><input id="activityFrom" name="activityFrom" type="date" value="${escapeHtml(filters.activityFrom || '')}"></div><div class="field"><label for="activityTo">Вход по</label><input id="activityTo" name="activityTo" type="date" value="${escapeHtml(filters.activityTo || '')}"></div>${cohortField}<button type="submit">Применить фильтры выгрузки</button></form>` : '';
+  const funnel = filters.region ? `<div data-dashboard-fragment-url="${escapeHtml(regionAnalysisGigerUrl(filters, '/dashboards/region-analysis/cohort-funnel'))}"><section class="section"><h2>Воронка пользователей региона</h2><p class="loading">Загружается</p></section></div>` : '';
+  const sections = ['summary', 'trend', 'cities', 'professions', 'attention'];
   const body = filters.region === ''
     ? '<section class="section"><p class="empty">Выберите регион, чтобы увидеть спрос, выполнение и проблемные города.</p></section>'
     : sections.map((section) => progressive ? `<div data-dashboard-fragment-url="${escapeHtml(regionAnalysisSectionUrl(filters, section))}"><section class="section"><h2>${escapeHtml({ summary: 'Основные показатели', trend: 'Динамика', cities: 'Города региона', professions: 'Специальности', attention: 'Требуют внимания' }[section])}</h2><p class="loading">Загружается</p></section></div>` : renderRegionAnalysisDashboardSection({ dashboard, section, currentUser })).join('');
-  return layout({ title: 'Анализ регионов', database, activeNav: 'region-analysis', currentUser, csrfToken, content: `<section class="section"><h1>Анализ регионов</h1><p class="technical-note">Регион определяется по адресу рабочей точки. Данные включают только актуальные заказы.</p><form class="filter-bar" action="/dashboards/region-analysis" method="get"><div class="field"><label for="region">Регион</label><select id="region" name="region"><option value="">Выберите регион</option>${options}</select></div><div class="field"><label for="from">С</label><input id="from" name="from" type="date" value="${escapeHtml(filters.from || '')}"></div><div class="field"><label for="to">По</label><input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}"></div><div class="field"><label for="period">Группировка</label><select id="period" name="period">${['day', 'week', 'month'].map((value) => `<option value="${value}"${filters.period === value ? ' selected' : ''}>${({ day: 'День', week: 'Неделя', month: 'Месяц' })[value]}</option>`).join('')}</select></div><button type="submit">Применить</button></form>${gigerControl}</section>${body}` });
+  return layout({ title: 'Анализ регионов', database, activeNav: 'region-analysis', currentUser, csrfToken, content: `<section class="section"><h1>Анализ регионов</h1><p class="technical-note">Регион определяется по адресу рабочей точки. Данные включают только актуальные заказы.</p><form class="filter-bar" action="/dashboards/region-analysis" method="get"><div class="field"><label for="region">Регион</label><select id="region" name="region"><option value="">Выберите регион</option>${options}</select></div><div class="field"><label for="from">С</label><input id="from" name="from" type="date" value="${escapeHtml(filters.from || '')}"></div><div class="field"><label for="to">По</label><input id="to" name="to" type="date" value="${escapeHtml(filters.to || '')}"></div><div class="field"><label for="period">Группировка</label><select id="period" name="period">${['day', 'week', 'month'].map((value) => `<option value="${value}"${filters.period === value ? ' selected' : ''}>${({ day: 'День', week: 'Неделя', month: 'Месяц' })[value]}</option>`).join('')}</select></div><button type="submit">Применить</button></form>${cohortForm}${gigerControl}</section>${funnel}${body}` });
 }
 
 function renderError({ database, title, message, activeNav = 'tables', currentUser, csrfToken }) {
@@ -13683,6 +13705,7 @@ module.exports = {
   renderCityAnalysisSectionError,
   renderRegionAnalysisDashboard,
   renderRegionAnalysisDashboardSection,
+  renderRegionCohortFunnel,
   renderHeatmapDashboard,
   renderHeatmapDashboardSection,
   renderHome,

@@ -15,6 +15,9 @@ const PERIOD_EXPRESSIONS = {
 };
 const REGION_ANALYSIS_SECTIONS = new Set(['summary', 'trend', 'cities', 'professions', 'attention']);
 const CLOSED_STATUSES_SQL = "('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')";
+const REGION_GIGER_COHORTS = ['registered', 'documents', 'self-employed', 'applied', 'worked'];
+const REGION_GIGER_EXPORT_LIMIT = 50000;
+const cohortCache = new Map();
 
 function pad2(value) {
   return String(value).padStart(2, '0');
@@ -45,6 +48,10 @@ function cleanValues(value) {
   return [...new Set(values.map(cleanText).filter(Boolean))];
 }
 
+function normalizeOptionalDate(value) {
+  return parseDate(cleanText(value));
+}
+
 function normalizeRegionAnalysisFilters(input = {}, now = new Date()) {
   const today = parseDate(formatDateUTC(now));
   const fallbackFrom = addDays(today, -89);
@@ -64,7 +71,11 @@ function normalizeRegionAnalysisFilters(input = {}, now = new Date()) {
     period,
     client: cleanValues(input.client),
     profession: cleanValues(input.profession),
-    orderType: cleanValues(input.orderType).filter((value) => value === 'once' || value === 'regular')
+    orderType: cleanValues(input.orderType).filter((value) => value === 'once' || value === 'regular'),
+    activityMode: cleanText(input.activityMode) === 'range' ? 'range' : 'all',
+    activityFrom: cleanText(input.activityFrom),
+    activityTo: cleanText(input.activityTo),
+    cohort: cleanValues(input.cohort).filter((value) => REGION_GIGER_COHORTS.includes(value))
   };
 }
 
@@ -200,9 +211,18 @@ async function loadRegionAnalysisDashboardSection(client, input = {}, section, n
 
 function normalizeRegionGigerDetailsInput(input = {}, now = new Date()) {
   const filters = normalizeRegionAnalysisFilters(input, now);
+  const activityMode = cleanText(input.activityMode) === 'range' ? 'range' : 'all';
+  const activityFromDate = normalizeOptionalDate(input.activityFrom);
+  const activityToDate = normalizeOptionalDate(input.activityTo);
+  const cohorts = cleanValues(input.cohort).filter((value) => REGION_GIGER_COHORTS.includes(value));
 
   if (!filters.region) {
     const error = new Error('region is required');
+    error.status = 400;
+    throw error;
+  }
+  if (activityMode === 'range' && (!activityFromDate || !activityToDate || activityFromDate > activityToDate)) {
+    const error = new Error('Укажите корректный период последнего входа');
     error.status = 400;
     throw error;
   }
@@ -215,41 +235,54 @@ function normalizeRegionGigerDetailsInput(input = {}, now = new Date()) {
     pageSize: GIGER_DETAILS_PAGE_SIZE,
     offset: (normalizeGigerDetailsPage(input.page) - 1) * GIGER_DETAILS_PAGE_SIZE,
     export: cleanBooleanFlag(input.export),
+    activityMode,
+    activityFrom: activityFromDate ? `${formatDateUTC(activityFromDate)} 00:00:00` : '',
+    activityTo: activityToDate ? `${formatDateUTC(addDays(activityToDate, 1))} 00:00:00` : '',
+    cohorts,
     filters
   };
 }
 
-function regionGigerDetailsCtes(input) {
-  return `${actualOrdersCte(input.filters)},
-eligible_giger_ids AS (
-  SELECT DISTINCT j.worker AS worker_id
-  FROM mg_jobs AS j
-  INNER JOIN actual_orders AS ao ON ao.order_id = j.source
-  WHERE ifNull(j.deleted, 0) = 0
-    AND ifNull(j.worker, '') != ''
-    AND ${successfulConfirmedShiftFlagExpression('j')} = 1
+function regionCohortCtes(input) {
+  const activityWhere = input.activityMode === 'range'
+    ? "AND u.lastLoginAt >= {activity_from:DateTime} AND u.lastLoginAt < {activity_to:DateTime}"
+    : '';
+  return `region_workers AS (
+  SELECT u._id AS user_id, w._id AS worker_id,
+    ifNull(w.first_passport_upload, '') != '' AND ifNull(w.first_passport_upload, '') != 'NaT' AS has_documents,
+    ifNull(w.is_self_employed, 0) = 1 AS is_self_employed,
+    ifNull(u.lastLoginAt, toDateTime(0)) AS last_login_at,
+    coalesce(nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''), nullIf(trim(ifNull(w.full_name, '')), ''), '') AS full_name,
+    ifNull(u.phone, '') AS phone, ifNull(w.status, '') AS status
+  FROM mg_users AS u
+  INNER JOIN mg_workers AS w ON w.user = u._id
+  WHERE ifNull(u.deleted, 0) = 0 AND ifNull(w.deleted, 0) = 0
+    AND ifNull(u.role, '') = 'worker' AND ifNull(u.region, '') = {region:String}
+    ${activityWhere}
 ),
-eligible_gigers AS (
+worker_job_facts AS (
+  SELECT j.worker AS worker_id, max(1) AS has_applied,
+    max(${successfulConfirmedShiftFlagExpression('j')}) AS has_worked
+  FROM mg_jobs AS j
+  INNER JOIN region_workers AS rw ON rw.worker_id = j.worker
+  WHERE ifNull(j.deleted, 0) = 0 AND ifNull(j.worker, '') != ''
+  GROUP BY j.worker
+),
+cohort_gigers AS (
   SELECT
-    ifNull(w.user, '') AS user_id,
-    w._id AS worker_id,
-    coalesce(
-      nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
-      nullIf(trim(ifNull(w.full_name, '')), ''),
-      ''
-    ) AS full_name,
-    ifNull(u.phone, '') AS phone,
-    ifNull(w.status, '') AS status
-  FROM eligible_giger_ids AS ids
-  INNER JOIN mg_workers AS w ON w._id = ids.worker_id
-  LEFT JOIN mg_users AS u ON u._id = w.user
-  WHERE ifNull(w.deleted, 0) = 0
+    rw.user_id, rw.worker_id, rw.full_name, rw.phone, rw.status, rw.last_login_at,
+    multiIf(ifNull(f.has_worked, 0) = 1, 'worked', ifNull(f.has_applied, 0) = 1, 'applied', rw.is_self_employed, 'self-employed', rw.has_documents, 'documents', 'registered') AS cohort
+  FROM region_workers AS rw
+  LEFT JOIN worker_job_facts AS f ON f.worker_id = rw.worker_id
 )`;
 }
 
 function regionGigerDetailsParams(input) {
   return {
     ...paramsFor(input.filters),
+    param_activity_from: input.activityFrom,
+    param_activity_to: input.activityTo,
+    param_cohorts: input.cohorts,
     param_limit: input.pageSize,
     param_offset: input.offset
   };
@@ -257,14 +290,31 @@ function regionGigerDetailsParams(input) {
 
 async function loadRegionAnalysisGigerDetails(client, input = {}, now = new Date()) {
   const detailInput = normalizeRegionGigerDetailsInput(input, now);
-  const ctes = regionGigerDetailsCtes(detailInput);
+  const ctes = regionCohortCtes(detailInput);
   const params = regionGigerDetailsParams(detailInput);
-  const [totalRows, gigerRows] = await Promise.all([
-    client.queryJSONEachRow(`WITH ${ctes}\nSELECT count() AS total_gigers FROM eligible_gigers FORMAT JSONEachRow`, params, 'region analysis giger details total'),
-    client.queryJSONEachRow(`WITH ${ctes}\nSELECT user_id, worker_id, full_name, phone, status FROM eligible_gigers ORDER BY full_name, user_id, worker_id${detailInput.export ? '' : '\nLIMIT {limit:UInt64} OFFSET {offset:UInt64}'} FORMAT JSONEachRow`, params, 'region analysis giger details')
-  ]);
+  const cohortWhere = detailInput.cohorts.length ? ' WHERE cohort IN {cohorts:Array(String)}' : '';
+  const totalRows = await client.queryJSONEachRow(`WITH ${ctes}\nSELECT count() AS total_gigers FROM cohort_gigers${cohortWhere} FORMAT JSONEachRow`, params, 'region analysis giger details total');
+  const total = number((totalRows[0] || {}).total_gigers);
+  if (detailInput.export && total > REGION_GIGER_EXPORT_LIMIT) {
+    const error = new Error(`Выгрузка содержит более ${REGION_GIGER_EXPORT_LIMIT} пользователей. Сузьте период активности или выберите когорты.`);
+    error.status = 422;
+    throw error;
+  }
+  const gigerRows = await client.queryJSONEachRow(`WITH ${ctes}\nSELECT user_id, worker_id, full_name, phone, status FROM cohort_gigers${cohortWhere} ORDER BY full_name, user_id, worker_id${detailInput.export ? '' : '\nLIMIT {limit:UInt64} OFFSET {offset:UInt64}'} FORMAT JSONEachRow`, params, 'region analysis giger details');
 
   return mergeGigerDetails(detailInput, totalRows, gigerRows);
 }
 
-module.exports = { REGION_ANALYSIS_SECTIONS, loadRegionAnalysisGigerDetails, loadRegionAnalysisDashboardSection, loadRegionAnalysisDashboardShell, normalizeRegionAnalysisFilters, normalizeRegionGigerDetailsInput, queryForSection };
+async function loadRegionCohortFunnel(client, input = {}, now = new Date()) {
+  const details = normalizeRegionGigerDetailsInput(input, now);
+  const key = JSON.stringify({ region: details.filters.region, activityMode: details.activityMode, activityFrom: details.activityFrom, activityTo: details.activityTo });
+  const cached = cohortCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached && cached.promise) return cached.promise;
+  const promise = client.queryJSONEachRow(`WITH ${regionCohortCtes(details)}\nSELECT cohort, count() AS users FROM cohort_gigers GROUP BY cohort FORMAT JSONEachRow`, regionGigerDetailsParams(details), 'region analysis cohort funnel')
+    .then((rows) => REGION_GIGER_COHORTS.map((cohort) => ({ cohort, users: number((rows.find((row) => row.cohort === cohort) || {}).users) })));
+  cohortCache.set(key, { promise, expiresAt: Date.now() + 10 * 60 * 1000 });
+  try { const value = await promise; cohortCache.set(key, { value, expiresAt: Date.now() + 10 * 60 * 1000 }); return value; } catch (error) { cohortCache.delete(key); throw error; }
+}
+
+module.exports = { REGION_ANALYSIS_SECTIONS, REGION_GIGER_COHORTS, loadRegionAnalysisGigerDetails, loadRegionCohortFunnel, loadRegionAnalysisDashboardSection, loadRegionAnalysisDashboardShell, normalizeRegionAnalysisFilters, normalizeRegionGigerDetailsInput, queryForSection };

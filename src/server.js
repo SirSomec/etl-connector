@@ -68,6 +68,7 @@ const {
 } = require('./cityAnalysisDashboard');
 const {
   REGION_ANALYSIS_SECTIONS,
+  loadRegionCohortFunnel,
   loadRegionAnalysisGigerDetails,
   loadRegionAnalysisDashboardSection,
   loadRegionAnalysisDashboardShell
@@ -123,6 +124,7 @@ const {
   renderCityAnalysisDashboard,
   renderRegionAnalysisDashboard,
   renderRegionAnalysisDashboardSection,
+  renderRegionCohortFunnel,
   renderHeatmapDashboard,
   renderHeatmapDashboardSection,
   renderHome,
@@ -1751,6 +1753,21 @@ function createApp({
       recordCurrentUserActivity(req, 'logout');
       res.setHeader('Set-Cookie', sessions.destroySession(req));
       res.redirect(303, '/login');
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis/cohort-funnel',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const rows = await loadRegionCohortFunnel(client, req.query, new Date());
+        res.status(200).type('html').send(renderRegionCohortFunnel({ rows }));
+      } catch (error) {
+        res.status(statusCodeFromError(error)).type('html').send(
+          renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) })
+        );
+      }
     })
   );
 

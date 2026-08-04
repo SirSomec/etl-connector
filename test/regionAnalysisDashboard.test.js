@@ -68,6 +68,7 @@ test('loads exclusive regional cohorts with a last-login range', async () => {
   assert.equal(calls[0].operation, 'region analysis cohort funnel');
   assert.match(calls[0].query, /multiIf\(ifNull\(f\.has_worked, 0\) = 1, 'worked'/);
   assert.match(calls[0].query, /u\.lastLoginAt >= \{activity_from:DateTime\}/);
+  assert.match(calls[0].query, /positionCaseInsensitiveUTF8\(ifNull\(w\.full_address__state, ''\), \{region:String\}\)/);
   assert.deepEqual(rows, [
     { cohort: 'registered', users: 3 }, { cohort: 'documents', users: 0 }, { cohort: 'self-employed', users: 0 }, { cohort: 'applied', users: 0 }, { cohort: 'worked', users: 2 }
   ]);

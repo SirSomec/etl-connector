@@ -257,7 +257,8 @@ function regionCohortCtes(input) {
   FROM mg_users AS u
   INNER JOIN mg_workers AS w ON w.user = u._id
   WHERE ifNull(u.deleted, 0) = 0 AND ifNull(w.deleted, 0) = 0
-    AND ifNull(u.role, '') = 'worker' AND ifNull(u.region, '') = {region:String}
+    AND ifNull(u.role, '') = 'worker'
+    AND positionCaseInsensitiveUTF8(ifNull(w.full_address__state, ''), {region:String}) > 0
     ${activityWhere}
 ),
 worker_job_facts AS (

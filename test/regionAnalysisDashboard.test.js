@@ -18,6 +18,8 @@ test('normalizes the selected region and calendar range', () => {
       fromDateTime: '2026-06-01 00:00:00',
       toExclusiveDateTime: '2026-07-01 00:00:00',
       period: 'week',
+      sort: 'openDemand',
+      direction: 'desc',
       client: [],
       profession: [],
       orderType: [],
@@ -112,4 +114,25 @@ test('loads city detail from actual orders of the requested region only', async 
   assert.match(calls[0].query, /ifNull\(ow\.address__region, ''\) = \{region:String\}/);
   assert.match(calls[0].query, /o\.deleted = 0/);
   assert.deepEqual(dashboard.cityRows, [{ city: 'Казань', orderedShifts: 12, coveredShifts: 9, workedShifts: 8, openDemand: 3, slaPercent: 66.7, coveragePercent: 75, cancelledShifts: 0, workplaces: 4 }]);
+});
+
+test('sorts regional cities only by an allowed metric and direction', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+      return [];
+    }
+  };
+
+  await loadRegionAnalysisDashboardSection(
+    client,
+    { region: 'Татарстан', sort: 'workedShifts', direction: 'asc' },
+    'cities',
+    new Date('2026-07-20T12:00:00.000Z')
+  );
+  assert.match(calls[0].query, /ORDER BY worked_shifts ASC, city ASC/);
+
+  assert.equal(normalizeRegionAnalysisFilters({ sort: 'not-a-column', direction: 'sideways' }).sort, 'openDemand');
+  assert.equal(normalizeRegionAnalysisFilters({ sort: 'not-a-column', direction: 'sideways' }).direction, 'desc');
 });

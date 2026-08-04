@@ -17,6 +17,7 @@ const {
   renderMailSettingsPage,
   renderPreloadManagement,
   renderRegionAnalysisDashboard,
+  renderRegionAnalysisDashboardSection,
   renderRequestReportMissingConfirmedPage,
   renderRequestReportMissingConfirmedResult,
   renderSalesByProjectDashboard,
@@ -1215,6 +1216,21 @@ test('renderRegionAnalysisDashboard adds the giger modal for the regional export
   assert.match(html, /data-giger-list-modal/);
   assert.match(html, /Бренды/);
   assert.match(html, /Бренд A/);
+});
+
+test('renderRegionAnalysisDashboardSection makes regional city metrics sortable', () => {
+  const html = renderRegionAnalysisDashboardSection({
+    section: 'cities',
+    dashboard: {
+      filters: { region: 'Московская', from: '2026-08-01', to: '2026-08-04', period: 'week', sort: 'openDemand', direction: 'desc' },
+      cityRows: [{ city: 'Москва', orderedShifts: 12, openDemand: 3, slaPercent: 66.7, coveragePercent: 75, workedShifts: 8, workplaces: 4 }]
+    }
+  });
+
+  assert.match(html, /class="sortable-header"/);
+  assert.match(html, /sort=workedShifts&amp;direction=desc/);
+  assert.match(html, /sort=openDemand&amp;direction=asc/);
+  assert.match(html, /aria-sort="descending"/);
 });
 
 test('renderWorkerBlacklistDetails shows journal context when current arrays are empty', () => {

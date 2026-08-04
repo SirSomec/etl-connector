@@ -14,6 +14,15 @@ const PERIOD_EXPRESSIONS = {
   month: 'toStartOfMonth(ao.start)'
 };
 const REGION_ANALYSIS_SECTIONS = new Set(['summary', 'trend', 'cities', 'professions', 'attention']);
+const REGION_CITY_SORT_COLUMNS = {
+  city: 'city',
+  orderedShifts: 'ordered_shifts',
+  openDemand: 'open_demand',
+  slaPercent: 'sla_percent',
+  coveragePercent: 'coverage_percent',
+  workedShifts: 'worked_shifts',
+  workplaces: 'workplaces'
+};
 const CLOSED_STATUSES_SQL = "('booked', 'going', 'inprogress', 'checkingin', 'checkingout', 'completed', 'delayed', 'waiting')";
 const REGION_GIGER_COHORTS = ['registered', 'documents', 'self-employed', 'applied', 'worked'];
 const REGION_GIGER_EXPORT_LIMIT = 50000;
@@ -66,6 +75,8 @@ function normalizeRegionAnalysisFilters(input = {}, now = new Date()) {
     toDate = today;
   }
   const period = Object.hasOwn(PERIOD_EXPRESSIONS, input.period) ? input.period : 'week';
+  const sort = Object.hasOwn(REGION_CITY_SORT_COLUMNS, input.sort) ? input.sort : 'openDemand';
+  const direction = cleanText(input.direction) === 'asc' ? 'asc' : 'desc';
   return {
     region: cleanText(input.region),
     from: formatDateUTC(fromDate),
@@ -73,6 +84,8 @@ function normalizeRegionAnalysisFilters(input = {}, now = new Date()) {
     fromDateTime: `${formatDateUTC(fromDate)} 00:00:00`,
     toExclusiveDateTime: `${formatDateUTC(addDays(toDate, 1))} 00:00:00`,
     period,
+    sort,
+    direction,
     client: cleanValues(input.client),
     profession: cleanValues(input.profession),
     orderType: cleanValues(input.orderType).filter((value) => value === 'once' || value === 'regular'),
@@ -175,7 +188,11 @@ GROUP BY title ORDER BY title FORMAT JSONEachRow`;
 function queryForSection(filters, section) {
   const ctes = `WITH ${actualOrdersCte(filters)},\n${jobsByOrderCte()}`;
   if (section === 'summary') return `${ctes}\n${metricsSelect()} FORMAT JSONEachRow`;
-  if (section === 'cities') return `${ctes}\n${metricsSelect('city')}\nORDER BY open_demand DESC, ordered_shifts DESC, city\nLIMIT 100 FORMAT JSONEachRow`;
+  if (section === 'cities') {
+    const sortColumn = REGION_CITY_SORT_COLUMNS[filters.sort] || REGION_CITY_SORT_COLUMNS.openDemand;
+    const direction = filters.direction === 'asc' ? 'ASC' : 'DESC';
+    return `${ctes}\n${metricsSelect('city')}\nORDER BY ${sortColumn} ${direction}, city ASC\nLIMIT 100 FORMAT JSONEachRow`;
+  }
   if (section === 'professions') return `${ctes}\n${metricsSelect('profession')}\nORDER BY open_demand DESC, ordered_shifts DESC, profession\nLIMIT 50 FORMAT JSONEachRow`;
   if (section === 'attention') return `${ctes}\n${metricsSelect('city')}\nHAVING open_demand > 0\nORDER BY open_demand DESC, sla_percent ASC\nLIMIT 15 FORMAT JSONEachRow`;
   return `${ctes}\n${metricsSelect(`period`)}\nORDER BY period FORMAT JSONEachRow`.replace(/SELECT period,/, `SELECT ${PERIOD_EXPRESSIONS[filters.period]} AS period,`);

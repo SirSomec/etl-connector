@@ -13646,10 +13646,31 @@ ${progressive ? renderHeatmapProgressiveSection(filters) : renderHeatmapDashboar
 
 function regionAnalysisSectionUrl(filters, section) {
   const params = new URLSearchParams({ section, region: filters.region || '', from: filters.from || '', to: filters.to || '', period: filters.period || 'week' });
+  params.set('sort', filters.sort || 'openDemand');
+  params.set('direction', filters.direction || 'desc');
   for (const key of ['client', 'profession', 'orderType']) {
     for (const value of filters[key] || []) params.append(key, value);
   }
   return `/dashboards/region-analysis/section?${params.toString()}`;
+}
+
+function regionAnalysisPageUrl(filters, overrides = {}) {
+  const nextFilters = { ...filters, ...overrides };
+  const params = new URLSearchParams({
+    region: nextFilters.region || '',
+    from: nextFilters.from || '',
+    to: nextFilters.to || '',
+    period: nextFilters.period || 'week',
+    sort: nextFilters.sort || 'openDemand',
+    direction: nextFilters.direction || 'desc',
+    activityMode: nextFilters.activityMode || 'all'
+  });
+  if (nextFilters.activityFrom) params.set('activityFrom', nextFilters.activityFrom);
+  if (nextFilters.activityTo) params.set('activityTo', nextFilters.activityTo);
+  for (const key of ['client', 'profession', 'orderType', 'cohort']) {
+    for (const value of nextFilters[key] || []) params.append(key, value);
+  }
+  return `/dashboards/region-analysis?${params.toString()}`;
 }
 
 const REGION_GIGER_COHORT_OPTIONS = [
@@ -13683,9 +13704,35 @@ function renderRegionMetric(label, value, metricId, currentUser) {
   return renderMetricInfoScope({ className: 'kpi-card', metricId, currentUser, content: `<div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div>` });
 }
 
-function renderRegionRows(rows, dimension, filters, currentUser) {
+const REGION_CITY_COLUMNS = [
+  { key: 'city', label: 'Город', numeric: false },
+  { key: 'orderedShifts', label: 'Заказ' },
+  { key: 'openDemand', label: 'Свободный заказ' },
+  { key: 'slaPercent', label: 'SLA' },
+  { key: 'coveragePercent', label: 'Покрытие' },
+  { key: 'workedShifts', label: 'Отработано' },
+  { key: 'workplaces', label: 'Точки' }
+];
+
+function regionCitySortDirection(filters, column) {
+  if (filters.sort === column.key) return filters.direction === 'asc' ? 'desc' : 'asc';
+  return column.numeric === false ? 'asc' : 'desc';
+}
+
+function renderRegionCityHeaderCell(filters, column) {
+  const active = filters.sort === column.key;
+  const direction = regionCitySortDirection(filters, column);
+  const indicator = active ? `<span class="sort-indicator" aria-hidden="true">${escapeHtml(filters.direction === 'asc' ? '↑' : '↓')}</span>` : '';
+  const href = regionAnalysisPageUrl(filters, { sort: column.key, direction });
+  return `<th aria-sort="${active ? (filters.direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><a class="sortable-header" href="${escapeHtml(href)}"><span>${escapeHtml(column.label)}</span>${indicator}</a></th>`;
+}
+
+function renderRegionRows(rows, dimension, filters, currentUser, sortable = false) {
   if (!rows.length) return '<p class="empty">Нет данных для выбранного региона и периода.</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th></tr></thead><tbody>${rows.map((row) => {
+  const headers = sortable
+    ? REGION_CITY_COLUMNS.map((column) => renderRegionCityHeaderCell(filters, column)).join('')
+    : `<th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th>`;
+  return `<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${rows.map((row) => {
     const title = row[dimension] || '';
     const titleHtml = dimension === 'city'
       ? `<a href="/dashboards/city-analysis?city=${encodeURIComponent(title)}&from=${encodeURIComponent(filters.from)}&to=${encodeURIComponent(filters.to)}">${escapeHtml(title)}</a>`
@@ -13700,7 +13747,7 @@ function renderRegionAnalysisDashboardSection({ dashboard, section, currentUser 
     const s = dashboard.summary || {};
     return `<section class="section">${renderMetricPanelHead('Основные показатели', 'region-analysis.summary', currentUser)}<div class="kpi-grid">${renderRegionMetric('Заказано смен', formatNumber(s.orderedShifts), 'region-analysis.summary.ordered-shifts', currentUser)}${renderRegionMetric('Свободный заказ', formatNumber(s.openDemand), 'region-analysis.summary.open-demand', currentUser)}${renderRegionMetric('SLA', formatPercent(s.slaPercent), 'region-analysis.summary.sla', currentUser)}${renderRegionMetric('Покрытие', formatPercent(s.coveragePercent), 'region-analysis.summary.coverage', currentUser)}${renderRegionMetric('Отработано смен', formatNumber(s.workedShifts), 'region-analysis.summary.worked-shifts', currentUser)}${renderRegionMetric('Отмены', formatNumber(s.cancelledShifts), 'region-analysis.summary.cancelled-shifts', currentUser)}</div></section>`;
   }
-  if (section === 'cities') return `<section class="section">${renderMetricPanelHead('Города региона', 'region-analysis.cities', currentUser)}${renderRegionRows(dashboard.cityRows || [], 'city', dashboard.filters || {}, currentUser)}</section>`;
+  if (section === 'cities') return `<section class="section">${renderMetricPanelHead('Города региона', 'region-analysis.cities', currentUser)}${renderRegionRows(dashboard.cityRows || [], 'city', dashboard.filters || {}, currentUser, true)}</section>`;
   if (section === 'professions') return `<section class="section">${renderMetricPanelHead('Специальности', 'region-analysis.professions', currentUser)}${renderRegionRows(dashboard.professionRows || [], 'profession', dashboard.filters || {}, currentUser)}</section>`;
   if (section === 'attention') return `<section class="section">${renderMetricPanelHead('Требуют внимания', 'region-analysis.attention', currentUser)}<p class="context-line">Города с незакрытым спросом, отсортированные по его объёму.</p>${renderRegionRows(dashboard.attentionRows || [], 'city', dashboard.filters || {}, currentUser)}</section>`;
   const rows = dashboard.trendRows || [];

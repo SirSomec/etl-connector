@@ -8873,6 +8873,24 @@ function renderBrandWorkplaceRows(rows, currentUser) {
 </table></div>`;
 }
 
+const BRAND_REGION_TABLE_COLUMNS = [
+  { key: 'region', label: 'Регион', numeric: false },
+  { key: 'orderedShifts', label: 'Заказ' },
+  { key: 'openDemand', label: 'Свободный заказ' },
+  { key: 'slaPercent', label: 'SLA' },
+  { key: 'coveragePercent', label: 'Покрытие' },
+  { key: 'workedShifts', label: 'Отработано' },
+  { key: 'workplaces', label: 'Точки' }
+];
+
+function renderBrandRegionTableHeader(column) {
+  const active = column.key === 'openDemand';
+  const indicator = active ? '↓' : '↕';
+  const ariaSort = active ? 'descending' : 'none';
+
+  return `<th><button class="sortable-header" type="button" data-brand-region-sort="${escapeHtml(column.key)}" aria-sort="${ariaSort}"><span>${escapeHtml(column.label)}</span><span class="sort-indicator" aria-hidden="true">${indicator}</span></button></th>`;
+}
+
 function renderBrandRegionRows(rows, currentUser) {
   const regionRows = safeRows(rows);
 
@@ -8881,7 +8899,7 @@ function renderBrandRegionRows(rows, currentUser) {
   }
 
   const bodyRows = regionRows
-    .map((row) => `<tr>
+    .map((row) => `<tr data-brand-region-region="${escapeHtml(row.region || 'Без региона')}" data-brand-region-ordered-shifts="${escapeHtml(row.orderedShifts)}" data-brand-region-open-demand="${escapeHtml(row.openDemand)}" data-brand-region-sla-percent="${escapeHtml(row.slaPercent)}" data-brand-region-coverage-percent="${escapeHtml(row.coveragePercent)}" data-brand-region-worked-shifts="${escapeHtml(row.workedShifts)}" data-brand-region-workplaces="${escapeHtml(row.workplaces)}">
   <td>${escapeHtml(row.region || 'Без региона')}</td>
   ${numberCell(row.orderedShifts, 0, 'brand-analysis.regions.ordered-shifts', currentUser)}
   ${numberCell(row.openDemand, 0, 'brand-analysis.regions.open-demand', currentUser)}
@@ -8892,10 +8910,78 @@ function renderBrandRegionRows(rows, currentUser) {
 </tr>`)
     .join('');
 
-  return `<div class="table-wrap"><table>
-  <thead><tr><th>Регион</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th></tr></thead>
-  <tbody>${bodyRows}</tbody>
+  return `<div class="table-wrap" data-brand-region-table data-brand-region-sort-key="openDemand" data-brand-region-sort-direction="desc"><table>
+  <thead><tr>${BRAND_REGION_TABLE_COLUMNS.map(renderBrandRegionTableHeader).join('')}</tr></thead>
+  <tbody data-brand-region-body>${bodyRows}</tbody>
 </table></div>`;
+}
+
+function renderBrandRegionTableScript() {
+  return `<script>
+(function () {
+  var attributeByKey = {
+    region: 'region',
+    orderedShifts: 'ordered-shifts',
+    openDemand: 'open-demand',
+    slaPercent: 'sla-percent',
+    coveragePercent: 'coverage-percent',
+    workedShifts: 'worked-shifts',
+    workplaces: 'workplaces'
+  };
+
+  function updateBrandRegionSortHeaders(root, key, direction) {
+    root.querySelectorAll('[data-brand-region-sort]').forEach(function (button) {
+      var active = button.getAttribute('data-brand-region-sort') === key;
+      var indicator = button.querySelector('.sort-indicator');
+
+      button.setAttribute('aria-sort', active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+      if (indicator) indicator.textContent = active ? (direction === 'asc' ? '↑' : '↓') : '↕';
+    });
+  }
+
+  function sortBrandRegionRows(root, key, direction) {
+    var body = root.querySelector('[data-brand-region-body]');
+    var attribute = attributeByKey[key];
+
+    if (!body || !attribute) return;
+
+    Array.prototype.slice.call(body.querySelectorAll('tr')).sort(function (left, right) {
+      var multiplier = direction === 'asc' ? 1 : -1;
+      var leftValue = left.getAttribute('data-brand-region-' + attribute) || '';
+      var rightValue = right.getAttribute('data-brand-region-' + attribute) || '';
+
+      if (key === 'region') return leftValue.localeCompare(rightValue, 'ru') * multiplier;
+
+      var difference = Number(leftValue) - Number(rightValue);
+      if (difference !== 0) return difference * multiplier;
+      return (left.getAttribute('data-brand-region-region') || '').localeCompare(right.getAttribute('data-brand-region-region') || '', 'ru');
+    }).forEach(function (row) {
+      body.appendChild(row);
+    });
+
+    root.setAttribute('data-brand-region-sort-key', key);
+    root.setAttribute('data-brand-region-sort-direction', direction);
+    updateBrandRegionSortHeaders(root, key, direction);
+  }
+
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('[data-brand-region-sort]') : null;
+    if (!button) return;
+
+    var root = button.closest('[data-brand-region-table]');
+    if (!root) return;
+
+    var key = button.getAttribute('data-brand-region-sort');
+    var currentKey = root.getAttribute('data-brand-region-sort-key') || 'openDemand';
+    var currentDirection = root.getAttribute('data-brand-region-sort-direction') || 'desc';
+    var direction = key === currentKey
+      ? (currentDirection === 'desc' ? 'asc' : 'desc')
+      : (key === 'region' ? 'asc' : 'desc');
+
+    sortBrandRegionRows(root, key, direction);
+  });
+})();
+</script>`;
 }
 
 function renderBrandProfessionRows(rows, currentUser) {
@@ -9049,7 +9135,7 @@ ${renderBrandAnalysisDashboardSection({ dashboard, section: 'statuses', currentU
     <button type="submit">Применить</button>
   </form>
 </section>
-${resultsHtml}
+${resultsHtml}${renderBrandRegionTableScript()}
 ${renderWorkplacePointReviewModal()}
 ${renderWorkplacePointReviewsScript()}`;
 

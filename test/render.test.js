@@ -2278,9 +2278,34 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(workplacesHtml, /data-sql-inspector-open="brand-analysis\.workplaces\.sla"/);
   assert.match(regionsHtml, /Регионы присутствия бренда/);
   assert.match(regionsHtml, /Свободный заказ/);
+  assert.match(regionsHtml, /data-brand-region-table/);
+  assert.match(regionsHtml, /data-brand-region-sort="openDemand"/);
+  assert.match(regionsHtml, /data-brand-region-open-demand="3"/);
   assert.match(regionsHtml, /data-sql-inspector-open="brand-analysis\.regions\.coverage"/);
   assert.match(professionsHtml, /data-sql-inspector-open="brand-analysis\.professions\.worked-shifts"/);
   assert.match(statusesHtml, /data-sql-inspector-open="brand-analysis\.statuses\.shifts"/);
+});
+
+test('renderBrandAnalysisDashboard includes client-side sorting for brand regions without fragment links', () => {
+  const html = renderBrandAnalysisDashboard({
+    database: 'etl',
+    progressive: false,
+    currentUser: { role: 'analyst', permissions: ['brand-analysis'] },
+    dashboard: {
+      filters: { period: 'month', from: '2026-04-01', to: '2026-04-30', brandId: 'Brand A', city: [], region: [] },
+      brandOptions: [{ id: 'Brand A', title: 'Brand A' }],
+      selectedBrandTitle: 'Brand A',
+      summary: {}, trendRows: [], workplaceRows: [], professionRows: [], statusRows: [],
+      regionRows: [
+        { region: 'ЦФО', orderedShifts: 20, openDemand: 3, slaPercent: 75, coveragePercent: 85, workedShifts: 15, workplaces: 4 }
+      ]
+    }
+  });
+
+  assert.match(html, /document\.addEventListener\('click', function \(event\)[\s\S]*data-brand-region-sort/);
+  assert.match(html, /body\.appendChild\(row\)/);
+  assert.match(html, /data-brand-region-sort-direction/);
+  assert.doesNotMatch(html, /data-brand-region-sort[^>]*data-dashboard-fragment-link/);
 });
 
 test('renderWorkplaceAnalysisDashboard renders filters, cards, heatmap, and escapes values', () => {

@@ -2287,6 +2287,9 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(regionsHtml, /data-brand-region-open-demand="3"/);
   assert.match(regionsHtml, /class="brand-region-demand-trend/);
   assert.match(regionsHtml, /linear-gradient\(90deg/);
+  assert.match(regionsHtml, /hsl\(0 76% 45%\) 0%/);
+  assert.match(regionsHtml, /hsl\(120 76% 45%\) 100%/);
+  assert.match(regionsHtml, /class="brand-region-name-layout"/);
   assert.match(regionsHtml, /Динамика заказа: 8 → 20/);
   assert.match(regionsHtml, /data-sql-inspector-open="brand-analysis\.regions\.coverage"/);
   assert.match(professionsHtml, /data-sql-inspector-open="brand-analysis\.professions\.worked-shifts"/);
@@ -2312,6 +2315,8 @@ test('renderBrandAnalysisDashboard includes client-side sorting for brand region
   assert.match(html, /document\.addEventListener\('click', function \(event\)[\s\S]*data-brand-region-sort/);
   assert.match(html, /body\.appendChild\(row\)/);
   assert.match(html, /data-brand-region-sort-direction/);
+  assert.match(html, /\.brand-region-demand-trend \{[\s\S]*width: 288px/);
+  assert.match(html, /grid-template-columns: minmax\(180px, 1fr\) 332px/);
   assert.doesNotMatch(html, /data-brand-region-sort[^>]*data-dashboard-fragment-link/);
 });
 

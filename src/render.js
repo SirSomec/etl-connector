@@ -1641,14 +1641,25 @@ function layout({
     }
 
     .brand-region-name-cell {
-      min-width: 180px;
+      min-width: 540px;
+    }
+
+    .brand-region-name-layout {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) 332px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .brand-region-name-label {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .brand-region-demand-trend {
       display: inline-block;
-      width: 96px;
+      width: 288px;
       height: 10px;
-      margin-left: 8px;
       border: 1px solid #cbd5e1;
       border-radius: 999px;
       vertical-align: middle;
@@ -8931,11 +8942,15 @@ function renderBrandRegionDemandTrend(row, currentUser) {
 
   const values = trend.map((point) => Number(point.orderedShifts) || 0);
   const max = Math.max(...values, 1);
+  const min = Math.min(...values);
+  const range = max - min;
   const colorFor = (value) => {
-    const intensity = Math.max(0, Math.min(1, value / max));
-    const lightness = Math.round(96 - intensity * 52);
+    const intensity = range === 0
+      ? 0.5
+      : Math.max(0, Math.min(1, (value - min) / range));
+    const hue = Math.round(intensity * 120);
 
-    return `hsl(198 72% ${lightness}%)`;
+    return `hsl(${hue} 76% 45%)`;
   };
   const gradient = trend.map((point, index) => {
     const position = Math.round(index / Math.max(trend.length - 1, 1) * 100);
@@ -8944,8 +8959,7 @@ function renderBrandRegionDemandTrend(row, currentUser) {
   }).join(', ');
   const first = values[0];
   const last = values[values.length - 1];
-  const min = Math.min(...values);
-  const label = `Динамика заказа: ${formatNumber(first)} → ${formatNumber(last)}; минимум ${formatNumber(min)}, максимум ${formatNumber(max)}`;
+  const label = `Динамика заказа: ${formatNumber(first)} → ${formatNumber(last)}; минимум ${formatNumber(min)}, максимум ${formatNumber(max)}; красный — минимум, зелёный — максимум`;
 
   return renderMetricInfoScope({
     className: 'brand-region-demand-trend-info',
@@ -8966,7 +8980,7 @@ function renderBrandRegionRows(rows, currentUser) {
 
   const bodyRows = regionRows
     .map((row) => `<tr data-brand-region-region="${escapeHtml(row.region || 'Без региона')}" data-brand-region-ordered-shifts="${escapeHtml(row.orderedShifts)}" data-brand-region-open-demand="${escapeHtml(row.openDemand)}" data-brand-region-sla-percent="${escapeHtml(row.slaPercent)}" data-brand-region-coverage-percent="${escapeHtml(row.coveragePercent)}" data-brand-region-worked-shifts="${escapeHtml(row.workedShifts)}" data-brand-region-workplaces="${escapeHtml(row.workplaces)}">
-  <td class="brand-region-name-cell">${escapeHtml(row.region || 'Без региона')}${renderBrandRegionDemandTrend(row, currentUser)}</td>
+  <td class="brand-region-name-cell"><div class="brand-region-name-layout"><span class="brand-region-name-label">${escapeHtml(row.region || 'Без региона')}</span>${renderBrandRegionDemandTrend(row, currentUser)}</div></td>
   ${numberCell(row.orderedShifts, 0, 'brand-analysis.regions.ordered-shifts', currentUser)}
   ${numberCell(row.openDemand, 0, 'brand-analysis.regions.open-demand', currentUser)}
   ${percentCell(row.slaPercent, 'brand-analysis.regions.sla', currentUser)}

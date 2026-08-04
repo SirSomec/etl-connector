@@ -381,6 +381,10 @@ test('loadBrandAnalysisDashboardSection maps regions with the same demand and fu
     ],
     'brand analysis region shifts': [
       { region: 'ЦФО', worked_shifts: 15, covered_shifts: 17 }
+    ],
+    'brand analysis region order trend': [
+      { region: 'ЦФО', period: '2026-04-01', ordered_shifts: 8 },
+      { region: 'ЦФО', period: '2026-04-08', ordered_shifts: 12 }
     ]
   });
 
@@ -403,14 +407,20 @@ test('loadBrandAnalysisDashboardSection maps regions with the same demand and fu
     openDemand: 3,
     slaPercent: 75,
     coveragePercent: 85,
-    workplaces: 4
+    workplaces: 4,
+    orderTrend: [
+      { period: '2026-04-01', orderedShifts: 8 },
+      { period: '2026-04-08', orderedShifts: 12 }
+    ]
   }]);
   assert.deepEqual(calls.map((call) => call.operation), [
     'brand analysis region orders',
-    'brand analysis region shifts'
+    'brand analysis region shifts',
+    'brand analysis region order trend'
   ]);
   assert.ok(calls.every((call) => call.query.includes('GROUP BY region')));
   assert.ok(calls[1].query.includes('sf.region AS region'));
+  assert.match(calls[2].query, /GROUP BY region, period/);
 });
 
 test('loadBrandAnalysisDashboardSection rejects unknown section', async () => {

@@ -1640,6 +1640,33 @@ function layout({
       font-size: 12px;
     }
 
+    .brand-region-name-cell {
+      min-width: 180px;
+    }
+
+    .brand-region-demand-trend {
+      display: inline-block;
+      width: 96px;
+      height: 10px;
+      margin-left: 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      vertical-align: middle;
+    }
+
+    .brand-region-demand-trend-info,
+    .brand-region-demand-trend-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      vertical-align: middle;
+    }
+
+    .brand-region-demand-trend-info .sql-inspector-button {
+      position: static;
+      flex: 0 0 auto;
+    }
+
     tr:last-child td {
       border-bottom: 0;
     }
@@ -8891,6 +8918,41 @@ function renderBrandRegionTableHeader(column) {
   return `<th><button class="sortable-header" type="button" data-brand-region-sort="${escapeHtml(column.key)}" aria-sort="${ariaSort}"><span>${escapeHtml(column.label)}</span><span class="sort-indicator" aria-hidden="true">${indicator}</span></button></th>`;
 }
 
+function renderBrandRegionDemandTrend(row, currentUser) {
+  const trend = safeRows(row.orderTrend);
+
+  if (trend.length === 0) {
+    return '';
+  }
+
+  const values = trend.map((point) => Number(point.orderedShifts) || 0);
+  const max = Math.max(...values, 1);
+  const colorFor = (value) => {
+    const intensity = Math.max(0, Math.min(1, value / max));
+    const lightness = Math.round(96 - intensity * 52);
+
+    return `hsl(198 72% ${lightness}%)`;
+  };
+  const gradient = trend.map((point, index) => {
+    const position = Math.round(index / Math.max(trend.length - 1, 1) * 100);
+
+    return `${colorFor(Number(point.orderedShifts) || 0)} ${position}%`;
+  }).join(', ');
+  const first = values[0];
+  const last = values[values.length - 1];
+  const min = Math.min(...values);
+  const label = `Динамика заказа: ${formatNumber(first)} → ${formatNumber(last)}; минимум ${formatNumber(min)}, максимум ${formatNumber(max)}`;
+
+  return renderMetricInfoScope({
+    className: 'brand-region-demand-trend-info',
+    metricId: 'brand-analysis.regions.order-trend',
+    currentUser,
+    content: `<span class="brand-region-demand-trend" style="background: linear-gradient(90deg, ${gradient})" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"></span>`,
+    inlineInspector: true,
+    inlineClassName: 'brand-region-demand-trend-inline'
+  });
+}
+
 function renderBrandRegionRows(rows, currentUser) {
   const regionRows = safeRows(rows);
 
@@ -8900,7 +8962,7 @@ function renderBrandRegionRows(rows, currentUser) {
 
   const bodyRows = regionRows
     .map((row) => `<tr data-brand-region-region="${escapeHtml(row.region || 'Без региона')}" data-brand-region-ordered-shifts="${escapeHtml(row.orderedShifts)}" data-brand-region-open-demand="${escapeHtml(row.openDemand)}" data-brand-region-sla-percent="${escapeHtml(row.slaPercent)}" data-brand-region-coverage-percent="${escapeHtml(row.coveragePercent)}" data-brand-region-worked-shifts="${escapeHtml(row.workedShifts)}" data-brand-region-workplaces="${escapeHtml(row.workplaces)}">
-  <td>${escapeHtml(row.region || 'Без региона')}</td>
+  <td class="brand-region-name-cell">${escapeHtml(row.region || 'Без региона')}${renderBrandRegionDemandTrend(row, currentUser)}</td>
   ${numberCell(row.orderedShifts, 0, 'brand-analysis.regions.ordered-shifts', currentUser)}
   ${numberCell(row.openDemand, 0, 'brand-analysis.regions.open-demand', currentUser)}
   ${percentCell(row.slaPercent, 'brand-analysis.regions.sla', currentUser)}

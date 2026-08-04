@@ -82,6 +82,7 @@ const RENDERED_SQL_METRIC_IDS = [
   'brand-analysis.regions.coverage',
   'brand-analysis.regions.worked-shifts',
   'brand-analysis.regions.workplaces',
+  'brand-analysis.regions.order-trend',
   'brand-analysis.professions',
   'brand-analysis.professions.ordered-shifts',
   'brand-analysis.professions.worked-shifts',

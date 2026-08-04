@@ -487,7 +487,8 @@ const BRAND_ANALYSIS_WORKPLACES_SQL = `${BRAND_ANALYSIS_TREND_SQL}
 
 const BRAND_ANALYSIS_REGIONS_SQL = `${BRAND_ANALYSIS_TREND_SQL}
 
--- region breakdown groups the same one-brand actual orders and shift facts by workplace address__region.`;
+-- region breakdown groups the same one-brand actual orders and shift facts by workplace address__region.
+-- The in-cell demand gradient groups actual_orders by region and <period_expression(o.start)>.`;
 
 const BRAND_ANALYSIS_PROFESSIONS_SQL = `${BRAND_ANALYSIS_TREND_SQL}
 
@@ -2070,7 +2071,8 @@ defineMetricSet({
     { suffix: 'sla', title: 'Регион бренда: SLA', description: 'Доля успешных confirmed-смен от заказа выбранного бренда в регионе.' },
     { suffix: 'coverage', title: 'Регион бренда: покрытие', description: 'Доля закрывающих смен от заказа выбранного бренда в регионе.' },
     { suffix: 'worked-shifts', title: 'Регион бренда: отработано', description: 'Количество успешных confirmed-смен выбранного бренда в регионе.' },
-    { suffix: 'workplaces', title: 'Регион бренда: точки', description: 'Количество рабочих мест выбранного бренда с плановым заказом в регионе.' }
+    { suffix: 'workplaces', title: 'Регион бренда: точки', description: 'Количество рабочих мест выбранного бренда с плановым заказом в регионе.' },
+    { suffix: 'order-trend', title: 'Регион бренда: динамика заказа', description: 'Градиентная полоса показывает изменение суммы планового заказа по частям выбранного периода: чем насыщеннее цвет, тем больше заказ.' }
   ]
 });
 

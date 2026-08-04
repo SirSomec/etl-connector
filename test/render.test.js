@@ -2218,7 +2218,11 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
         slaPercent: 75,
         coveragePercent: 85,
         workedShifts: 15,
-        workplaces: 4
+        workplaces: 4,
+        orderTrend: [
+          { period: '2026-04-01', orderedShifts: 8 },
+          { period: '2026-04-08', orderedShifts: 20 }
+        ]
       }]
     }
   });
@@ -2281,6 +2285,9 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(regionsHtml, /data-brand-region-table/);
   assert.match(regionsHtml, /data-brand-region-sort="openDemand"/);
   assert.match(regionsHtml, /data-brand-region-open-demand="3"/);
+  assert.match(regionsHtml, /class="brand-region-demand-trend/);
+  assert.match(regionsHtml, /linear-gradient\(90deg/);
+  assert.match(regionsHtml, /Динамика заказа: 8 → 20/);
   assert.match(regionsHtml, /data-sql-inspector-open="brand-analysis\.regions\.coverage"/);
   assert.match(professionsHtml, /data-sql-inspector-open="brand-analysis\.professions\.worked-shifts"/);
   assert.match(statusesHtml, /data-sql-inspector-open="brand-analysis\.statuses\.shifts"/);

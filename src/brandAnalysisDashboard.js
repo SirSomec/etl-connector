@@ -298,11 +298,12 @@ function emptyRegionRow(region) {
     openDemand: 0,
     slaPercent: 0,
     coveragePercent: 0,
-    workplaces: 0
+    workplaces: 0,
+    orderTrend: []
   };
 }
 
-function mergeRegionRows(orderRows, shiftRows) {
+function mergeRegionRows(orderRows, shiftRows, trendRows = []) {
   const byRegion = new Map();
 
   for (const row of orderRows) {
@@ -327,7 +328,21 @@ function mergeRegionRows(orderRows, shiftRows) {
     byRegion.set(region, current);
   }
 
-  return Array.from(byRegion.values()).sort((left, right) => {
+  for (const row of trendRows) {
+    const region = String(row.region || 'Без региона');
+    const current = byRegion.get(region) || emptyRegionRow(region);
+
+    current.orderTrend.push({
+      period: String(row.period || ''),
+      orderedShifts: numberValue(row.ordered_shifts)
+    });
+    byRegion.set(region, current);
+  }
+
+  return Array.from(byRegion.values()).map((row) => ({
+    ...row,
+    orderTrend: row.orderTrend.sort((left, right) => left.period.localeCompare(right.period))
+  })).sort((left, right) => {
     if (right.openDemand !== left.openDemand) {
       return right.openDemand - left.openDemand;
     }
@@ -995,7 +1010,7 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
   }
 
   if (section === 'regions') {
-    const [regionOrderRows, regionShiftRows] = await Promise.all([
+    const [regionOrderRows, regionShiftRows, regionOrderTrendRows] = await Promise.all([
       client.queryJSONEachRow(
         `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
       SELECT
@@ -1021,10 +1036,23 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
       FORMAT JSONEachRow`,
         params,
         'brand analysis region shifts'
+      ),
+      client.queryJSONEachRow(
+        `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
+      SELECT
+        ifNull(nullIf(o.region, ''), 'Без региона') AS region,
+        ${periodOrders} AS period,
+        sum(o.amount) AS ordered_shifts
+      FROM actual_orders AS o
+      GROUP BY region, period
+      ORDER BY region, period
+      FORMAT JSONEachRow`,
+        params,
+        'brand analysis region order trend'
       )
     ]);
 
-    return { regionOrderRows, regionShiftRows };
+    return { regionOrderRows, regionShiftRows, regionOrderTrendRows };
   }
 
   if (section === 'professions') {
@@ -1108,7 +1136,7 @@ function mergeBrandAnalysisSection(filters, section, rows) {
   if (section === 'regions') {
     return {
       ...dashboard,
-      regionRows: mergeRegionRows(rows.regionOrderRows || [], rows.regionShiftRows || [])
+      regionRows: mergeRegionRows(rows.regionOrderRows || [], rows.regionShiftRows || [], rows.regionOrderTrendRows || [])
     };
   }
 
@@ -1185,7 +1213,7 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
       shell.filters
     ),
     trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows, trendRows.responseTrendRows),
-    regionRows: mergeRegionRows(regionRows.regionOrderRows, regionRows.regionShiftRows),
+    regionRows: mergeRegionRows(regionRows.regionOrderRows, regionRows.regionShiftRows, regionRows.regionOrderTrendRows),
     workplaceRows: mergeWorkplaceRows(workplaceRows.workplaceOrderRows, workplaceRows.workplaceShiftRows),
     professionRows: mergeProfessionRows(professionRows.professionOrderRows, professionRows.professionShiftRows),
     statusRows: mapStatusRows(statusRows.statusRows)

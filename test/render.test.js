@@ -2207,6 +2207,21 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
       ]
     }
   });
+  const regionsHtml = renderBrandAnalysisDashboardSection({
+    section: 'regions',
+    currentUser,
+    dashboard: {
+      regionRows: [{
+        region: 'ЦФО',
+        orderedShifts: 20,
+        openDemand: 3,
+        slaPercent: 75,
+        coveragePercent: 85,
+        workedShifts: 15,
+        workplaces: 4
+      }]
+    }
+  });
   const professionsHtml = renderBrandAnalysisDashboardSection({
     section: 'professions',
     currentUser,
@@ -2261,6 +2276,9 @@ test('renderBrandAnalysisDashboardSection renders KPI, tables and SQL inspectors
   assert.match(workplacesHtml, /Точка &lt;1&gt;/);
   assert.doesNotMatch(workplacesHtml, /Точка <1>/);
   assert.match(workplacesHtml, /data-sql-inspector-open="brand-analysis\.workplaces\.sla"/);
+  assert.match(regionsHtml, /Регионы присутствия бренда/);
+  assert.match(regionsHtml, /Свободный заказ/);
+  assert.match(regionsHtml, /data-sql-inspector-open="brand-analysis\.regions\.coverage"/);
   assert.match(professionsHtml, /data-sql-inspector-open="brand-analysis\.professions\.worked-shifts"/);
   assert.match(statusesHtml, /data-sql-inspector-open="brand-analysis\.statuses\.shifts"/);
 });

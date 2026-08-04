@@ -15,7 +15,7 @@ const PERIOD_EXPRESSIONS = {
 const DEFAULT_PERIOD = 'month';
 const DEFAULT_LOOKBACK_DAYS = 90;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const BRAND_ANALYSIS_SECTION_NAMES = ['summary', 'trend', 'workplaces', 'professions', 'statuses'];
+const BRAND_ANALYSIS_SECTION_NAMES = ['summary', 'trend', 'regions', 'workplaces', 'professions', 'statuses'];
 const BRAND_ANALYSIS_SECTIONS = new Set(BRAND_ANALYSIS_SECTION_NAMES);
 const FILTER_OPTION_KEYS = ['city', 'region'];
 const BRAND_TITLE_EXPRESSION = "ifNull(nullIf(trimBoth(ifNull(c.title, '')), ''), 'Без бренда')";
@@ -287,6 +287,57 @@ function mergeTrendRows(orderRows, shiftRows, responseRows = []) {
   }
 
   return Array.from(byPeriod.values()).sort((left, right) => left.period.localeCompare(right.period));
+}
+
+function emptyRegionRow(region) {
+  return {
+    region,
+    orderedShifts: 0,
+    coveredShifts: 0,
+    workedShifts: 0,
+    openDemand: 0,
+    slaPercent: 0,
+    coveragePercent: 0,
+    workplaces: 0
+  };
+}
+
+function mergeRegionRows(orderRows, shiftRows) {
+  const byRegion = new Map();
+
+  for (const row of orderRows) {
+    const region = String(row.region || 'Без региона');
+
+    byRegion.set(region, {
+      ...emptyRegionRow(region),
+      orderedShifts: numberValue(row.ordered_shifts),
+      workplaces: numberValue(row.workplaces)
+    });
+  }
+
+  for (const row of shiftRows) {
+    const region = String(row.region || 'Без региона');
+    const current = byRegion.get(region) || emptyRegionRow(region);
+
+    current.coveredShifts = numberValue(row.covered_shifts);
+    current.workedShifts = numberValue(row.worked_shifts);
+    current.openDemand = Math.max(0, current.orderedShifts - current.coveredShifts);
+    current.slaPercent = percent(current.workedShifts, current.orderedShifts);
+    current.coveragePercent = percent(current.coveredShifts, current.orderedShifts);
+    byRegion.set(region, current);
+  }
+
+  return Array.from(byRegion.values()).sort((left, right) => {
+    if (right.openDemand !== left.openDemand) {
+      return right.openDemand - left.openDemand;
+    }
+
+    if (right.orderedShifts !== left.orderedShifts) {
+      return right.orderedShifts - left.orderedShifts;
+    }
+
+    return left.region.localeCompare(right.region);
+  });
 }
 
 function emptyWorkplaceRow(workplaceId) {
@@ -588,6 +639,7 @@ shift_enriched AS (
     sf.workplace AS workplace,
     sf.workplace_title AS workplace_title,
     sf.city AS city,
+    sf.region AS region,
     sf.profession AS profession,
     sf.salary_per_hour AS salary_per_hour,
     sf.hours AS hours,
@@ -686,6 +738,7 @@ function emptyBrandAnalysisDashboard(filters) {
     filterOptions: emptyFilterOptions(),
     summary: emptySummary(),
     trendRows: [],
+    regionRows: [],
     workplaceRows: [],
     professionRows: [],
     statusRows: []
@@ -941,6 +994,39 @@ async function loadBrandAnalysisSectionRows(client, filters, section) {
     return { workplaceOrderRows, workplaceShiftRows };
   }
 
+  if (section === 'regions') {
+    const [regionOrderRows, regionShiftRows] = await Promise.all([
+      client.queryJSONEachRow(
+        `${actualOrdersWithClause({ includeDateFilter: true }, filters)}
+      SELECT
+        ifNull(nullIf(o.region, ''), 'Без региона') AS region,
+        sum(o.amount) AS ordered_shifts,
+        uniqExactIf(o.workplace, o.workplace != '') AS workplaces
+      FROM actual_orders AS o
+      GROUP BY region
+      ORDER BY ordered_shifts DESC, region
+      FORMAT JSONEachRow`,
+        params,
+        'brand analysis region orders'
+      ),
+      client.queryJSONEachRow(
+        `${shiftFactsCte(filters)}
+      SELECT
+        ifNull(nullIf(region, ''), 'Без региона') AS region,
+        ${workedShifts} AS worked_shifts,
+        ${coveredShifts} AS covered_shifts
+      FROM shift_enriched
+      GROUP BY region
+      ORDER BY worked_shifts DESC, region
+      FORMAT JSONEachRow`,
+        params,
+        'brand analysis region shifts'
+      )
+    ]);
+
+    return { regionOrderRows, regionShiftRows };
+  }
+
   if (section === 'professions') {
     const [professionOrderRows, professionShiftRows] = await Promise.all([
       client.queryJSONEachRow(
@@ -1019,6 +1105,13 @@ function mergeBrandAnalysisSection(filters, section, rows) {
     };
   }
 
+  if (section === 'regions') {
+    return {
+      ...dashboard,
+      regionRows: mergeRegionRows(rows.regionOrderRows || [], rows.regionShiftRows || [])
+    };
+  }
+
   if (section === 'professions') {
     return {
       ...dashboard,
@@ -1077,7 +1170,7 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
     return shell;
   }
 
-  const [summaryRows, trendRows, workplaceRows, professionRows, statusRows] = await Promise.all(
+  const [summaryRows, trendRows, regionRows, workplaceRows, professionRows, statusRows] = await Promise.all(
     BRAND_ANALYSIS_SECTION_NAMES.map((section) =>
       loadBrandAnalysisSectionRows(client, shell.filters, section)
     )
@@ -1092,6 +1185,7 @@ async function loadBrandAnalysisDashboard(client, input = {}, now = new Date()) 
       shell.filters
     ),
     trendRows: mergeTrendRows(trendRows.orderTrendRows, trendRows.shiftTrendRows, trendRows.responseTrendRows),
+    regionRows: mergeRegionRows(regionRows.regionOrderRows, regionRows.regionShiftRows),
     workplaceRows: mergeWorkplaceRows(workplaceRows.workplaceOrderRows, workplaceRows.workplaceShiftRows),
     professionRows: mergeProfessionRows(professionRows.professionOrderRows, professionRows.professionShiftRows),
     statusRows: mapStatusRows(statusRows.statusRows)

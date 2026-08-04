@@ -485,6 +485,10 @@ const BRAND_ANALYSIS_WORKPLACES_SQL = `${BRAND_ANALYSIS_TREND_SQL}
 
 -- workplace breakdown groups the same one-brand actual orders and shift facts by workplace.`;
 
+const BRAND_ANALYSIS_REGIONS_SQL = `${BRAND_ANALYSIS_TREND_SQL}
+
+-- region breakdown groups the same one-brand actual orders and shift facts by workplace address__region.`;
+
 const BRAND_ANALYSIS_PROFESSIONS_SQL = `${BRAND_ANALYSIS_TREND_SQL}
 
 -- profession breakdown groups the same one-brand actual orders and shift facts by mg_professions caption.`;
@@ -2053,6 +2057,20 @@ defineMetricSet({
     { suffix: 'sla', title: 'Точка бренда: SLA', description: 'Доля успешных confirmed-смен от планового заказа точки.' },
     { suffix: 'revenue-rub', title: 'Точка бренда: выручка', description: 'Расчетная выручка выбранного бренда по точке.' },
     { suffix: 'cancelled-shifts', title: 'Точка бренда: отмены', description: 'Количество отмененных или failed смен по точке.' }
+  ]
+});
+
+defineMetricSet({
+  baseId: 'brand-analysis.regions',
+  sql: BRAND_ANALYSIS_REGIONS_SQL,
+  metrics: [
+    { id: 'brand-analysis.regions', title: 'Регионы присутствия бренда', description: 'Показывает заказ, свободный спрос, SLA, покрытие, выполнение и число точек выбранного бренда по регионам.' },
+    { suffix: 'ordered-shifts', title: 'Регион бренда: заказ', description: 'Сумма планового заказа выбранного бренда в регионе.' },
+    { suffix: 'open-demand', title: 'Регион бренда: свободный заказ', description: 'Незакрытая часть планового заказа выбранного бренда в регионе.' },
+    { suffix: 'sla', title: 'Регион бренда: SLA', description: 'Доля успешных confirmed-смен от заказа выбранного бренда в регионе.' },
+    { suffix: 'coverage', title: 'Регион бренда: покрытие', description: 'Доля закрывающих смен от заказа выбранного бренда в регионе.' },
+    { suffix: 'worked-shifts', title: 'Регион бренда: отработано', description: 'Количество успешных confirmed-смен выбранного бренда в регионе.' },
+    { suffix: 'workplaces', title: 'Регион бренда: точки', description: 'Количество рабочих мест выбранного бренда с плановым заказом в регионе.' }
   ]
 });
 

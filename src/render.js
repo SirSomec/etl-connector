@@ -8495,6 +8495,10 @@ ${renderDashboardLoadingSection({
   url: brandAnalysisSectionUrl(filters, 'trend')
 })}
 ${renderDashboardLoadingSection({
+  title: 'Регионы присутствия',
+  url: brandAnalysisSectionUrl(filters, 'regions')
+})}
+${renderDashboardLoadingSection({
   title: 'Точки бренда',
   url: brandAnalysisSectionUrl(filters, 'workplaces')
 })}
@@ -8869,6 +8873,31 @@ function renderBrandWorkplaceRows(rows, currentUser) {
 </table></div>`;
 }
 
+function renderBrandRegionRows(rows, currentUser) {
+  const regionRows = safeRows(rows);
+
+  if (regionRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = regionRows
+    .map((row) => `<tr>
+  <td>${escapeHtml(row.region || 'Без региона')}</td>
+  ${numberCell(row.orderedShifts, 0, 'brand-analysis.regions.ordered-shifts', currentUser)}
+  ${numberCell(row.openDemand, 0, 'brand-analysis.regions.open-demand', currentUser)}
+  ${percentCell(row.slaPercent, 'brand-analysis.regions.sla', currentUser)}
+  ${percentCell(row.coveragePercent, 'brand-analysis.regions.coverage', currentUser)}
+  ${numberCell(row.workedShifts, 0, 'brand-analysis.regions.worked-shifts', currentUser)}
+  ${numberCell(row.workplaces, 0, 'brand-analysis.regions.workplaces', currentUser)}
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Регион</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
 function renderBrandProfessionRows(rows, currentUser) {
   const professionRows = safeRows(rows);
 
@@ -8928,6 +8957,13 @@ function renderBrandAnalysisDashboardSection({ dashboard, section, currentUser }
 </section>`;
   }
 
+  if (section === 'regions') {
+    return `<section class="section">
+  ${renderMetricPanelHead('Регионы присутствия бренда', 'brand-analysis.regions', currentUser)}
+  ${renderBrandRegionRows(dashboard.regionRows, currentUser)}
+</section>`;
+  }
+
   if (section === 'workplaces') {
     return `<section class="section">
   ${renderMetricPanelHead('Точки бренда', 'brand-analysis.workplaces', currentUser)}
@@ -8967,6 +9003,7 @@ function renderBrandAnalysisDashboard({
     ? renderBrandAnalysisProgressiveSections(filters)
     : `${renderBrandAnalysisDashboardSection({ dashboard, section: 'summary', currentUser })}
 ${renderBrandAnalysisDashboardSection({ dashboard, section: 'trend', currentUser })}
+${renderBrandAnalysisDashboardSection({ dashboard, section: 'regions', currentUser })}
 ${renderBrandAnalysisDashboardSection({ dashboard, section: 'workplaces', currentUser })}
 ${renderBrandAnalysisDashboardSection({ dashboard, section: 'professions', currentUser })}
 ${renderBrandAnalysisDashboardSection({ dashboard, section: 'statuses', currentUser })}`;

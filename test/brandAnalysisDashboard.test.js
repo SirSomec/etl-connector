@@ -374,6 +374,45 @@ test('loadBrandAnalysisDashboardSection maps trend, workplaces, professions and 
   assert.deepEqual(statuses.statusRows, [{ status: 'confirmed', shifts: 9 }]);
 });
 
+test('loadBrandAnalysisDashboardSection maps regions with the same demand and fulfillment metrics as region cities', async () => {
+  const { calls, client } = createDashboardClient({
+    'brand analysis region orders': [
+      { region: 'ЦФО', ordered_shifts: 20, workplaces: 4 }
+    ],
+    'brand analysis region shifts': [
+      { region: 'ЦФО', worked_shifts: 15, covered_shifts: 17 }
+    ]
+  });
+
+  const dashboard = await loadBrandAnalysisDashboardSection(
+    client,
+    {
+      from: '2026-04-01',
+      to: '2026-04-30',
+      brandId: 'Brand A'
+    },
+    'regions',
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.deepEqual(dashboard.regionRows, [{
+    region: 'ЦФО',
+    orderedShifts: 20,
+    coveredShifts: 17,
+    workedShifts: 15,
+    openDemand: 3,
+    slaPercent: 75,
+    coveragePercent: 85,
+    workplaces: 4
+  }]);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    'brand analysis region orders',
+    'brand analysis region shifts'
+  ]);
+  assert.ok(calls.every((call) => call.query.includes('GROUP BY region')));
+  assert.ok(calls[1].query.includes('sf.region AS region'));
+});
+
 test('loadBrandAnalysisDashboardSection rejects unknown section', async () => {
   assert.equal(BRAND_ANALYSIS_SECTIONS.has('summary'), true);
   await assert.rejects(

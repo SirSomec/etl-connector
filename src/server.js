@@ -43,6 +43,8 @@ const {
 const {
   createRequestReportJobStore
 } = require('./requestReportJobStore');
+const { createRegionGigerExportJobStore } = require('./regionGigerExportJobStore');
+const { writeFileAtomically } = require('./atomicFile');
 const { buildXlsxWorkbook } = require('./xlsxWorkbook');
 const {
   runRequestReportConfirmedCheckJob
@@ -624,6 +626,7 @@ function createApp({
   buildInfo = config && config.app ? config.app : defaultBuildInfo(),
   now = () => new Date(),
   requestReportJobStore = createRequestReportJobStore({ now: () => now().getTime() }),
+  regionGigerExportJobStore = createRegionGigerExportJobStore({ now: () => now().getTime() }),
   requestReportJobRunner = runRequestReportConfirmedCheckJob,
   setImmediateFn = setImmediate
 }) {
@@ -653,6 +656,7 @@ function createApp({
       })
     : null);
   const activity = authEnabled ? activityStore : null;
+  const regionExportDirectory = path.join(__dirname, '..', 'data', 'region-giger-exports');
 
   app.locals.activityStore = activity;
 
@@ -2488,7 +2492,13 @@ function createApp({
 
         recordCurrentUserActivity(req, activityEventType(req));
         res.status(200).type('html').send(
-          renderGigerDetails({ details: attachGigerDetailsUrls(req, details, '/dashboards/region-analysis/gigers/export') })
+          renderGigerDetails({
+            details: {
+              ...attachGigerDetailsUrls(req, details, '/dashboards/region-analysis/gigers/export'),
+              exportJobUrl: `/dashboards/region-analysis/gigers/export-jobs${(() => { const query = queryStringWithout(req.originalUrl, ['page', 'export']); return query ? `?${query}` : ''; })()}`
+            },
+            csrfToken: viewContext(req).csrfToken
+          })
         );
       } catch (error) {
         res.status(statusCodeFromError(error)).type('html').send(
@@ -2506,6 +2516,67 @@ function createApp({
 
       recordCurrentUserActivity(req, activityEventType(req));
       sendGigerDetailsWorkbook(res, details, 'region-analysis-gigers.xls');
+    })
+  );
+
+  app.post(
+    '/dashboards/region-analysis/gigers/export-jobs',
+    requireJsonAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      if (!verifyJsonCsrf(req, res)) return;
+
+      const ownerId = String((req.auth && req.auth.user && req.auth.user.id) || '');
+      const job = regionGigerExportJobStore.createJob({ ownerId });
+      const query = { ...req.query, export: '1' };
+      const downloadUrl = `/dashboards/region-analysis/gigers/export-jobs/${encodeURIComponent(job.jobId)}/download`;
+
+      setImmediateFn(async () => {
+        try {
+          regionGigerExportJobStore.updateJob(job.jobId, { status: 'running', progress: 5, stage: 'Подготавливаем выгрузку', detail: 'Запускаем расчёт' });
+          const details = await loadRegionAnalysisGigerDetails(client, query, new Date(), {
+            onProgress: (event) => regionGigerExportJobStore.updateJob(job.jobId, { status: 'running', ...event })
+          });
+          regionGigerExportJobStore.updateJob(job.jobId, { status: 'running', progress: 90, stage: 'Сохраняем файл', detail: 'Записываем Excel на сервере' });
+          const filePath = path.join(regionExportDirectory, `${job.jobId}.xls`);
+          await writeFileAtomically(filePath, renderGigerDetailsWorkbook({ details }));
+          regionGigerExportJobStore.completeJob(job.jobId, { downloadUrl, filePath });
+        } catch (error) {
+          regionGigerExportJobStore.failJob(job.jobId, sanitizeForResponse(error && error.message, config));
+        }
+      });
+
+      res.status(202).json({ jobId: job.jobId, statusUrl: `/dashboards/region-analysis/gigers/export-jobs/${encodeURIComponent(job.jobId)}` });
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis/gigers/export-jobs/:jobId',
+    requireJsonAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      regionGigerExportJobStore.pruneExpired();
+      const ownerId = String((req.auth && req.auth.user && req.auth.user.id) || '');
+      const snapshot = regionGigerExportJobStore.getSnapshot(req.params.jobId, ownerId);
+      if (!snapshot) {
+        sendJsonError(res, 404, 'Задача выгрузки не найдена.');
+        return;
+      }
+      res.status(200).json(snapshot);
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis/gigers/export-jobs/:jobId/download',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      const ownerId = String((req.auth && req.auth.user && req.auth.user.id) || '');
+      const filePath = regionGigerExportJobStore.getFilePath(req.params.jobId, ownerId);
+      if (!filePath) {
+        res.status(404).type('html').send(renderError({ title: 'Файл не найден', message: 'Файл выгрузки ещё не готов или срок его хранения истёк.', activeNav: 'city-analysis', ...viewContext(req) }));
+        return;
+      }
+      await fs.access(filePath);
+      recordCurrentUserActivity(req, activityEventType(req));
+      res.download(filePath, 'region-analysis-gigers.xls');
     })
   );
 

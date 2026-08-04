@@ -52,6 +52,15 @@ test('loads completed workers for the selected region and preserves the export i
   assert.equal(details.gigers[0].fullName, 'Иванов Иван');
 });
 
+test('reports progress while preparing a regional export', async () => {
+  const progress = [];
+  const client = { async queryJSONEachRow() { return [{ total_gigers: '1' }]; } };
+  await loadRegionAnalysisGigerDetails(client, { region: 'Татарстан', export: '1' }, new Date('2026-07-20T12:00:00.000Z'), {
+    onProgress: (event) => progress.push(event.progress)
+  });
+  assert.deepEqual(progress, [15, 55, 80]);
+});
+
 test('loads exclusive regional cohorts with a last-login range', async () => {
   const calls = [];
   const client = {

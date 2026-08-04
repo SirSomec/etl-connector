@@ -5978,6 +5978,36 @@ function renderGigerDetailsScript() {
       });
   }
 
+  function setExportProgress(button, message, disabled) {
+    var progress = button.parentElement && button.parentElement.querySelector('[data-region-giger-export-progress]');
+    button.disabled = Boolean(disabled);
+    if (progress) progress.textContent = message || '';
+  }
+
+  function pollExportJob(button, statusUrl) {
+    window.setTimeout(function () {
+      fetch(statusUrl)
+        .then(function (response) { return response.json().then(function (data) { return { response: response, data: data }; }); })
+        .then(function (result) {
+          var job = result.data || {};
+          if (!result.response.ok || job.status === 'failed') {
+            setExportProgress(button, job.error || job.detail || 'Не удалось подготовить файл.', false);
+            return;
+          }
+          if (job.status === 'done' && job.downloadUrl) {
+            setExportProgress(button, 'Файл готов: ', true);
+            var link = document.createElement('a');
+            link.className = 'secondary-button'; link.href = job.downloadUrl; link.textContent = 'Скачать Excel';
+            button.replaceWith(link);
+            return;
+          }
+          setExportProgress(button, (job.stage || 'Подготавливаем файл') + ' — ' + (job.progress || 0) + '%', true);
+          pollExportJob(button, statusUrl);
+        })
+        .catch(function () { setExportProgress(button, 'Не удалось узнать состояние выгрузки.', false); });
+    }, 1000);
+  }
+
   document.addEventListener('click', function (event) {
     if (!event.target || typeof event.target.closest !== 'function') {
       return;
@@ -5988,6 +6018,29 @@ function renderGigerDetailsScript() {
     if (pageLink && modal.contains(pageLink)) {
       event.preventDefault();
       loadDetails(pageLink.getAttribute('href'));
+      return;
+    }
+
+    var exportButton = event.target.closest('[data-region-giger-export-start]');
+    if (exportButton && modal.contains(exportButton)) {
+      event.preventDefault();
+      var exportUrl = exportButton.getAttribute('data-export-job-url');
+      var csrfToken = exportButton.getAttribute('data-csrf-token') || '';
+      setExportProgress(exportButton, 'Ставим выгрузку в очередь…', true);
+      fetch(exportUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: 'csrfToken=' + encodeURIComponent(csrfToken)
+      })
+        .then(function (response) { return response.json().then(function (data) { return { response: response, data: data }; }); })
+        .then(function (result) {
+          if (!result.response.ok || !result.data || !result.data.statusUrl) {
+            setExportProgress(exportButton, (result.data && result.data.error) || 'Не удалось запустить выгрузку.', false);
+            return;
+          }
+          pollExportJob(exportButton, result.data.statusUrl);
+        })
+        .catch(function () { setExportProgress(exportButton, 'Не удалось запустить выгрузку.', false); });
       return;
     }
 
@@ -10097,7 +10150,7 @@ function renderGigerRows(gigers) {
 </table></div>`;
 }
 
-function renderGigerDetails({ details }) {
+function renderGigerDetails({ details, csrfToken = '' }) {
   const safeDetails = details || {};
   const pagination = safeDetails.pagination || {};
   const totalLabel =
@@ -10110,7 +10163,7 @@ function renderGigerDetails({ details }) {
     <h2>${escapeHtml(safeDetails.metricLabel || 'Гигеры')}</h2>
     <div class="giger-details-actions">
       ${totalLabel}
-      ${safeDetails.exportUrl ? `<a class="secondary-button" href="${escapeHtml(safeDetails.exportUrl)}">Выгрузить в Excel</a>` : ''}
+      ${safeDetails.exportJobUrl ? `<button type="button" class="secondary-button" data-region-giger-export-start data-export-job-url="${escapeHtml(safeDetails.exportJobUrl)}" data-csrf-token="${escapeHtml(csrfToken)}">Подготовить Excel</button><span class="muted" data-region-giger-export-progress aria-live="polite"></span>` : safeDetails.exportUrl ? `<a class="secondary-button" href="${escapeHtml(safeDetails.exportUrl)}">Выгрузить в Excel</a>` : ''}
     </div>
   </div>
   ${renderGigerRows(safeDetails.gigers || [])}

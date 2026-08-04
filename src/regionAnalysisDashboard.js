@@ -289,11 +289,12 @@ function regionGigerDetailsParams(input) {
   };
 }
 
-async function loadRegionAnalysisGigerDetails(client, input = {}, now = new Date()) {
+async function loadRegionAnalysisGigerDetails(client, input = {}, now = new Date(), { onProgress } = {}) {
   const detailInput = normalizeRegionGigerDetailsInput(input, now);
   const ctes = regionCohortCtes(detailInput);
   const params = regionGigerDetailsParams(detailInput);
   const cohortWhere = detailInput.cohorts.length ? ' WHERE cohort IN {cohorts:Array(String)}' : '';
+  if (typeof onProgress === 'function') onProgress({ progress: 15, stage: 'Подсчитываем пользователей', detail: 'Проверяем объём выгрузки' });
   const totalRows = await client.queryJSONEachRow(`WITH ${ctes}\nSELECT count() AS total_gigers FROM cohort_gigers${cohortWhere} FORMAT JSONEachRow`, params, 'region analysis giger details total');
   const total = number((totalRows[0] || {}).total_gigers);
   if (detailInput.export && total > REGION_GIGER_EXPORT_LIMIT) {
@@ -301,7 +302,10 @@ async function loadRegionAnalysisGigerDetails(client, input = {}, now = new Date
     error.status = 422;
     throw error;
   }
+  if (typeof onProgress === 'function') onProgress({ progress: 55, stage: 'Формируем строки', detail: `Найдено пользователей: ${total}` });
   const gigerRows = await client.queryJSONEachRow(`WITH ${ctes}\nSELECT user_id, worker_id, full_name, phone, status FROM cohort_gigers${cohortWhere} ORDER BY full_name, user_id, worker_id${detailInput.export ? '' : '\nLIMIT {limit:UInt64} OFFSET {offset:UInt64}'} FORMAT JSONEachRow`, params, 'region analysis giger details');
+
+  if (typeof onProgress === 'function') onProgress({ progress: 80, stage: 'Собираем файл', detail: 'Данные получены' });
 
   return mergeGigerDetails(detailInput, totalRows, gigerRows);
 }

@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
@@ -51,6 +52,25 @@ async function writeFileAtomically(filePath, contents, encoding = 'utf8') {
   }
 }
 
+function writeFileAtomicallySync(filePath, contents, encoding = 'utf8') {
+  fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  const tempPath = tempPathFor(filePath);
+
+  try {
+    fsSync.writeFileSync(tempPath, contents, encoding);
+    fsSync.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      fsSync.rmSync(tempPath, { force: true });
+    } catch (_) {
+      // Preserve the original write error.
+    }
+    throw error;
+  }
+}
+
 module.exports = {
-  writeFileAtomically
+  writeFileAtomically,
+  writeFileAtomicallySync
 };

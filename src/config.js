@@ -4,6 +4,7 @@ const DEFAULT_PRELOAD_STORE_PATH = path.join(process.cwd(), 'data', 'preload.sql
 const DEFAULT_CITY_GIGER_SCOPE_STORE_PATH = path.join(process.cwd(), 'data', 'city-giger-scopes.sqlite');
 const DEFAULT_PRELOAD_CLICKHOUSE_REQUEST_TIMEOUT_MS = 600000;
 const DEFAULT_USER_ACTIVITY_STORE_PATH = path.join(process.cwd(), 'data', 'user-activity.sqlite');
+const DEFAULT_SESSION_STORE_PATH = path.join(process.cwd(), 'data', 'sessions.json');
 const DEFAULT_REQUEST_REPORT_STATUS_STORE_PATH = path.join(
   process.cwd(),
   'data',
@@ -64,6 +65,18 @@ function isAuthEnabled(env) {
 
 function loadConfig(env = process.env) {
   const authEnabled = isAuthEnabled(env);
+  const presenceHeartbeatMs = readPositiveInt(
+    env,
+    'AUTH_PRESENCE_HEARTBEAT_MS',
+    15000,
+    60000
+  );
+  const presenceTtlMs = readPositiveInt(
+    env,
+    'AUTH_PRESENCE_TTL_MS',
+    45000,
+    300000
+  );
   const required = ['CLICKHOUSE_HOST', 'CLICKHOUSE_USER', 'CLICKHOUSE_PASSWORD'];
 
   if (authEnabled) {
@@ -76,6 +89,10 @@ function loadConfig(env = process.env) {
 
   if (missing.length > 0) {
     throw new ConfigError(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  if (presenceTtlMs < presenceHeartbeatMs * 2) {
+    throw new ConfigError('AUTH_PRESENCE_TTL_MS must be at least twice AUTH_PRESENCE_HEARTBEAT_MS');
   }
 
   return {
@@ -133,14 +150,17 @@ function loadConfig(env = process.env) {
       adminPassword: authEnabled ? env.AUTH_ADMIN_PASSWORD : '',
       userStorePath:
         env.AUTH_USER_STORE_PATH || path.join(process.cwd(), 'data', 'users.json'),
+      sessionStorePath: env.AUTH_SESSION_STORE_PATH || DEFAULT_SESSION_STORE_PATH,
       sessionSecret: env.AUTH_SESSION_SECRET || '',
       sessionCookieName: env.AUTH_SESSION_COOKIE_NAME || 'etl_analytics_session',
       sessionTtlMs: readPositiveInt(
         env,
         'AUTH_SESSION_TTL_MS',
-        12 * 60 * 60 * 1000,
+        48 * 60 * 60 * 1000,
         30 * 24 * 60 * 60 * 1000
       ),
+      presenceHeartbeatMs,
+      presenceTtlMs,
       passwordHashIterations: readPositiveInt(
         env,
         'AUTH_PASSWORD_HASH_ITERATIONS',

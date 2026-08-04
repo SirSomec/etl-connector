@@ -86,6 +86,11 @@ const {
   loadSalesByProjectDashboardShell
 } = require('./salesByProjectDashboard');
 const {
+  UNDERAGE_COMPLETED_SHIFTS_SECTIONS,
+  loadUnderageCompletedShiftsDashboardSection,
+  loadUnderageCompletedShiftsDashboardShell
+} = require('./underageCompletedShiftsDashboard');
+const {
   BRAND_ANALYSIS_SECTIONS,
   loadBrandAnalysisReviews,
   loadBrandAnalysisDashboardSection,
@@ -139,6 +144,8 @@ const {
   renderSalesByProjectDashboardSection,
   renderScheduledReportsPage,
   renderTable,
+  renderUnderageCompletedShiftsDashboard,
+  renderUnderageCompletedShiftsDashboardSection,
   renderUserActivityDashboard,
   renderWorkerBlacklistDetails,
   renderWorkerCancellationsDetails,
@@ -230,9 +237,11 @@ function activeNavForPath(path) {
     '/admin/preload': 'preload-admin',
     '/admin/users': 'users',
     '/dashboards/city-analysis': 'city-analysis',
+    '/dashboards/region-analysis': 'region-analysis',
     '/dashboards/heatmap': 'heatmap',
     '/dashboards/brand-analysis': 'brand-analysis',
     '/dashboards/sales-by-project': 'sales-by-project',
+    '/dashboards/underage-completed-shifts': 'underage-completed-shifts',
     '/dashboards/workplace-analysis': 'workplace-analysis',
     '/dashboards/worker-cancellations': 'worker-cancellations',
     '/reports/scheduled': 'scheduled-reports',
@@ -277,6 +286,10 @@ function activeNavForPath(path) {
 
   if (normalized.startsWith('/dashboards/sales-by-project/')) {
     return 'sales-by-project';
+  }
+
+  if (normalized.startsWith('/dashboards/underage-completed-shifts/')) {
+    return 'underage-completed-shifts';
   }
 
   if (normalized.startsWith('/dashboards/brand-analysis/')) {
@@ -652,7 +665,9 @@ function createApp({
     ? createSessionManager({
         cookieName: authConfig.sessionCookieName,
         ttlMs: authConfig.sessionTtlMs,
-        secret: authConfig.sessionSecret || undefined
+        presenceTtlMs: authConfig.presenceTtlMs,
+        secret: authConfig.sessionSecret || undefined,
+        storePath: authConfig.sessionStorePath
       })
     : null);
   const activity = authEnabled ? activityStore : null;
@@ -708,6 +723,10 @@ function createApp({
     }
 
     if (pathName === '/dashboards/sales-by-project' || pathName.startsWith('/dashboards/sales-by-project/')) {
+      return 'sales-by-project';
+    }
+
+    if (pathName === '/dashboards/underage-completed-shifts' || pathName.startsWith('/dashboards/underage-completed-shifts/')) {
       return 'sales-by-project';
     }
 
@@ -846,7 +865,8 @@ function createApp({
 
     return {
       currentUser: req.auth.user,
-      csrfToken: req.auth.session.csrfToken
+      csrfToken: req.auth.session.csrfToken,
+      presenceHeartbeatMs: authConfig.presenceHeartbeatMs || 15000
     };
   }
 
@@ -1134,6 +1154,30 @@ function createApp({
     sendJsonError(res, 403, 'Неверный CSRF-токен');
 
     return false;
+  }
+
+  function presenceRequestBody(req) {
+    if (typeof req.body === 'string') {
+      return Object.fromEntries(new URLSearchParams(req.body));
+    }
+
+    return req.body || {};
+  }
+
+  function verifyPresenceCsrf(req, res) {
+    if (!authEnabled || !sessions) {
+      sendJsonError(res, 404, 'Not found');
+      return null;
+    }
+
+    const body = presenceRequestBody(req);
+
+    if (sessions.verifyCsrf(req, String(body.csrfToken || ''))) {
+      return body;
+    }
+
+    sendJsonError(res, 403, 'Invalid CSRF token');
+    return null;
   }
 
   function permissionsFromBody(body) {
@@ -1760,6 +1804,41 @@ function createApp({
     })
   );
 
+  app.post(
+    '/presence/heartbeat',
+    requireAuth(),
+    asyncRoute(async (req, res) => {
+      const body = verifyPresenceCsrf(req, res);
+
+      if (!body) {
+        return;
+      }
+
+      if (!sessions.heartbeat(req, String(body.tabId || ''))) {
+        sendJsonError(res, 400, 'Invalid tab identifier');
+        return;
+      }
+
+      res.status(204).end();
+    })
+  );
+
+  app.post(
+    '/presence/leave',
+    express.text({ type: 'text/plain' }),
+    requireAuth(),
+    asyncRoute(async (req, res) => {
+      const body = verifyPresenceCsrf(req, res);
+
+      if (!body) {
+        return;
+      }
+
+      sessions.releaseTab(req, String(body.tabId || ''));
+      res.status(204).end();
+    })
+  );
+
   app.get(
     '/dashboards/region-analysis/cohort-funnel',
     requireAuth('city-analysis'),
@@ -2031,6 +2110,12 @@ function createApp({
           to,
           users
         });
+        const operatorStatusByUserId = sessions.operatorStatusByUserId(users);
+
+        overview.users = overview.users.map((user) => ({
+          ...user,
+          operatorStatus: operatorStatusByUserId.get(user.id) || 'unavailable'
+        }));
 
         recordCurrentUserActivity(req, 'page_view');
         res
@@ -2397,6 +2482,61 @@ function createApp({
           .status(200)
           .type('html')
           .send(renderSalesByProjectDashboardSection({ dashboard, section, ...viewContext(req) }));
+      } catch (error) {
+        const statusCode = statusCodeFromError(error);
+
+        res
+          .status(statusCode)
+          .type('html')
+          .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/underage-completed-shifts',
+    requireAuth('sales-by-project'),
+    asyncRoute(async (req, res) => {
+      const dashboard = await loadUnderageCompletedShiftsDashboardShell(client, req.query, new Date());
+
+      recordCurrentUserActivity(req, activityEventType(req));
+      res
+        .status(200)
+        .type('html')
+        .send(renderUnderageCompletedShiftsDashboard({ database, dashboard, progressive: true, ...viewContext(req) }));
+    })
+  );
+
+  app.get(
+    '/dashboards/underage-completed-shifts/section',
+    requireAuth('sales-by-project'),
+    asyncRoute(async (req, res) => {
+      const section = String(req.query.section || '');
+
+      if (!UNDERAGE_COMPLETED_SHIFTS_SECTIONS.has(section)) {
+        sendError(
+          res,
+          400,
+          'Bad Request',
+          `Unknown underage completed shifts section: ${section}`,
+          'underage-completed-shifts',
+          viewContext(req)
+        );
+        return;
+      }
+
+      try {
+        const dashboard = await loadUnderageCompletedShiftsDashboardSection(
+          client,
+          req.query,
+          section,
+          new Date()
+        );
+
+        res
+          .status(200)
+          .type('html')
+          .send(renderUnderageCompletedShiftsDashboardSection({ dashboard, section, ...viewContext(req) }));
       } catch (error) {
         const statusCode = statusCodeFromError(error);
 

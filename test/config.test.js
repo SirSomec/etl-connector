@@ -11,6 +11,7 @@ function baseEnv(overrides = {}) {
     CLICKHOUSE_PASSWORD: 'secret',
     AUTH_ADMIN_EMAIL: 'admin@example.test',
     AUTH_ADMIN_PASSWORD: 'AdminPass123',
+    AUTH_SESSION_SECRET: 'session-secret',
     ...overrides
   };
 }
@@ -37,6 +38,7 @@ test('loadConfig returns required values and safe defaults', () => {
   assert.equal(config.auth.adminEmail, 'admin@example.test');
   assert.equal(config.auth.adminPassword, 'AdminPass123');
   assert.match(config.auth.userStorePath, /data[\\/]users\.json$/);
+  assert.match(config.auth.sessionStorePath, /data[\\/]sessions\.json$/);
   assert.equal(
     config.preload.storePath,
     path.join(process.cwd(), 'data', 'preload.sqlite')
@@ -47,7 +49,9 @@ test('loadConfig returns required values and safe defaults', () => {
     path.join(process.cwd(), 'data', 'request-report-shift-statuses.json')
   );
   assert.equal(config.auth.sessionCookieName, 'etl_analytics_session');
-  assert.equal(config.auth.sessionTtlMs, 12 * 60 * 60 * 1000);
+  assert.equal(config.auth.sessionTtlMs, 48 * 60 * 60 * 1000);
+  assert.equal(config.auth.presenceHeartbeatMs, 15000);
+  assert.equal(config.auth.presenceTtlMs, 45000);
 });
 
 test('scheduled report config uses safe defaults', () => {
@@ -92,14 +96,9 @@ test('loadConfig accepts preload store path override', () => {
 });
 
 test('loadConfig includes user activity store path', () => {
-  const config = loadConfig({
-    CLICKHOUSE_HOST: 'clickhouse.example.test',
-    CLICKHOUSE_USER: 'rouser',
-    CLICKHOUSE_PASSWORD: 'secret',
-    AUTH_ADMIN_EMAIL: 'admin@example.test',
-    AUTH_ADMIN_PASSWORD: 'AdminPass123',
+  const config = loadConfig(baseEnv({
     USER_ACTIVITY_STORE_PATH: 'C:\\activity\\user-activity.sqlite'
-  });
+  }));
 
   assert.equal(config.activity.storePath, 'C:\\activity\\user-activity.sqlite');
 });
@@ -113,13 +112,7 @@ test('loadConfig includes request report status store path override', () => {
 });
 
 test('loadConfig defaults user activity store to data directory', () => {
-  const config = loadConfig({
-    CLICKHOUSE_HOST: 'clickhouse.example.test',
-    CLICKHOUSE_USER: 'rouser',
-    CLICKHOUSE_PASSWORD: 'secret',
-    AUTH_ADMIN_EMAIL: 'admin@example.test',
-    AUTH_ADMIN_PASSWORD: 'AdminPass123'
-  });
+  const config = loadConfig(baseEnv());
 
   assert.match(config.activity.storePath, /data[\\/]user-activity\.sqlite$/);
 });
@@ -133,7 +126,7 @@ test('loadConfig reports every missing required variable', () => {
         assert.match(error.message, /CLICKHOUSE_USER/);
         assert.match(error.message, /CLICKHOUSE_PASSWORD/);
         assert.match(error.message, /AUTH_ADMIN_EMAIL/);
-        assert.match(error.message, /AUTH_ADMIN_PASSWORD/);
+      assert.match(error.message, /AUTH_ADMIN_PASSWORD/);
         return true;
       }
   );
@@ -155,7 +148,7 @@ test('loadConfig rejects blank required variables', () => {
       assert.match(error.message, /CLICKHOUSE_USER/);
       assert.match(error.message, /CLICKHOUSE_PASSWORD/);
       assert.match(error.message, /AUTH_ADMIN_EMAIL/);
-      assert.match(error.message, /AUTH_ADMIN_PASSWORD/);
+        assert.match(error.message, /AUTH_ADMIN_PASSWORD/);
       return true;
     }
   );
@@ -211,13 +204,29 @@ test('loadConfig can disable auth for isolated tests', () => {
 test('loadConfig accepts auth overrides', () => {
   const config = loadConfig(baseEnv({
     AUTH_USER_STORE_PATH: 'C:\\auth\\users.json',
+    AUTH_SESSION_STORE_PATH: 'C:\\auth\\sessions.json',
     AUTH_SESSION_SECRET: 'session-secret',
     AUTH_SESSION_COOKIE_NAME: 'custom_session',
-    AUTH_SESSION_TTL_MS: '600000'
+    AUTH_SESSION_TTL_MS: '600000',
+    AUTH_PRESENCE_HEARTBEAT_MS: '10000',
+    AUTH_PRESENCE_TTL_MS: '30000'
   }));
 
   assert.equal(config.auth.userStorePath, 'C:\\auth\\users.json');
+  assert.equal(config.auth.sessionStorePath, 'C:\\auth\\sessions.json');
   assert.equal(config.auth.sessionSecret, 'session-secret');
   assert.equal(config.auth.sessionCookieName, 'custom_session');
   assert.equal(config.auth.sessionTtlMs, 600000);
+  assert.equal(config.auth.presenceHeartbeatMs, 10000);
+  assert.equal(config.auth.presenceTtlMs, 30000);
+});
+
+test('loadConfig rejects presence timeout shorter than two heartbeats', () => {
+  assert.throws(
+    () => loadConfig(baseEnv({
+      AUTH_PRESENCE_HEARTBEAT_MS: '15000',
+      AUTH_PRESENCE_TTL_MS: '20000'
+    })),
+    /AUTH_PRESENCE_TTL_MS must be at least twice AUTH_PRESENCE_HEARTBEAT_MS/
+  );
 });

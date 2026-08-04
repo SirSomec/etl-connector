@@ -293,6 +293,7 @@ ORDER BY occurred_at DESC, id DESC
         email: normalizeEmail(user.email),
         name: normalizeText(user.name),
         role: normalizeText(user.role),
+        operatorStatus: normalizeText(user.operatorStatus) || 'online',
         source: normalizeText(user.source),
         createdAt: normalizeText(user.createdAt)
       };
@@ -314,6 +315,7 @@ ORDER BY occurred_at DESC, id DESC
           email: event.email,
           name: '',
           role: event.role,
+          operatorStatus: 'online',
           source: 'event',
           createdAt: ''
         };
@@ -378,6 +380,7 @@ ORDER BY occurred_at DESC, id DESC
           email: user.email,
           name: user.name,
           role: user.role,
+          operatorStatus: user.operatorStatus,
           source: user.source,
           createdAt: user.createdAt,
           status: activityStatus({ lastEventAt, workDays14, activeDays30 }),

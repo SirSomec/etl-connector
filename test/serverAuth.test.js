@@ -180,7 +180,8 @@ async function withAuthServer(callback, overrides = {}) {
     await callback({
       baseUrl: `http://127.0.0.1:${port}`,
       client,
-      userStore
+      userStore,
+      sessionManager
     });
   } finally {
     await closeServer(server);
@@ -284,6 +285,77 @@ test('auth redirects anonymous users to login and allows env admin login', async
     assert.match(home.text, /admin@example.test/);
     assert.match(home.text, /href="\/admin\/users"/);
     assert.deepEqual(client.calls, [['listTables']]);
+  });
+});
+
+test('presence endpoints require CSRF and clear availability after the last tab leaves', async () => {
+  await withAuthServer(async ({ baseUrl, sessionManager }) => {
+    const loginResponse = await login(baseUrl, 'admin@example.test', 'EnvAdminPass123');
+    const cookie = cookieFrom(loginResponse);
+    const home = await fetchText(baseUrl, '/', { headers: { cookie } });
+    const csrfToken = csrfFrom(home.text);
+    const firstTabId = 'tab-first-1234567890';
+    const secondTabId = 'tab-second-123456789';
+
+    const rejected = await fetchText(baseUrl, '/presence/heartbeat', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({ csrfToken: 'bad-token', tabId: firstTabId })
+    });
+
+    assert.equal(rejected.response.status, 403);
+
+    const firstHeartbeat = await fetchText(baseUrl, '/presence/heartbeat', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({ csrfToken, tabId: firstTabId })
+    });
+    const secondHeartbeat = await fetchText(baseUrl, '/presence/heartbeat', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded'
+      },
+      body: formBody({ csrfToken, tabId: secondTabId })
+    });
+
+    assert.equal(firstHeartbeat.response.status, 204);
+    assert.equal(secondHeartbeat.response.status, 204);
+    const onlineUser = { id: 'env-admin', operatorStatus: 'online' };
+    const manualStatusUser = { id: 'env-admin', operatorStatus: 'break' };
+
+    assert.equal(sessionManager.operatorStatusByUserId([onlineUser]).get('env-admin'), 'online');
+
+    const firstLeave = await fetchText(baseUrl, '/presence/leave', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'text/plain'
+      },
+      body: formBody({ csrfToken, tabId: firstTabId })
+    });
+
+    assert.equal(firstLeave.response.status, 204);
+    assert.equal(sessionManager.operatorStatusByUserId([onlineUser]).get('env-admin'), 'online');
+
+    const secondLeave = await fetchText(baseUrl, '/presence/leave', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'text/plain'
+      },
+      body: formBody({ csrfToken, tabId: secondTabId })
+    });
+
+    assert.equal(secondLeave.response.status, 204);
+    assert.equal(sessionManager.operatorStatusByUserId([onlineUser]).get('env-admin'), 'unavailable');
+    assert.equal(sessionManager.operatorStatusByUserId([manualStatusUser]).get('env-admin'), 'break');
   });
 });
 

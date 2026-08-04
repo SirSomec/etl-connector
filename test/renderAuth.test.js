@@ -5,7 +5,8 @@ const {
   renderAccountManagement,
   renderHome,
   renderLogin,
-  renderPasswordChange
+  renderPasswordChange,
+  renderUserActivityDashboard
 } = require('../src/render');
 
 test('renderLogin escapes values and keeps return path local', () => {
@@ -154,6 +155,38 @@ test('layout shows password change link only for managed users', () => {
 
   assert.match(managedHtml, /href="\/account\/password"/);
   assert.doesNotMatch(envHtml, /href="\/account\/password"/);
+});
+
+test('activity dashboard renders operator availability and presence heartbeat', () => {
+  const html = renderUserActivityDashboard({
+    database: 'etl',
+    currentUser: {
+      id: 'env-admin',
+      email: 'admin@example.test',
+      role: 'admin',
+      permissions: []
+    },
+    csrfToken: 'csrf-token',
+    overview: {
+      from: '2026-06-01',
+      to: '2026-06-02',
+      users: [{
+        id: 'user-1',
+        email: 'operator@example.test',
+        role: 'analyst',
+        status: 'active',
+        operatorStatus: 'unavailable',
+        days: [],
+        recentEvents: []
+      }]
+    }
+  });
+
+  assert.match(html, /недоступен/);
+  assert.match(html, /data-availability="unavailable"/);
+  assert.match(html, /\/presence\/heartbeat/);
+  assert.match(html, /\/presence\/leave/);
+  assert.match(html, /data-activity-dashboard/);
 });
 
 test('navigation shows scheduled reports based on report permissions and hides SMTP from analysts', () => {

@@ -74,11 +74,16 @@ AUTH_ENABLED=true
 AUTH_ADMIN_EMAIL=admin@example.com
 AUTH_ADMIN_PASSWORD=change-me
 AUTH_USER_STORE_PATH=./data/users.json
+AUTH_SESSION_STORE_PATH=./data/sessions.json
 AUTH_SESSION_SECRET=change-me-session-secret
 AUTH_SESSION_COOKIE_NAME=etl_analytics_session
-AUTH_SESSION_TTL_MS=43200000
+AUTH_SESSION_TTL_MS=172800000
+AUTH_PRESENCE_HEARTBEAT_MS=15000
+AUTH_PRESENCE_TTL_MS=45000
 PORT=3000
 ```
+
+Сессии действуют 48 часов. Они сохраняются в `AUTH_SESSION_STORE_PATH` (по умолчанию `./data/sessions.json`), поэтому перезапуск или обновление сервера не требует повторного входа до истечения срока сессии. При заданном `AUTH_SESSION_SECRET` не изменяйте его при обновлении; если переменная не задана, сервис создаёт постоянный ключ рядом с хранилищем сессий. Каталог `./data` должен оставаться подключённым к контейнеру и быть доступен для записи пользователю `node`.
 
 Реальный пароль задавайте только в локальном `.env` или в окружении деплоя. Не коммитьте `.env`.
 

@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   ALL_PERMISSION_IDS,
+  authSessionStorePathFromEnv,
   authUserStorePathFromEnv,
   createPasswordHash,
   createSessionManager,
@@ -369,6 +370,7 @@ test('session manager signs cookies, verifies csrf tokens, and expires sessions'
 
   assert.match(session.cookieHeader, /^test_session=/);
   assert.match(session.cookieHeader, /HttpOnly/);
+  assert.match(session.cookieHeader, /Max-Age=1/);
   assert.equal(sessions.getSession(req).email, 'user@example.test');
   assert.equal(sessions.verifyCsrf(req, session.csrfToken), true);
   assert.equal(sessions.verifyCsrf(req, 'wrong-token'), false);
@@ -378,10 +380,99 @@ test('session manager signs cookies, verifies csrf tokens, and expires sessions'
   assert.equal(sessions.getSession(req), null);
 });
 
+test('session manager restores active sessions after restart from runtime store', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'auth-session-store-test-'));
+  tempStoreDirs.push(tempDir);
+  const storePath = path.join(tempDir, 'sessions.json');
+  const now = Date.parse('2026-06-02T10:00:00.000Z');
+  const firstManager = createSessionManager({
+    cookieName: 'test_session',
+    ttlMs: 48 * 60 * 60 * 1000,
+    storePath,
+    now: () => now
+  });
+  const created = firstManager.createSession({ id: 'user-1', email: 'user@example.test' });
+  const req = {
+    headers: {
+      cookie: created.cookieHeader.split(';')[0]
+    }
+  };
+  const restartedManager = createSessionManager({
+    cookieName: 'test_session',
+    ttlMs: 48 * 60 * 60 * 1000,
+    storePath,
+    now: () => now
+  });
+
+  assert.match(created.cookieHeader, /Max-Age=172800/);
+  assert.equal(restartedManager.getSession(req).email, 'user@example.test');
+  assert.equal(restartedManager.verifyCsrf(req, created.csrfToken), true);
+
+  restartedManager.destroySession(req);
+  const afterLogoutManager = createSessionManager({
+    cookieName: 'test_session',
+    storePath,
+    now: () => now
+  });
+
+  assert.equal(afterLogoutManager.getSession(req), null);
+});
+
+test('session manager changes only online users to unavailable after the last tab is closed', () => {
+  let now = Date.parse('2026-06-02T10:00:00.000Z');
+  const sessions = createSessionManager({
+    cookieName: 'test_session',
+    ttlMs: 60 * 60 * 1000,
+    presenceTtlMs: 45000,
+    secret: 'session-secret',
+    now: () => now
+  });
+  const session = sessions.createSession({ id: 'user-1', email: 'user@example.test' });
+  const req = {
+    headers: {
+      cookie: session.cookieHeader.split(';')[0]
+    }
+  };
+  const firstTabId = 'tab-first-1234567890';
+  const secondTabId = 'tab-second-123456789';
+
+  const onlineUser = { id: 'user-1', operatorStatus: 'онлайн' };
+  const awayUser = { id: 'user-1', operatorStatus: 'break' };
+
+  assert.equal(sessions.operatorStatusByUserId([onlineUser]).get('user-1'), 'unavailable');
+  assert.equal(sessions.heartbeat(req, firstTabId), true);
+  assert.equal(sessions.operatorStatusByUserId([onlineUser]).get('user-1'), 'online');
+
+  assert.equal(sessions.heartbeat(req, secondTabId), true);
+  assert.equal(sessions.releaseTab(req, firstTabId), true);
+  assert.equal(sessions.operatorStatusByUserId([onlineUser]).get('user-1'), 'online');
+
+  assert.equal(sessions.releaseTab(req, secondTabId), true);
+  assert.equal(sessions.operatorStatusByUserId([onlineUser]).get('user-1'), 'unavailable');
+
+  assert.equal(sessions.operatorStatusByUserId([awayUser]).get('user-1'), 'break');
+
+  sessions.heartbeat(req, firstTabId);
+  now += 45001;
+  assert.equal(sessions.operatorStatusByUserId([onlineUser]).get('user-1'), 'unavailable');
+
+  sessions.heartbeat(req, firstTabId);
+  sessions.destroySession(req);
+  assert.equal(sessions.operatorStatusByUserId([onlineUser]).get('user-1'), 'unavailable');
+});
+
 test('authUserStorePathFromEnv supports env override and data default', () => {
   assert.equal(
     authUserStorePathFromEnv({ AUTH_USER_STORE_PATH: 'C:\\auth\\users.json' }),
     'C:\\auth\\users.json'
   );
   assert.match(authUserStorePathFromEnv({}), /data[\\/]users\.json$/);
+});
+
+test('authSessionStorePathFromEnv supports env override and data default', () => {
+  assert.equal(
+    authSessionStorePathFromEnv({ AUTH_SESSION_STORE_PATH: 'C:\\auth\\sessions.json' }),
+    'C:\\auth\\sessions.json'
+  );
+  assert.match(authSessionStorePathFromEnv({}), /data[\\/]sessions\.json$/);
 });

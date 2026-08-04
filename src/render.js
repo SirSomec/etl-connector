@@ -39,6 +39,12 @@ const NAV_LINKS = [
     permission: 'sales-by-project'
   },
   {
+    href: '/dashboards/underage-completed-shifts',
+    label: 'Смены до 18 лет',
+    id: 'underage-completed-shifts',
+    permission: 'sales-by-project'
+  },
+  {
     href: '/dashboards/brand-analysis',
     label: 'Анализ брендов',
     id: 'brand-analysis',
@@ -296,6 +302,7 @@ function layout({
   activeNav = 'tables',
   currentUser,
   csrfToken = '',
+  presenceHeartbeatMs = 15000,
   showNav = true
 }) {
   const navLinks = navLinksForUser(currentUser);
@@ -1013,6 +1020,24 @@ function layout({
       font-weight: 700;
       text-align: center;
       overflow-wrap: anywhere;
+    }
+
+    .activity-statuses {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .activity-pill[data-availability="online"] {
+      border-color: #78b58d;
+      background: #e7f6eb;
+      color: #1f6b37;
+    }
+
+    .activity-pill[data-availability="unavailable"] {
+      border-color: #d2d9e2;
+      background: #eef2f6;
+      color: #5f6b7a;
     }
 
     .activity-metric {
@@ -2349,6 +2374,42 @@ function layout({
       width: 100%;
       min-width: 640px;
       height: auto;
+    }
+
+    .underage-shifts-chart-scroll {
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .underage-shifts-chart {
+      display: block;
+      min-width: 760px;
+      width: 100%;
+      color: #0f766e;
+    }
+
+    .underage-shifts-grid-line {
+      stroke: #d7e0e2;
+      stroke-width: 1;
+    }
+
+    .underage-shifts-axis-label {
+      fill: #5b6770;
+      font-size: 11px;
+    }
+
+    .underage-shifts-line {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .underage-shifts-point circle {
+      fill: #fff;
+      stroke: currentColor;
+      stroke-width: 2;
     }
 
     .city-line-grid {
@@ -3807,6 +3868,7 @@ function layout({
       <main>${content}</main>
     </div>
   </div>
+  ${currentUser && csrfToken ? renderPresenceScript({ csrfToken, presenceHeartbeatMs }) : ''}
   ${content.includes('data-multi-filter') ? renderMultiFilterScript() : ''}
   ${content.includes('data-workplace-suggest-url') ? renderWorkplaceSuggestScript() : ''}
   ${
@@ -3839,8 +3901,78 @@ function layout({
       : ''
   }
   ${content.includes('data-sql-inspector-modal') || canViewSqlInspector(currentUser) ? renderSqlInspectorScript() : ''}
+  ${content.includes('data-activity-dashboard') && currentUser ? renderActivityRefreshScript() : ''}
 </body>
 </html>`;
+}
+
+function renderSafeScriptValue(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+function renderPresenceScript({ csrfToken, presenceHeartbeatMs }) {
+  const heartbeatMs = Math.max(1000, Number(presenceHeartbeatMs) || 15000);
+
+  return `<script>
+(function () {
+  var csrfToken = ${renderSafeScriptValue(String(csrfToken || ''))};
+  var tabId = window.crypto && typeof window.crypto.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+
+  function body() {
+    return new URLSearchParams({ csrfToken: csrfToken, tabId: tabId });
+  }
+
+  function heartbeat() {
+    fetch('/presence/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: body().toString(),
+      credentials: 'same-origin'
+    }).catch(function () {});
+  }
+
+  function leave() {
+    var payload = body().toString();
+
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/presence/leave', new Blob([payload], { type: 'text/plain' }));
+      return;
+    }
+
+    fetch('/presence/leave', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: payload,
+      credentials: 'same-origin',
+      keepalive: true
+    }).catch(function () {});
+  }
+
+  heartbeat();
+  window.setInterval(heartbeat, ${heartbeatMs});
+  window.addEventListener('pagehide', leave);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') heartbeat();
+  });
+})();
+</script>`;
+}
+
+function renderActivityRefreshScript() {
+  return `<script>
+(function () {
+  window.setTimeout(function () {
+    window.location.reload();
+  }, 15000);
+})();
+</script>`;
 }
 
 function renderBrandTrendChartsScript() {
@@ -7283,6 +7415,11 @@ const ACTIVITY_STATUS_LABELS = {
   new: 'новый'
 };
 
+const AVAILABILITY_LABELS = {
+  online: 'онлайн',
+  unavailable: 'недоступен'
+};
+
 function normalizeActivityLevel(level) {
   const text = String(level || 'none');
 
@@ -7299,6 +7436,12 @@ function activityStatusLabel(status) {
   const text = String(status || '');
 
   return ACTIVITY_STATUS_LABELS[text] || text || '-';
+}
+
+function operatorStatusLabel(status) {
+  const text = String(status || 'unavailable');
+
+  return AVAILABILITY_LABELS[text] || text;
 }
 
 function renderActivityLegend() {
@@ -7360,7 +7503,10 @@ function renderActivityUserRow(user) {
   <summary class="activity-user-summary">
     <div class="activity-user-name">${escapeHtml(title)}${emailHtml}</div>
     <span class="activity-pill">${escapeHtml(safeUser.role || '-')}</span>
-    <span class="activity-pill">${escapeHtml(activityStatusLabel(safeUser.status))}</span>
+    <div class="activity-statuses">
+      <span class="activity-pill" data-availability="${escapeHtml(safeUser.operatorStatus || 'unavailable')}">${escapeHtml(operatorStatusLabel(safeUser.operatorStatus))}</span>
+      <span class="activity-pill">${escapeHtml(activityStatusLabel(safeUser.status))}</span>
+    </div>
     ${renderActivityDayStrip(safeUser.days)}
     <div class="activity-metric"><strong>${escapeHtml(safeUser.lastEventAt || '-')}</strong>последнее действие</div>
     <div class="activity-metric"><strong>${escapeHtml(safeUser.activeDays30 || 0)}</strong>активных дней за 30</div>
@@ -7396,7 +7542,7 @@ function renderUserActivityDashboard({
     <p>Экран доступен без данных, потому что активность пользователей собирается только при включенной авторизации и подключенном store.</p>
   </div>
 </section>`
-    : `<section class="section">
+    : `<section class="section" data-activity-dashboard>
   <div class="activity-users">${users.map(renderActivityUserRow).join('') || '<p class="empty">Нет данных активности.</p>'}</div>
 </section>`;
   const content = `<section class="section">
@@ -8144,6 +8290,144 @@ ${resultsHtml}`;
     database,
     content: fullContent,
     activeNav: 'sales-by-project',
+    currentUser,
+    csrfToken
+  });
+}
+
+function underageCompletedShiftValue(row) {
+  const value = Number(row && row.completedShifts);
+
+  return Number.isFinite(value) ? value : 0;
+}
+
+function renderUnderageCompletedShiftsChart(rows, currentUser) {
+  const trendRows = safeRows(rows);
+
+  if (trendRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const width = Math.max(760, 68 + trendRows.length * 34);
+  const height = 270;
+  const left = 52;
+  const right = 18;
+  const top = 20;
+  const bottom = 38;
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
+  const maxValue = Math.max(...trendRows.map(underageCompletedShiftValue), 1);
+  const point = (row, index) => {
+    const x = trendRows.length === 1
+      ? left + chartWidth / 2
+      : left + (chartWidth * index) / (trendRows.length - 1);
+    const y = top + ((maxValue - underageCompletedShiftValue(row)) / maxValue) * chartHeight;
+
+    return { x, y };
+  };
+  const points = trendRows
+    .map((row, index) => {
+      const current = point(row, index);
+
+      return `${current.x.toFixed(2)},${current.y.toFixed(2)}`;
+    })
+    .join(' ');
+  const gridLines = Array.from({ length: 5 }, (_, index) => {
+    const value = Math.round((maxValue * (4 - index)) / 4);
+    const y = top + (chartHeight * index) / 4;
+
+    return `<g>
+  <line class="underage-shifts-grid-line" x1="${left}" y1="${y.toFixed(2)}" x2="${width - right}" y2="${y.toFixed(2)}"></line>
+  <text class="underage-shifts-axis-label" x="${left - 8}" y="${(y + 4).toFixed(2)}" text-anchor="end">${escapeHtml(formatNumber(value, 0))}</text>
+</g>`;
+  }).join('');
+  const markers = trendRows.map((row, index) => {
+    const current = point(row, index);
+    const week = String(row.week || '');
+    const label = week.slice(5);
+
+    return `<g class="underage-shifts-point">
+  <title>${escapeHtml(`${week}: ${formatNumber(underageCompletedShiftValue(row), 0)} смен`)}</title>
+  <circle cx="${current.x.toFixed(2)}" cy="${current.y.toFixed(2)}" r="3.5"></circle>
+  <text class="underage-shifts-axis-label" x="${current.x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escapeHtml(label)}</text>
+</g>`;
+  }).join('');
+
+  return renderMetricInfoScope({
+    tag: 'div',
+    className: 'underage-shifts-chart-scroll',
+    metricId: 'underage-completed-shifts.trend.chart',
+    currentUser,
+    content: `<svg class="underage-shifts-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Недельная динамика завершенных смен исполнителей младше 18 лет">
+  ${gridLines}
+  <polyline class="underage-shifts-line" points="${escapeHtml(points)}"></polyline>
+  ${markers}
+</svg>`
+  });
+}
+
+function renderUnderageCompletedShiftsTable(rows, currentUser) {
+  const trendRows = safeRows(rows);
+
+  if (trendRows.length === 0) {
+    return renderEmptyDashboardTable();
+  }
+
+  const bodyRows = trendRows
+    .map((row) => `<tr>
+  <td>${escapeHtml(row.week)}</td>
+  ${numberCell(underageCompletedShiftValue(row), 0, 'underage-completed-shifts.trend.completed-shifts', currentUser)}
+</tr>`)
+    .join('');
+
+  return `<div class="table-wrap"><table>
+  <thead><tr><th>Неделя с</th><th>Завершенные смены</th></tr></thead>
+  <tbody>${bodyRows}</tbody>
+</table></div>`;
+}
+
+function renderUnderageCompletedShiftsDashboardSection({ dashboard, section, currentUser }) {
+  if (section !== 'trend') {
+    return `<section class="section"><div class="error">Неизвестный блок дашборда.</div></section>`;
+  }
+
+  return `<section class="section">
+  ${renderMetricPanelHead('Динамика по неделям', 'underage-completed-shifts.trend', currentUser)}
+  ${renderUnderageCompletedShiftsChart(dashboard.trendRows, currentUser)}
+  ${renderUnderageCompletedShiftsTable(dashboard.trendRows, currentUser)}
+</section>`;
+}
+
+function renderUnderageCompletedShiftsDashboard({
+  database,
+  dashboard,
+  progressive = false,
+  currentUser,
+  csrfToken
+}) {
+  const sectionUrl = '/dashboards/underage-completed-shifts/section?section=trend';
+  const content = progressive
+    ? `<section class="section">
+  <h1>Завершенные смены исполнителей младше 18 лет</h1>
+  <p class="technical-note">С начала ${escapeHtml(dashboard.filters.from.slice(0, 4))} года. Возраст рассчитывается на дату смены; исполнители, которым уже исполнилось 18 лет, исключены.</p>
+</section>
+<div data-dashboard-fragment-url="${sectionUrl}">
+  <section class="section">
+    <h2>Динамика по неделям</h2>
+    <p class="loading">Загружается</p>
+  </section>
+</div>`
+    : `<section class="section">
+  <h1>Завершенные смены исполнителей младше 18 лет</h1>
+  <p class="technical-note">С начала ${escapeHtml(dashboard.filters.from.slice(0, 4))} года. Возраст рассчитывается на дату смены; исполнители, которым уже исполнилось 18 лет, исключены.</p>
+</section>
+${renderUnderageCompletedShiftsDashboardSection({ dashboard, section: 'trend', currentUser })}`;
+
+  return layout({
+    title: 'Смены исполнителей младше 18 лет',
+    database,
+    content,
+    activeNav: 'underage-completed-shifts',
     currentUser,
     csrfToken
   });
@@ -13802,6 +14086,8 @@ module.exports = {
   renderSalesByProjectDashboardSection,
   renderScheduledReportsPage,
   renderTable,
+  renderUnderageCompletedShiftsDashboard,
+  renderUnderageCompletedShiftsDashboardSection,
   renderUserActivityDashboard,
   renderWorkerBlacklistDetails,
   renderWorkerCancellationsDetails,

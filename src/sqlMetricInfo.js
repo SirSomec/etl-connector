@@ -1910,6 +1910,40 @@ ORDER BY density_per_km2 DESC, active_users DESC, lat DESC, lon ASC
 LIMIT 3000
 FORMAT JSONEachRow`;
 
+const UNDERAGE_COMPLETED_SHIFTS_SQL = `WITH workers_with_birthdays AS (
+  SELECT
+    w._id AS worker_id,
+    toDateOrNull(nullIf(trimBoth(u.birthday), '')) AS birthday
+  FROM mg_workers AS w
+  INNER JOIN mg_users AS u ON u._id = w.user
+  WHERE toDateOrNull(nullIf(trimBoth(u.birthday), '')) IS NOT NULL
+)
+SELECT
+  toMonday(j.start) AS week,
+  uniqExact(j._id) AS completed_shifts
+FROM mg_jobs AS j
+INNER JOIN workers_with_birthdays AS wb ON wb.worker_id = j.worker
+WHERE ifNull(j._id, '') != ''
+  AND ifNull(j.deleted, 0) = 0
+  AND j.start >= {from:DateTime}
+  AND j.start < {to:DateTime}
+  AND wb.birthday <= toDate(j.start)
+  AND addYears(wb.birthday, 18) > toDate(j.start)
+  AND ${successfulConfirmedShiftCondition('j')}
+GROUP BY week
+ORDER BY week
+FORMAT JSONEachRow`;
+
+defineMetricSet({
+  baseId: 'underage-completed-shifts.trend',
+  sql: UNDERAGE_COMPLETED_SHIFTS_SQL,
+  metrics: [
+    { id: 'underage-completed-shifts.trend', title: 'Смены исполнителей младше 18 лет', description: 'Показывает недельную динамику успешно завершенных смен исполнителей, которым на дату смены еще не исполнилось 18 лет.' },
+    { suffix: 'completed-shifts', title: 'Смены до 18 лет: завершенные', description: 'Количество уникальных успешно подтвержденных смен за неделю у исполнителей младше 18 лет на дату смены.' },
+    { suffix: 'chart', title: 'Смены до 18 лет: график', description: 'Линейный график строится по недельным значениям завершенных смен исполнителей младше 18 лет.' }
+  ]
+});
+
 defineMetricSet({
   baseId: 'sales-by-project.summary',
   sql: SALES_DOMAIN_SUMMARY_SQL,

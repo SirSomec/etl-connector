@@ -3,10 +3,12 @@
 Папка содержит отдельное описание каждого аналитического экрана сервиса:
 
 - [Продажи по проектам](sales-by-project.md)
+- [Смены исполнителей младше 18 лет](underage-completed-shifts.md)
 - [Анализ брендов](brand-analysis.md)
 - [Анализ точек](workplace-analysis.md)
 - [Карточка точки и детализация дня](workplace-point.md)
 - [Анализ городов](city-analysis.md)
+- [Анализ регионов](region-analysis.md)
 - [Тепловая карта](heatmap.md)
 - [Отмены гигерами](worker-cancellations.md)
 

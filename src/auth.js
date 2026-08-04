@@ -1,14 +1,16 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 const { promisify } = require('node:util');
 
-const { writeFileAtomically } = require('./atomicFile');
+const { writeFileAtomically, writeFileAtomicallySync } = require('./atomicFile');
 
 const pbkdf2 = promisify(crypto.pbkdf2);
 
 const USER_STORE_VERSION = 1;
 const DEFAULT_USER_STORE_PATH = path.join(process.cwd(), 'data', 'users.json');
+const DEFAULT_SESSION_STORE_PATH = path.join(process.cwd(), 'data', 'sessions.json');
 const DEFAULT_PASSWORD_HASH_ITERATIONS = 210000;
 const MIN_PASSWORD_LENGTH = 12;
 const PASSWORD_HASH_ALGORITHM = 'pbkdf2-sha256';
@@ -123,6 +125,20 @@ function normalizeRole(role) {
   return role === 'admin' ? 'admin' : 'analyst';
 }
 
+function authSessionStorePathFromEnv(env = process.env) {
+  return env.AUTH_SESSION_STORE_PATH || DEFAULT_SESSION_STORE_PATH;
+}
+
+function normalizeOperatorStatus(status) {
+  const value = String(status || '').trim();
+
+  if (value === '' || ['online', 'онлайн'].includes(value.toLowerCase())) {
+    return 'online';
+  }
+
+  return value;
+}
+
 function valuesAsArray(value) {
   if (Array.isArray(value)) {
     return value;
@@ -157,6 +173,7 @@ function toPublicUser(user) {
     email: user.email,
     name: user.name || '',
     role: user.role,
+    operatorStatus: normalizeOperatorStatus(user.operatorStatus),
     permissions: normalizePermissions(user.role, user.permissions),
     source,
     createdAt: user.createdAt || '',
@@ -310,6 +327,7 @@ function envAdminUser({ adminEmail, now = () => new Date() }) {
     email: normalizeEmail(adminEmail),
     name: 'Администратор из ENV',
     role: 'admin',
+    operatorStatus: 'online',
     permissions: [...ALL_PERMISSION_IDS],
     source: 'env',
     createdAt: timestamp,
@@ -432,6 +450,7 @@ function createUserStore(options = {}) {
         email,
         name: String((input && input.name) || '').trim(),
         role,
+        operatorStatus: normalizeOperatorStatus(input && input.operatorStatus),
         permissions: normalizePermissions(role, input && input.permissions),
         passwordHash: await createPasswordHash(password, passwordHashOptions),
         mustChangePassword: true,
@@ -573,15 +592,133 @@ function parseCookies(cookieHeader) {
 function createSessionManager(options = {}) {
   const {
     cookieName = 'etl_analytics_session',
-    ttlMs = 12 * 60 * 60 * 1000,
-    secret = crypto.randomBytes(32).toString('base64url'),
+    ttlMs = 48 * 60 * 60 * 1000,
+    presenceTtlMs = 45 * 1000,
+    secret = '',
+    storePath = null,
     now = () => Date.now()
   } = options;
+  const sessionSecretPath = storePath ? `${storePath}.secret` : '';
+  let resolvedSecret = String(secret || '').trim();
+
+  if (!resolvedSecret && sessionSecretPath) {
+    try {
+      resolvedSecret = fsSync.readFileSync(sessionSecretPath, 'utf8').trim();
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    if (!resolvedSecret) {
+      resolvedSecret = crypto.randomBytes(32).toString('base64url');
+      writeFileAtomicallySync(sessionSecretPath, `${resolvedSecret}\n`);
+    }
+  }
+
+  if (!resolvedSecret) {
+    resolvedSecret = crypto.randomBytes(32).toString('base64url');
+  }
   const sessions = new Map();
+
+  function validStoredSession(value) {
+    return value &&
+      typeof value === 'object' &&
+      typeof value.key === 'string' && value.key !== '' &&
+      typeof value.userId === 'string' && value.userId !== '' &&
+      typeof value.email === 'string' && value.email !== '' &&
+      typeof value.csrfToken === 'string' && value.csrfToken !== '' &&
+      Number.isFinite(value.expiresAt);
+  }
+
+  function persistSessions() {
+    if (!storePath) {
+      return;
+    }
+
+    const storedSessions = [];
+
+    for (const [key, session] of sessions) {
+      if (session.expiresAt > now()) {
+        storedSessions.push({
+          key,
+          userId: session.userId,
+          email: session.email,
+          expiresAt: session.expiresAt,
+          csrfToken: session.csrfToken
+        });
+      }
+    }
+
+    writeFileAtomicallySync(storePath, `${JSON.stringify({ version: 1, sessions: storedSessions }, null, 2)}\n`);
+  }
+
+  function restoreSessions() {
+    if (!storePath) {
+      return;
+    }
+
+    try {
+      const stored = JSON.parse(fsSync.readFileSync(storePath, 'utf8'));
+      const entries = stored && stored.version === 1 && Array.isArray(stored.sessions)
+        ? stored.sessions
+        : [];
+
+      for (const entry of entries) {
+        if (validStoredSession(entry) && entry.expiresAt > now()) {
+          sessions.set(entry.key, {
+            userId: entry.userId,
+            email: entry.email,
+            expiresAt: entry.expiresAt,
+            csrfToken: entry.csrfToken,
+            tabs: new Map()
+          });
+        }
+      }
+    } catch (error) {
+      if (error && error.code !== 'ENOENT') {
+        // A damaged runtime cache must never prevent the service from starting.
+      }
+    }
+  }
+
+  restoreSessions();
+
+  function pruneStaleTabs(session) {
+    if (!session || !(session.tabs instanceof Map)) {
+      return;
+    }
+
+    const staleBefore = now() - presenceTtlMs;
+
+    for (const [tabId, lastSeenAt] of session.tabs) {
+      if (lastSeenAt <= staleBefore) {
+        session.tabs.delete(tabId);
+      }
+    }
+  }
+
+  function pruneExpiredSessions() {
+    let changed = false;
+
+    for (const [key, session] of sessions) {
+      if (session.expiresAt <= now()) {
+        sessions.delete(key);
+        changed = true;
+        continue;
+      }
+
+      pruneStaleTabs(session);
+    }
+
+    if (changed) {
+      persistSessions();
+    }
+  }
 
   function tokenKey(token) {
     return crypto
-      .createHmac('sha256', String(secret))
+      .createHmac('sha256', resolvedSecret)
       .update(String(token || ''))
       .digest('base64url');
   }
@@ -622,10 +759,17 @@ function createSessionManager(options = {}) {
 
     if (session.expiresAt <= now()) {
       sessions.delete(key);
+      persistSessions();
       return null;
     }
 
+    pruneStaleTabs(session);
+
     return session;
+  }
+
+  function validTabId(tabId) {
+    return typeof tabId === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(tabId);
   }
 
   return {
@@ -636,10 +780,12 @@ function createSessionManager(options = {}) {
         userId: user.id,
         email: user.email,
         expiresAt: now() + ttlMs,
-        csrfToken
+        csrfToken,
+        tabs: new Map()
       };
 
       sessions.set(tokenKey(token), session);
+      persistSessions();
 
       return {
         ...session,
@@ -650,11 +796,68 @@ function createSessionManager(options = {}) {
 
     getSession,
 
+    heartbeat(req, tabId) {
+      if (!validTabId(tabId)) {
+        return false;
+      }
+
+      const session = getSession(req);
+
+      if (!session) {
+        return false;
+      }
+
+      session.tabs.set(tabId, now());
+      return true;
+    },
+
+    releaseTab(req, tabId) {
+      if (!validTabId(tabId)) {
+        return false;
+      }
+
+      const session = getSession(req);
+
+      if (!session) {
+        return false;
+      }
+
+      return session.tabs.delete(tabId);
+    },
+
+    operatorStatusByUserId(users) {
+      pruneExpiredSessions();
+      const usersById = new Map(
+        (Array.isArray(users) ? users : [])
+          .filter((user) => user && user.id)
+          .map((user) => [
+            user.id,
+            normalizeOperatorStatus(user.operatorStatus)
+          ])
+      );
+      const activeUserIds = new Set();
+
+      for (const session of sessions.values()) {
+        if (usersById.has(session.userId) && session.tabs.size > 0) {
+          activeUserIds.add(session.userId);
+        }
+      }
+
+      return new Map([...usersById].map(([userId, currentStatus]) => {
+        if (currentStatus !== 'online') {
+          return [userId, currentStatus];
+        }
+
+        return [userId, activeUserIds.has(userId) ? 'online' : 'unavailable'];
+      }));
+    },
+
     destroySession(req) {
       const token = getToken(req);
 
       if (token) {
         sessions.delete(tokenKey(token));
+        persistSessions();
       }
 
       return clearCookie();
@@ -682,6 +885,7 @@ module.exports = {
   DEFAULT_PASSWORD_HASH_ITERATIONS,
   PERMISSION_DEFINITIONS,
   authUserStorePathFromEnv,
+  authSessionStorePathFromEnv,
   createPasswordHash,
   createSessionManager,
   createUserStore,

@@ -9,6 +9,9 @@ const {
 } = require('../src/sqlMetricInfo');
 
 const RENDERED_SQL_METRIC_IDS = [
+  'underage-completed-shifts.trend',
+  'underage-completed-shifts.trend.completed-shifts',
+  'underage-completed-shifts.trend.chart',
   'sales-by-project.summary',
   'sales-by-project.summary.ordered-shifts',
   'sales-by-project.summary.worked-shifts',
@@ -334,6 +337,15 @@ test('workplace attention metrics show 15km base and closing statuses SQL', () =
   assert.match(attention.sql, /FROM mg_workers AS worker\s+CROSS JOIN point_bounds AS bounds/);
   assert.doesNotMatch(attention.sql, /uniqExact\(pwp\.user_id/);
   assert.doesNotMatch(attention.sql, /influence_weight/);
+});
+
+test('underage completed shifts metrics document the age at shift date', () => {
+  const info = getSqlMetricInfo('underage-completed-shifts.trend.completed-shifts');
+
+  assert.match(info.sql, /mg_users AS u/);
+  assert.match(info.sql, /toMonday\(j\.start\)/);
+  assert.match(info.sql, /addYears\(wb\.birthday, 18\) > toDate\(j\.start\)/);
+  assert.match(info.sql, /confirmed/);
 });
 
 test('highlightSql escapes html and highlights SQL keywords and parameters', () => {

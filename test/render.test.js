@@ -16,6 +16,7 @@ const {
   renderHome,
   renderMailSettingsPage,
   renderPreloadManagement,
+  renderRegionAnalysisDashboard,
   renderRequestReportMissingConfirmedPage,
   renderRequestReportMissingConfirmedResult,
   renderSalesByProjectDashboard,
@@ -1202,6 +1203,16 @@ test('renderWorkerBlacklistDetails renders escaped current lists and audit cavea
   assert.match(html, /не указывает конкретный список/);
   assert.doesNotMatch(html, /<script>x<\/script>/);
   assert.doesNotMatch(html, /<html/);
+});
+
+test('renderRegionAnalysisDashboard adds the giger modal for the regional export trigger', () => {
+  const html = renderRegionAnalysisDashboard({
+    database: 'etl',
+    dashboard: { filters: { region: 'Московская', from: '2026-08-01', to: '2026-08-04', period: 'week', cohort: [] }, regionOptions: ['Московская'] },
+    progressive: true
+  });
+  assert.match(html, /data-giger-detail-trigger/);
+  assert.match(html, /data-giger-list-modal/);
 });
 
 test('renderWorkerBlacklistDetails shows journal context when current arrays are empty', () => {

@@ -126,6 +126,26 @@ test('loadBrandAnalysisDashboardShell loads brand options without heavy dashboar
   assert.match(calls[1].query, /tuple\('region', region_value\)/);
 });
 
+test('loadBrandAnalysisDashboardShell selects the first available brand when none is specified', async () => {
+  const { calls, client } = createDashboardClient({
+    'brand analysis brand options': [
+      { brand_title: 'Brand B' },
+      { brand_title: 'Brand A' }
+    ],
+    'brand analysis filter options': []
+  });
+
+  const dashboard = await loadBrandAnalysisDashboardShell(
+    client,
+    {},
+    new Date('2026-06-01T12:00:00.000Z')
+  );
+
+  assert.equal(dashboard.filters.brandId, 'Brand B');
+  assert.equal(dashboard.selectedBrandTitle, 'Brand B');
+  assert.equal(calls[1].params.param_brand_title, 'Brand B');
+});
+
 test('loadBrandAnalysisDashboardSection returns empty data without selected brand', async () => {
   const { calls, client } = createDashboardClient();
 

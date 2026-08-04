@@ -1154,9 +1154,12 @@ function mergeBrandAnalysisSection(filters, section, rows) {
 }
 
 async function loadBrandAnalysisDashboardShell(client, input = {}, now = new Date()) {
-  const filters = normalizeBrandAnalysisFilters(input, now);
+  const requestedFilters = normalizeBrandAnalysisFilters(input, now);
   const brandOptions = await loadBrandOptions(client);
-  const selected = brandOptions.find((brand) => brand.id === filters.brandId);
+  const selected = brandOptions.find((brand) => brand.id === requestedFilters.brandId) || brandOptions[0];
+  const filters = selected && selected.id !== requestedFilters.brandId
+    ? { ...requestedFilters, brandId: selected.id }
+    : requestedFilters;
   const filterOptions = selected ? await loadBrandFilterOptions(client, filters) : emptyFilterOptions();
 
   return {

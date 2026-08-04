@@ -13599,19 +13599,31 @@ function regionAnalysisSectionUrl(filters, section) {
   return `/dashboards/region-analysis/section?${params.toString()}`;
 }
 
+function regionAnalysisGigerUrl(filters, overrides = {}) {
+  const params = new URLSearchParams({ region: filters.region || '', from: filters.from || '', to: filters.to || '', period: filters.period || 'week' });
+  for (const key of ['client', 'profession', 'orderType']) {
+    for (const value of filters[key] || []) params.append(key, value);
+  }
+  if (overrides.city) params.set('city', overrides.city);
+  if (overrides.profession) params.set('profession', overrides.profession);
+  return `/dashboards/region-analysis/gigers?${params.toString()}`;
+}
+
+
 function renderRegionMetric(label, value, metricId, currentUser) {
   return renderMetricInfoScope({ className: 'kpi-card', metricId, currentUser, content: `<div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div>` });
 }
 
 function renderRegionRows(rows, dimension, filters, currentUser) {
   if (!rows.length) return '<p class="empty">Нет данных для выбранного региона и периода.</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th></tr></thead><tbody>${rows.map((row) => {
+  return `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(dimension === 'city' ? 'Город' : 'Специальность')}</th><th>Заказ</th><th>Свободный заказ</th><th>SLA</th><th>Покрытие</th><th>Отработано</th><th>Точки</th><th>Исполнители</th></tr></thead><tbody>${rows.map((row) => {
     const title = row[dimension] || '';
     const titleHtml = dimension === 'city'
       ? `<a href="/dashboards/city-analysis?city=${encodeURIComponent(title)}&from=${encodeURIComponent(filters.from)}&to=${encodeURIComponent(filters.to)}">${escapeHtml(title)}</a>`
       : escapeHtml(title);
     const base = `region-analysis.${dimension === 'city' ? 'cities' : 'professions'}`;
-    return `<tr><td>${titleHtml}</td>${numberCell(row.orderedShifts, 0, `${base}.ordered-shifts`, currentUser)}${numberCell(row.openDemand, 0, `${base}.open-demand`, currentUser)}${percentCell(row.slaPercent, `${base}.sla`, currentUser)}${percentCell(row.coveragePercent, `${base}.coverage`, currentUser)}${numberCell(row.workedShifts, 0, `${base}.worked-shifts`, currentUser)}${numberCell(row.workplaces, 0, `${base}.workplaces`, currentUser)}</tr>`;
+    const gigerUrl = regionAnalysisGigerUrl(filters, dimension === 'city' ? { city: title } : { profession: title });
+    return `<tr><td>${titleHtml}</td>${numberCell(row.orderedShifts, 0, `${base}.ordered-shifts`, currentUser)}${numberCell(row.openDemand, 0, `${base}.open-demand`, currentUser)}${percentCell(row.slaPercent, `${base}.sla`, currentUser)}${percentCell(row.coveragePercent, `${base}.coverage`, currentUser)}${numberCell(row.workedShifts, 0, `${base}.worked-shifts`, currentUser)}${numberCell(row.workplaces, 0, `${base}.workplaces`, currentUser)}<td>${renderGigerDetailTrigger('Выгрузка', gigerUrl)}</td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 

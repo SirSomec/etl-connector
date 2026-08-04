@@ -1,5 +1,12 @@
 const { actualOrderDomainCondition, actualOrderJoinsSql } = require('./analyticsDomainSql');
 const { successfulConfirmedShiftFlagExpression } = require('./successfulConfirmedShift');
+const {
+  GIGER_DETAILS_PAGE_SIZE,
+  cleanBooleanFlag,
+  firstCleanText,
+  mergeGigerDetails,
+  normalizeGigerDetailsPage
+} = require('./gigerDetails');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PERIOD_EXPRESSIONS = {
@@ -192,4 +199,85 @@ async function loadRegionAnalysisDashboardSection(client, input = {}, section, n
   return dashboard;
 }
 
-module.exports = { REGION_ANALYSIS_SECTIONS, loadRegionAnalysisDashboardSection, loadRegionAnalysisDashboardShell, normalizeRegionAnalysisFilters, queryForSection };
+function normalizeRegionGigerDetailsInput(input = {}, now = new Date()) {
+  const filters = normalizeRegionAnalysisFilters(input, now);
+  const city = firstCleanText(input.city);
+  const profession = firstCleanText(input.profession);
+
+  if (!filters.region) {
+    const error = new Error('region is required');
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    source: 'region-analysis',
+    metric: 'worked-workers',
+    metricLabel: 'Выполнявшие исполнители',
+    city,
+    profession,
+    page: normalizeGigerDetailsPage(input.page),
+    pageSize: GIGER_DETAILS_PAGE_SIZE,
+    offset: (normalizeGigerDetailsPage(input.page) - 1) * GIGER_DETAILS_PAGE_SIZE,
+    export: cleanBooleanFlag(input.export),
+    filters
+  };
+}
+
+function regionGigerDetailsCtes(input) {
+  const scopeConditions = [];
+  if (input.city) scopeConditions.push('city = {city:String}');
+  if (input.profession) scopeConditions.push('profession = {profession:String}');
+  const scopeWhere = scopeConditions.length ? ` WHERE ${scopeConditions.join(' AND ')}` : '';
+
+  return `${actualOrdersCte(input.filters)},
+selected_orders AS (SELECT * FROM actual_orders${scopeWhere}),
+eligible_giger_ids AS (
+  SELECT DISTINCT j.worker AS worker_id
+  FROM mg_jobs AS j
+  INNER JOIN selected_orders AS ao ON ao.order_id = j.source
+  WHERE ifNull(j.deleted, 0) = 0
+    AND ifNull(j.worker, '') != ''
+    AND ${successfulConfirmedShiftFlagExpression('j')} = 1
+),
+eligible_gigers AS (
+  SELECT
+    ifNull(w.user, '') AS user_id,
+    w._id AS worker_id,
+    coalesce(
+      nullIf(trim(concat(ifNull(u.lastname, ''), ' ', ifNull(u.firstname, ''), ' ', ifNull(u.middlename, ''))), ''),
+      nullIf(trim(ifNull(w.full_name, '')), ''),
+      ''
+    ) AS full_name,
+    ifNull(u.phone, '') AS phone,
+    ifNull(w.status, '') AS status
+  FROM eligible_giger_ids AS ids
+  INNER JOIN mg_workers AS w ON w._id = ids.worker_id
+  LEFT JOIN mg_users AS u ON u._id = w.user
+  WHERE ifNull(w.deleted, 0) = 0
+)`;
+}
+
+function regionGigerDetailsParams(input) {
+  return {
+    ...paramsFor(input.filters),
+    param_city: input.city,
+    param_profession: input.profession,
+    param_limit: input.pageSize,
+    param_offset: input.offset
+  };
+}
+
+async function loadRegionAnalysisGigerDetails(client, input = {}, now = new Date()) {
+  const detailInput = normalizeRegionGigerDetailsInput(input, now);
+  const ctes = regionGigerDetailsCtes(detailInput);
+  const params = regionGigerDetailsParams(detailInput);
+  const [totalRows, gigerRows] = await Promise.all([
+    client.queryJSONEachRow(`WITH ${ctes}\nSELECT count() AS total_gigers FROM eligible_gigers FORMAT JSONEachRow`, params, 'region analysis giger details total'),
+    client.queryJSONEachRow(`WITH ${ctes}\nSELECT user_id, worker_id, full_name, phone, status FROM eligible_gigers ORDER BY full_name, user_id, worker_id${detailInput.export ? '' : '\nLIMIT {limit:UInt64} OFFSET {offset:UInt64}'} FORMAT JSONEachRow`, params, 'region analysis giger details')
+  ]);
+
+  return mergeGigerDetails(detailInput, totalRows, gigerRows);
+}
+
+module.exports = { REGION_ANALYSIS_SECTIONS, loadRegionAnalysisGigerDetails, loadRegionAnalysisDashboardSection, loadRegionAnalysisDashboardShell, normalizeRegionAnalysisFilters, normalizeRegionGigerDetailsInput, queryForSection };

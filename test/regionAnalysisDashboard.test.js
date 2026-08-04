@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  loadRegionAnalysisGigerDetails,
   loadRegionAnalysisDashboardSection,
   normalizeRegionAnalysisFilters
 } = require('../src/regionAnalysisDashboard');
@@ -21,6 +22,29 @@ test('normalizes the selected region and calendar range', () => {
       orderType: []
     }
   );
+});
+
+test('loads completed workers for a city and preserves the export input', async () => {
+  const calls = [];
+  const client = {
+    async queryJSONEachRow(query, params, operation) {
+      calls.push({ query, params, operation });
+      return operation.endsWith('total')
+        ? [{ total_gigers: '1' }]
+        : [{ user_id: 'user-1', worker_id: 'worker-1', full_name: 'Иванов Иван', phone: '+79990000000', status: 'worked' }];
+    }
+  };
+
+  const details = await loadRegionAnalysisGigerDetails(client, {
+    region: 'Татарстан', city: 'Казань', from: '2026-06-01', to: '2026-06-30', export: '1'
+  }, new Date('2026-07-20T12:00:00.000Z'));
+
+  assert.equal(calls[0].operation, 'region analysis giger details total');
+  assert.equal(calls[1].operation, 'region analysis giger details');
+  assert.equal(calls[0].params.param_city, 'Казань');
+  assert.match(calls[1].query, /city = \{city:String\}/);
+  assert.equal(details.metricLabel, 'Выполнявшие исполнители');
+  assert.equal(details.gigers[0].fullName, 'Иванов Иван');
 });
 
 test('loads city detail from actual orders of the requested region only', async () => {

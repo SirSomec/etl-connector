@@ -68,6 +68,7 @@ const {
 } = require('./cityAnalysisDashboard');
 const {
   REGION_ANALYSIS_SECTIONS,
+  loadRegionAnalysisGigerDetails,
   loadRegionAnalysisDashboardSection,
   loadRegionAnalysisDashboardShell
 } = require('./regionAnalysisDashboard');
@@ -2458,6 +2459,36 @@ function createApp({
           .type('html')
           .send(renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) }));
       }
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis/gigers',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      try {
+        const details = await loadRegionAnalysisGigerDetails(client, req.query, new Date());
+
+        recordCurrentUserActivity(req, activityEventType(req));
+        res.status(200).type('html').send(
+          renderGigerDetails({ details: attachGigerDetailsUrls(req, details, '/dashboards/region-analysis/gigers/export') })
+        );
+      } catch (error) {
+        res.status(statusCodeFromError(error)).type('html').send(
+          renderDashboardSectionError({ message: sanitizeForResponse(error && error.message, config) })
+        );
+      }
+    })
+  );
+
+  app.get(
+    '/dashboards/region-analysis/gigers/export',
+    requireAuth('city-analysis'),
+    asyncRoute(async (req, res) => {
+      const details = await loadRegionAnalysisGigerDetails(client, { ...req.query, export: '1' }, new Date());
+
+      recordCurrentUserActivity(req, activityEventType(req));
+      sendGigerDetailsWorkbook(res, details, 'region-analysis-gigers.xls');
     })
   );
 
